@@ -54,7 +54,7 @@ export function settle(state, shot) {
 }
 
 // Roll the current player's next putt, without moving the ball yet.
-export const nextPutt = (state, rng) => putt(rng, current(state).golfer, current(state).at, state.hole.pin);
+export const nextPutt = (state, rng) => putt(rng, current(state).golfer, current(state).at, state.hole.pin, state.hole);
 
 export function settlePutt(state, p) {
   const me = current(state);

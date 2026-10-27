@@ -784,6 +784,187 @@ function coastAt(coast, q) {
 }
 
 
+// ---- terrain.js ----
+// Hills and slopes. Each course gets rolling ground from smooth noise over the
+// whole course map, so neighbouring holes meet at the same height. On each hole
+// the ground is then shaped for golf: tees are flat, greens tilt gently one way,
+// fairways are smoothed, bunkers are dug in and lakes lie flat in hollows.
+// Heights are yards above the sea.
+
+
+// How hilly each style is: yards from the bottom of a dip to the top of a rise,
+// roughly, and how much small bumpiness there is on top (links have dunes).
+const HILLS = {
+  parkland: [13, 0.15], links: [9, 0.4], desert: [14, 0.25], heathland: [12, 0.2],
+  alpine: [30, 0.15], tropical: [11, 0.15], woodland: [16, 0.15], stadium: [13, 0.3],
+};
+// Wavelengths in yards of the big rolls, the smaller rises, and the bumps.
+const WAVES = [240, 90, 34];
+const GROUND_STEP = 3; // yards between samples of a hole's shaped ground
+const GREEN_TILT = [0.012, 0.035]; // how steep a green may be, rise over run
+const BLEND = 3;       // samples over which shaped ground blends into the hills
+
+const latticeHash = (i, j, k) => {
+  let h = Math.imul(i, 374761393) + Math.imul(j, 668265263) + Math.imul(k, 1274126177);
+  h = Math.imul(h ^ (h >>> 13), 1103515245);
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+};
+const smooth = (t) => t * t * (3 - 2 * t);
+
+// Smooth value noise in [-1, 1].
+function noise(x, y, k) {
+  const i = Math.floor(x), j = Math.floor(y), fx = smooth(x - i), fy = smooth(y - j);
+  const a = latticeHash(i, j, k), b = latticeHash(i + 1, j, k), c = latticeHash(i, j + 1, k), d = latticeHash(i + 1, j + 1, k);
+  return 2 * (a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy) - 1;
+}
+
+// The course's terrain settings, kept on each hole: where the hole sits on the
+// map, the coastline (if any) and how hilly the style is.
+function terrainFor(course, place, coast) {
+  const [amp, bumps] = HILLS[course.style] ?? HILLS.parkland;
+  return { place, coast, amp, bumps, seed: (course.seed ?? 1) ^ 0x51ab7e };
+}
+
+// The rolling ground at map point q, before any shaping for golf. `smoothOnly`
+// leaves out the small bumps (for fairways).
+function hillsAt(t, q, smoothOnly = false) {
+  const { amp, bumps, seed } = t;
+  let h = amp * (0.5 * noise(q.x / WAVES[0], q.y / WAVES[0], seed) + 0.22 * noise(q.x / WAVES[1], q.y / WAVES[1], seed + 1));
+  if (!smoothOnly) h += amp * bumps * 0.12 * noise(q.x / WAVES[2], q.y / WAVES[2], seed + 2);
+  h += amp * 0.75; // mostly above the sea
+  if (t.coast) {
+    // Down to the beach towards the coast.
+    const out = q.x * t.coast.u.x + q.y * t.coast.u.y - t.coast.c;
+    const f = smooth(Math.max(0, Math.min(1, (-out - 15) / 180)));
+    h = 0.8 + (h - 0.8) * f;
+  }
+  return Math.max(0.8, h);
+}
+
+// The shaped ground for one hole, sampled every GROUND_STEP yards; built the
+// first time it's needed and kept for a while, as the same course gets built
+// again for each hole.
+const grids = new Map();
+function groundGrid(hole) {
+  const t = hole.terrain;
+  const id = `${hole.style}:${hole.seed}:${hole.number}:${t.seed}:${t.place.x}:${t.place.y}:${t.place.rot}:${!!hole.sea}`;
+  if (hole.groundGrid?.id === id) return hole.groundGrid;
+  if (grids.has(id)) return (hole.groundGrid = grids.get(id));
+  const b = holeBounds(hole, 12);
+  const x0 = b.minX, y0 = b.minY;
+  const nx = Math.ceil((b.maxX - x0) / GROUND_STEP) + 1, ny = Math.ceil((b.maxY - y0) / GROUND_STEP) + 1;
+  const n = nx * ny;
+  const hills = new Float32Array(n), target = new Float32Array(n), weight = new Float32Array(n);
+  const surf = new Array(n);
+  const at = (i, j) => ({ x: x0 + i * GROUND_STEP, y: y0 + j * GROUND_STEP });
+  const map = (p) => toMap(t.place, p);
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      const k = j * nx + i, p = at(i, j);
+      hills[k] = hillsAt(t, map(p));
+      surf[k] = surfaceAt(hole, p, true);
+    }
+  }
+
+  // A green tilts one way, the way the hills fall, but gently.
+  const gc = { x: hole.green.x, y: hole.green.y };
+  const g0 = hillsAt(t, map(gc));
+  let gx = (hillsAt(t, map({ x: gc.x + 4, y: gc.y })) - hillsAt(t, map({ x: gc.x - 4, y: gc.y }))) / 8;
+  let gy = (hillsAt(t, map({ x: gc.x, y: gc.y + 4 })) - hillsAt(t, map({ x: gc.x, y: gc.y - 4 }))) / 8;
+  const tilt = Math.hypot(gx, gy) || 1, want = Math.max(GREEN_TILT[0], Math.min(GREEN_TILT[1], tilt));
+  if (tilt < 1e-6) gx = 1;
+  gx *= want / tilt; gy *= want / tilt;
+  // Tees are flat at the height of the ground where they are.
+  const teeAt = (p) => {
+    let best = Infinity, h = 0;
+    for (const s of Object.values(hole.tees ?? {})) {
+      const q = pointAt(hole.line, s), d = Math.hypot(p.x - q.x, p.y - q.y);
+      if (d < best) { best = d; h = hillsAt(t, map(q)); }
+    }
+    return h;
+  };
+  // A lake lies flat at the lowest ground it covers, so the land banks up round it.
+  const lakes = hole.water.map(() => Infinity);
+  for (let k = 0; k < n; k++) {
+    if (surf[k] !== 'water') continue;
+    const p = at(k % nx, Math.floor(k / nx));
+    hole.water.forEach((w, wi) => { if (blobGap(w, p) <= 0) lakes[wi] = Math.min(lakes[wi], hills[k]); });
+  }
+
+  const hard = new Uint8Array(n); // ground that keeps its own height right to its edge
+  for (let k = 0; k < n; k++) {
+    const p = at(k % nx, Math.floor(k / nx)), s = surf[k];
+    if (s === 'green' || s === 'fringe') { target[k] = g0 + 0.4 + gx * (p.x - gc.x) + gy * (p.y - gc.y); weight[k] = 1; }
+    else if (s === 'tee') { target[k] = teeAt(p) + 0.4; weight[k] = 1; }
+    else if (s === 'fairway') { target[k] = hillsAt(t, map(p), true); weight[k] = 0.8; }
+    else if (s === 'water') {
+      const wi = hole.water.findIndex((w) => blobGap(w, p) <= 0);
+      target[k] = (wi >= 0 ? lakes[wi] : hills[k]) - 1; weight[k] = 1; hard[k] = 1; // creeks run in a cut
+    } else if (s === 'sea') { target[k] = 0; weight[k] = 1; hard[k] = 1; }
+    else if (s === 'beach') { target[k] = 0.6; weight[k] = 1; }
+    else if (s === 'bunker') hard[k] = 1;
+  }
+
+  // Blend the shaping into the hills round it.
+  const tw = boxBlur(target.map((v, k) => v * weight[k]), nx, ny, BLEND);
+  const wb = boxBlur(weight, nx, ny, BLEND);
+  const h = new Float32Array(n);
+  for (let k = 0; k < n; k++) {
+    const w = Math.min(1, wb[k]);
+    h[k] = wb[k] > 1e-4 ? hills[k] * (1 - w) + (tw[k] / wb[k]) * w : hills[k];
+    if (hard[k] || surf[k] === 'green' || surf[k] === 'tee') h[k] = surf[k] === 'bunker' ? h[k] - 0.5 : target[k]; // bunkers are dug in
+  }
+  const grid = { id, x0, y0, nx, ny, h };
+  if (grids.size > 60) grids.delete(grids.keys().next().value);
+  grids.set(id, grid);
+  return (hole.groundGrid = grid);
+}
+
+function boxBlur(src, nx, ny, r) {
+  const a = new Float32Array(src.length), out = new Float32Array(src.length);
+  for (let j = 0; j < ny; j++) {
+    let sum = 0;
+    for (let i = -r; i <= r; i++) sum += src[j * nx + Math.max(0, Math.min(nx - 1, i))];
+    for (let i = 0; i < nx; i++) {
+      a[j * nx + i] = sum / (2 * r + 1);
+      sum += src[j * nx + Math.min(nx - 1, i + r + 1)] - src[j * nx + Math.max(0, i - r)];
+    }
+  }
+  for (let i = 0; i < nx; i++) {
+    let sum = 0;
+    for (let j = -r; j <= r; j++) sum += a[Math.max(0, Math.min(ny - 1, j)) * nx + i];
+    for (let j = 0; j < ny; j++) {
+      out[j * nx + i] = sum / (2 * r + 1);
+      sum += a[Math.min(ny - 1, j + r + 1) * nx + i] - a[Math.max(0, j - r) * nx + i];
+    }
+  }
+  return out;
+}
+
+// Height of the ground at point p on a hole, in yards. Flat if the hole has no terrain.
+function heightAt(hole, p) {
+  const t = hole.terrain;
+  if (!t) return 0;
+  const g = groundGrid(hole);
+  const fx = (p.x - g.x0) / GROUND_STEP, fy = (p.y - g.y0) / GROUND_STEP;
+  if (fx < 0 || fy < 0 || fx > g.nx - 1 || fy > g.ny - 1) return hillsAt(t, toMap(t.place, p));
+  const i = Math.min(g.nx - 2, Math.floor(fx)), j = Math.min(g.ny - 2, Math.floor(fy));
+  const u = fx - i, v = fy - j, k = j * g.nx + i;
+  const { h } = g;
+  return h[k] * (1 - u) * (1 - v) + h[k + 1] * u * (1 - v) + h[k + g.nx] * (1 - u) * v + h[k + g.nx + 1] * u * v;
+}
+
+// Which way and how steeply the ground rises at p: { x, y } in yards up per yard across.
+function slopeAt(hole, p, d = 1) {
+  return {
+    x: (heightAt(hole, { x: p.x + d, y: p.y }) - heightAt(hole, { x: p.x - d, y: p.y })) / (2 * d),
+    y: (heightAt(hole, { x: p.x, y: p.y + d }) - heightAt(hole, { x: p.x, y: p.y - d })) / (2 * d),
+  };
+}
+
+// How much higher (+) or lower (-) `to` is than `from`, in yards.
+const rise = (hole, from, to) => heightAt(hole, to) - heightAt(hole, from);
+
 // ---- course.js ----
 // The game's take on the generator: more doglegs and more hazards than the
 // management game, so shaping a shot round a corner or away from trouble pays.
@@ -816,6 +997,9 @@ function buildCourse(def, { layout = true } = {}) {
   for (const hole of course.holes) addHazards(hole);
   // Lay the course out; a seaside hole with no room on the coast loses its sea.
   if (layout) for (const n of courseMap(course).inland) course.holes[n].sea = null;
+  // Hills and slopes, from where each hole sits on the map.
+  const map = layout ? courseMap(course) : null;
+  course.holes.forEach((hole, n) => { hole.terrain = terrainFor(course, map ? map.places[n] : { x: 0, y: 0, rot: 0 }, map?.coast ?? null); });
   return course;
 }
 
@@ -1273,9 +1457,13 @@ function scoreBanner(strokes, par) {
 
 const TW = 8, TH = 4;
 
+// Yards of height to pixels up the screen, on a grid of `cell`-yard tiles.
+const liftPx = (h, cell) => h / cell * TH * 1.5;
+
 // A view places a grid on the screen. (ox, oy) is where the centre of tile
-// col 0, flipped row 0 lands, in screen pixels.
-function makeView(grid, ox, oy) {
+// col 0, flipped row 0 lands, in screen pixels. `ground(p)` is the height of
+// the ground in yards at world point p (flat if left out).
+function makeView(grid, ox, oy, ground = () => 0) {
   const { rows, cell, originX, originY } = grid;
   const flip = (row) => rows - 1 - row;
 
@@ -1289,35 +1477,49 @@ function makeView(grid, ox, oy) {
     const u = (x - ox) / (TW / 2), v = (y - oy) / (TH / 2);
     return { col: (u + v) / 2, row: flip((v - u) / 2) };
   };
-  // World yards (as used by the generator) to screen pixels.
-  const worldToScreen = (p) => tileToScreen((p.x - originX) / cell - 0.5, (p.y - originY) / cell - 0.5);
-  // Screen pixels to world yards, on the ground.
-  const screenToWorld = (x, y) => {
+  // World yards (as used by the generator) to screen pixels, on the ground or
+  // at height z yards.
+  const flatToScreen = (p) => tileToScreen((p.x - originX) / cell - 0.5, (p.y - originY) / cell - 0.5);
+  const worldToScreen = (p, z = ground(p)) => {
+    const s = flatToScreen(p);
+    s.y -= liftPx(z, cell);
+    return s;
+  };
+  // Screen pixels to world yards, on the ground: look a little further down the
+  // screen for ground that's raised up to this pixel.
+  const flatToWorld = (x, y) => {
     const t = screenToTile(x, y);
     return { x: originX + (t.col + 0.5) * cell, y: originY + (t.row + 0.5) * cell };
+  };
+  const screenToWorld = (x, y) => {
+    let p = flatToWorld(x, y);
+    for (let k = 0; k < 6; k++) p = flatToWorld(x, y + liftPx(ground(p), cell));
+    return p;
   };
   // A direction in world yards to a screen direction, in pixels per yard.
   const worldDirToScreen = (dx, dy) => ({ x: (dx + dy) / cell * TW / 2, y: (dx - dy) / cell * TH / 2 });
 
-  return { grid, ox, oy, tileToScreen, screenToTile, worldToScreen, screenToWorld, worldDirToScreen };
+  return { grid, ox, oy, ground, tileToScreen, screenToTile, worldToScreen, screenToWorld, worldDirToScreen };
 }
 
 // Place a grid so its playable part (everything that isn't the tree margin) is
-// centred in the box { x, y, w, h }. Returns the view and whether it fitted.
-function fitView(grid, box) {
+// centred in the box { x, y, w, h }, with the ground raised by `ground`.
+// Returns the view and whether it fitted.
+function fitView(grid, box, ground = () => 0) {
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
   const probe = makeView(grid, 0, 0);
   for (let row = 0; row < grid.rows; row++) {
     for (let col = 0; col < grid.cols; col++) {
       if (grid.tiles[row][col] === 'trees') continue;
       const s = probe.tileToScreen(col, row);
+      s.y -= liftPx(ground(grid.toWorld(col, row)), grid.cell);
       minX = Math.min(minX, s.x - TW / 2); maxX = Math.max(maxX, s.x + TW / 2);
       minY = Math.min(minY, s.y - TH / 2); maxY = Math.max(maxY, s.y + TH / 2);
     }
   }
   const ox = Math.round(box.x + box.w / 2 - (minX + maxX) / 2);
   const oy = Math.round(box.y + box.h / 2 - (minY + maxY) / 2);
-  return { view: makeView(grid, ox, oy), fits: maxX - minX <= box.w && maxY - minY <= box.h };
+  return { view: makeView(grid, ox, oy, ground), fits: maxX - minX <= box.w && maxY - minY <= box.h };
 }
 
 // ---- weather.js ----
@@ -1366,7 +1568,7 @@ const hash = (a, b, k = 0) => {
 function layoutHole(hole, box) {
   let best;
   for (const cell of CELLS) {
-    best = fitView(holeToGrid(hole, { cell }), box);
+    best = fitView(holeToGrid(hole, { cell }), box, (p) => heightAt(hole, p));
     if (best.fits) break;
   }
   const { rows, cols, tiles } = best.view.grid;
@@ -1378,7 +1580,7 @@ function layoutHole(hole, box) {
 
 // The same view moved by (dx, dy) pixels, e.g. to draw into a bigger image with a margin.
 function shiftView(view, dx, dy) {
-  return { ...makeView(view.grid, view.ox + dx, view.oy + dy), own: view.own, look: view.look, others: view.others };
+  return { ...makeView(view.grid, view.ox + dx, view.oy + dy, view.ground), own: view.own, look: view.look, others: view.others, heights: view.heights };
 }
 
 // What to draw at tile (col, row): a surface, or 'land' for open grass.
@@ -1398,20 +1600,23 @@ function addSurroundings(view, course, index, W, H) {
   const others = neighbours(course, index);
   const { places, coast } = courseMap(course);
   const ownBounds = holeBounds(hole, 0);
-  const corners = [[0, 0], [W, 0], [0, H + 16], [W, H + 16]].map(([x, y]) => view.screenToTile(x, y));
+  // Raised ground further down can still show, so look past the bottom edge.
+  const corners = [[0, 0], [W, 0], [0, H + LOW], [W, H + LOW]].map(([x, y]) => view.screenToTile(x, y));
   const c0 = Math.floor(Math.min(...corners.map((t) => t.col))) - 1, c1 = Math.ceil(Math.max(...corners.map((t) => t.col))) + 1;
   const r0 = Math.floor(Math.min(...corners.map((t) => t.row))) - 1, r1 = Math.ceil(Math.max(...corners.map((t) => t.row))) + 1;
   const tiles = [];
+  const h = new Float32Array((r1 - r0 + 1) * (c1 - c0 + 1));
   const own = { ...view.own, tiles: view.own.tiles.map((row) => row.slice()) };
   for (let r = r0; r <= r1; r++) {
     const row = new Array(c1 - c0 + 1);
     for (let c = c0; c <= c1; c++) {
       const s = view.tileToScreen(c, r);
       let t = 'trees';
-      if (s.x < -TILE_PAD || s.x > W + TILE_PAD || s.y < -TILE_PAD || s.y > H + 3 * TILE_PAD) t = 'land';
+      const p = grid.toWorld(c, r);
+      let z = null; // height, if it isn't this hole's own ground
+      if (s.x < -TILE_PAD || s.x > W + TILE_PAD || s.y < -TILE_PAD || s.y > H + LOW + TILE_PAD) t = 'land';
       else {
         const mine = grid.tiles[r]?.[c];
-        const p = grid.toWorld(c, r);
         if (mine && mine !== 'trees') t = mine;
         else if (!mine && hole.sea && p.x > ownBounds.minX && p.x < ownBounds.maxX && p.y > ownBounds.minY && p.y < ownBounds.maxY) {
           const here = surfaceAt(hole, p, true);
@@ -1424,23 +1629,46 @@ function addSurroundings(view, course, index, W, H) {
             const there = surfaceAt(o.hole, q, true);
             if (there !== 'trees') {
               t = there;
+              z = heightAt(o.hole, q);
               break;
             }
           }
         }
-        if (t === 'trees') t = coastAt(coast, toMap(places[index], p)) ?? 'trees';
+        if (t === 'trees') {
+          t = coastAt(coast, toMap(places[index], p)) ?? 'trees';
+          if (t === 'sea') z = 0;
+          if (t === 'beach') z = 0.6;
+        }
         // Other holes and the open sea are out of bounds.
         if (t !== 'trees' && (!mine || mine === 'trees') && own.tiles[r - own.r0]?.[c - own.c0]) own.tiles[r - own.r0][c - own.c0] = 'land';
       }
       row[c - c0] = t;
+      h[(r - r0) * (c1 - c0 + 1) + c - c0] = z ?? heightAt(hole, p);
     }
     tiles.push(row);
   }
-  view.look = thinTrees({ c0, r0, rows: tiles.length, cols: c1 - c0 + 1, tiles }, grid.cell);
+  const area = { c0, r0, rows: tiles.length, cols: c1 - c0 + 1 };
+  view.look = thinTrees({ ...area, tiles }, grid.cell);
   view.others = others;
   view.own = own;
+  view.heights = { ...area, h };
+  // On this hole the ground is smooth; elsewhere it's the height of the tile drawn there.
+  const ground = (p) => {
+    const tl = grid.toTile(p);
+    return lookAt(own, tl.col, tl.row) === 'land' ? tileHeight(view, Math.floor((p.x - grid.originX) / grid.cell), Math.floor((p.y - grid.originY) / grid.cell)) : heightAt(hole, p);
+  };
+  view.baseGround = (p) => heightAt(hole, p);
+  Object.assign(view, makeView(grid, view.ox, view.oy, ground));
 }
 const TILE_PAD = 24;
+const LOW = 72; // pixels below the picture that raised ground could reach up from
+
+// Height in yards of the tile drawn at (col, row).
+function tileHeight(view, c, r) {
+  const a = view.heights;
+  if (a && r >= a.r0 && r < a.r0 + a.rows && c >= a.c0 && c < a.c0 + a.cols) return a.h[(r - a.r0) * a.cols + c - a.c0];
+  return (view.baseGround ?? view.ground)(view.grid.toWorld(c, r));
+}
 
 // The generator fills everything outside the rough with trees. For drawing, keep
 // a ragged band of woods along the hole and open grass beyond it (still trees for play).
@@ -1471,7 +1699,11 @@ function thinTrees(area, cell) {
   return { c0, r0, rows, cols, tiles: out };
 }
 
-// The surface under every screen pixel, plus its tile, for texturing.
+// The surface under every screen pixel, plus its tile and how much light it
+// catches, for texturing. Tiles are drawn back to front, each raised to its
+// height, with a bank of earth below it down to the tiles in front.
+const LIT = 100;          // shade[] value for ground in full light
+const SIDE = [70, 82];    // banks facing left and right
 function sampleGround(view, W, H) {
   const names = [];
   const ids = new Map();
@@ -1479,23 +1711,68 @@ function sampleGround(view, W, H) {
     if (!ids.has(s)) { ids.set(s, names.length); names.push(s); }
     return ids.get(s);
   };
-  const surf = new Uint8Array(W * H);
+  const surf = new Uint8Array(W * H).fill(id('land'));
   const tc = new Int16Array(W * H), tr = new Int16Array(W * H);
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const t = view.screenToTile(x + 0.5, y + 0.5);
-      const c = Math.round(t.col), r = Math.round(t.row);
-      const k = y * W + x;
-      surf[k] = id(lookAt(view.look, c, r));
-      tc[k] = c; tr[k] = r;
+  const shade = new Uint8Array(W * H).fill(LIT);
+  const { grid } = view;
+  // The pixels of one tile, from its centre, and how far down each column reaches.
+  const mask = [], bottom = new Map();
+  const o = view.tileToScreen(0, 0);
+  for (let dy = -3; dy <= 3; dy++) {
+    for (let dx = -5; dx <= 5; dx++) {
+      const t = view.screenToTile(o.x + dx + 0.5, o.y + dy + 0.5);
+      if (Math.round(t.col) !== 0 || Math.round(t.row) !== 0) continue;
+      mask.push([dx, dy]);
+      bottom.set(dx, Math.max(bottom.get(dx) ?? -9, dy));
     }
   }
-  return { names, surf, tc, tr };
+  // Every tile that could show, back to front.
+  const corners = [[0, 0], [W, 0], [0, H + LOW], [W, H + LOW]].map(([x, y]) => view.screenToTile(x, y));
+  const c0 = Math.floor(Math.min(...corners.map((t) => t.col))) - 1, c1 = Math.ceil(Math.max(...corners.map((t) => t.col))) + 1;
+  const r0 = Math.floor(Math.min(...corners.map((t) => t.row))) - 1, r1 = Math.ceil(Math.max(...corners.map((t) => t.row))) + 1;
+  const lift = (c, r) => Math.round(liftPx(tileHeight(view, c, r), grid.cell));
+  for (let d = c0 - r1; d <= c1 - r0; d++) {
+    for (let c = Math.max(c0, d + r0); c <= Math.min(c1, d + r1); c++) {
+      const r = c - d;
+      const s = lookAt(view.look, c, r), sid = id(s);
+      const p = view.tileToScreen(c, r);
+      const lp = lift(c, r);
+      if (p.y - lp > H + 4 || p.x < -6 || p.x > W + 6) continue;
+      // Light from the top left of the screen, which is the -x side of the hole.
+      let light = LIT;
+      if (s !== 'water' && s !== 'sea') {
+        const gx = (tileHeight(view, c + 1, r) - tileHeight(view, c - 1, r)) / (2 * grid.cell);
+        const gy = (tileHeight(view, c, r + 1) - tileHeight(view, c, r - 1)) / (2 * grid.cell);
+        const k = s === 'green' ? 7 : 3.5; // greens tilt gently, so show them more strongly
+        const lit = Math.max(-0.3, Math.min(0.22, k * gx - 0.4 * k * gy));
+        light = LIT + Math.round(lit / 0.05) * 5;
+      }
+      for (const [dx, dy] of mask) {
+        const x = p.x + dx, y = p.y + dy - lp;
+        if (x < 0 || x >= W || y < 0 || y >= H) continue;
+        const k = y * W + x;
+        surf[k] = sid; tc[k] = c; tr[k] = r; shade[k] = light;
+      }
+      // Banks down to the tiles in front, on the left and on the right.
+      const dropL = lp - lift(c, r - 1), dropR = lp - lift(c + 1, r);
+      for (const [dx, b] of bottom) {
+        const drop = dx < 0 ? dropL : dropR;
+        const x = p.x + dx;
+        if (drop <= 0 || x < 0 || x >= W) continue;
+        for (let y = p.y + b - lp + 1; y <= p.y + b - lp + drop; y++) {
+          if (y < 0 || y >= H) continue;
+          const k = y * W + x;
+          surf[k] = sid; tc[k] = c; tr[k] = r; shade[k] = SIDE[dx < 0 ? 0 : 1];
+        }
+      }
+    }
+  }
+  return { names, surf, tc, tr, shade };
 }
 
 function paintGround(buf, W, H, style, g) {
   const pal = groundPalette(style);
-  const { names, surf, tc, tr } = g;
+  const { names, surf, tc, tr, shade } = g;
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const k = y * W + x;
@@ -1513,6 +1790,10 @@ function paintGround(buf, W, H, style, g) {
       // Lips on the far side of bunkers and water, banks on the near side of greens and tees.
       if (SUNKEN.has(s) && y > 0 && surf[k - W] !== surf[k] && !SUNKEN.has(names[surf[k - W]])) c = edge;
       if (RAISED.has(s) && y < H - 1 && names[surf[k + W]] !== s) c = edge;
+      if (shade[k] !== LIT) {
+        const f = shade[k] / LIT;
+        c = (c & 0xff000000) | (Math.min(255, ((c >>> 16) & 255) * f) << 16) | (Math.min(255, ((c >>> 8) & 255) * f) << 8) | Math.min(255, (c & 255) * f);
+      }
       buf[k] = c;
     }
   }
@@ -1522,7 +1803,7 @@ function paintGround(buf, W, H, style, g) {
 function paintScenery(buf, W, H, view, style) {
   const art = STYLE_ART[style] ?? STYLE_ART.parkland;
   // Range of tiles that can show on screen, with room for tall sprites below the edge.
-  const corners = [[0, 0], [W, 0], [0, H + 16], [W, H + 16]].map(([x, y]) => view.screenToTile(x, y));
+  const corners = [[0, 0], [W, 0], [0, H + LOW], [W, H + LOW]].map(([x, y]) => view.screenToTile(x, y));
   const c0 = Math.floor(Math.min(...corners.map((t) => t.col))), c1 = Math.ceil(Math.max(...corners.map((t) => t.col)));
   const r0 = Math.floor(Math.min(...corners.map((t) => t.row))), r1 = Math.ceil(Math.max(...corners.map((t) => t.row)));
 
@@ -1533,6 +1814,7 @@ function paintScenery(buf, W, H, view, style) {
       const density = s === 'trees' ? art.density : s === 'copse' ? 0.85 : s === 'land' ? landDensity(art, c, r) : 0;
       if (!density || hash(c, r, 11) >= density) continue;
       const p = view.tileToScreen(c, r);
+      p.y -= Math.round(liftPx(tileHeight(view, c, r), view.grid.cell));
       const kind = art.trees[Math.floor(hash(c, r, 12) * art.trees.length)];
       const x = p.x + Math.round((hash(c, r, 13) - 0.5) * 4), y = p.y + Math.round((hash(c, r, 14) - 0.5) * 2);
       if (x < -10 || x > W + 10 || y < -2 || y > H + 16) continue;
@@ -1707,7 +1989,9 @@ function drawShotBar(ctx, W, H, info) {
 
   const x = 12 + info.types.length * 46 + 10;
   drawText(ctx, `CLUB: ${info.club}`, x, top + 8, GOLD);
-  drawText(ctx, info.aim ? `AIM: ${info.aim} YDS  (MAX ${info.max})` : `MAX: ${info.max} YDS`, x, top + 17);
+  // Uphill shots play longer, downhill shorter.
+  const slope = info.slope ? `  ${info.slope > 0 ? 'UP' : 'DOWN'} ${Math.abs(info.slope)}` : '';
+  drawText(ctx, info.aim ? `AIM: ${info.aim} YDS${slope}  (MAX ${info.max})` : `MAX: ${info.max} YDS`, x, top + 17);
   drawText(ctx, `LIE: ${info.lie}`, x, top + 26);
   drawText(ctx, `TO PIN: ${info.toPin} YDS   STROKE ${info.stroke}`, x, top + 35);
   const act = actionButtons(W, H);
@@ -1839,6 +2123,23 @@ function lieReach(golfer, type, lie) {
 // Furthest the golfer can carry this shot from this lie.
 const maxCarry = (golfer, type, lie, hole) => fullCarry(golfer) * type.reach * lieReach(golfer, type, lie) * (hole.altitude ?? 1);
 
+// How long a shot plays: uphill plays longer, downhill shorter, a yard for each
+// yard of rise or fall. The golfer allows for it when picking a club.
+const playsAs = (hole, from, to) => dist(from, to) + rise(hole, from, to);
+
+// The furthest point towards `aim` that this shot can carry to, allowing for the slope.
+function clampToReach(golfer, type, lie, hole, from, aim) {
+  const max = maxCarry(golfer, type, lie, hole);
+  if (playsAs(hole, from, aim) <= max) return aim;
+  let lo = 0, hi = 1;
+  const at = (f) => ({ x: from.x + (aim.x - from.x) * f, y: from.y + (aim.y - from.y) * f });
+  for (let k = 0; k < 20; k++) {
+    const mid = (lo + hi) / 2;
+    if (playsAs(hole, from, at(mid)) <= max) lo = mid; else hi = mid;
+  }
+  return at(lo);
+}
+
 // Clubs and their carry for an average golfer; scaled by each golfer's power.
 const CLUBS = [
   ['Driver', 235], ['3 Wood', 215], ['5 Wood', 200], ['4 Iron', 185], ['5 Iron', 175], ['6 Iron', 165],
@@ -1898,12 +2199,13 @@ function playShot(rng, golfer, ball, aim, typeKey, hole, weather, wind) {
   const type = shotType(typeKey);
   const from = ball.at;
   const max = maxCarry(golfer, type, ball.lie, hole);
-  let d = dist(from, aim);
-  if (d > max) { aim = { x: from.x + (aim.x - from.x) * max / d, y: from.y + (aim.y - from.y) * max / d }; d = max; }
+  aim = clampToReach(golfer, type, ball.lie, hole, from, aim);
+  const d = dist(from, aim);
+  const plays = Math.max(1, playsAs(hole, from, aim));
   const ux = (aim.x - from.x) / (d || 1), uy = (aim.y - from.y) / (d || 1);
   const rx = uy, ry = -ux; // to the golfer's right
 
-  const spread = shotSpread(golfer, type, ball.lie, d, max, weather);
+  const spread = shotSpread(golfer, type, ball.lie, plays, max, weather);
   let along = rng.gauss() * spread.long, across = rng.gauss() * spread.lat;
   const mishit = rng.chance(spread.mishit);
   if (mishit) {
@@ -1919,8 +2221,8 @@ function playShot(rng, golfer, ball, aim, typeKey, hole, weather, wind) {
 
   const landedOn = surfaceAt(hole, landing);
   const result = {
-    type: typeKey, club: chooseClub(golfer, type, d, ball.lie), from, aim, landing, mishit,
-    carry: dist(from, landing), landedOn, rest: landing, surface: landedOn, holed: false,
+    type: typeKey, club: chooseClub(golfer, type, plays, ball.lie), from, aim, landing, mishit,
+    carry: dist(from, landing), landedOn, rest: landing, surface: landedOn, holed: false, path: [landing],
   };
   if (landedOn === 'water') return result;
 
@@ -1928,20 +2230,50 @@ function playShot(rng, golfer, ball, aim, typeKey, hole, weather, wind) {
   let roll = result.carry * type.roll * (ROLL[landedOn] ?? 0.5) * (1 + 5 * (weather?.firm ?? 0));
   if (type.key === 'lob' && landedOn === 'green') roll *= 0.5;
   const c = result.carry || 1;
-  const vx = (landing.x - from.x) / c, vy = (landing.y - from.y) / c;
-  let p = landing, s = landedOn;
-  for (let left = roll; left > 0; left -= 0.5) {
-    const q = { x: p.x + vx * Math.min(0.5, left), y: p.y + vy * Math.min(0.5, left) };
+  const r = rollOut(hole, landing, { x: (landing.x - from.x) / c, y: (landing.y - from.y) / c }, roll, landedOn);
+  Object.assign(result, r);
+  return result;
+}
+
+// How steep the ground must be for a ball to start rolling down it by itself.
+const STEEP = { green: 0.05, fringe: 0.06, tee: 0.08, fairway: 0.08, waste: 0.12, rough: 0.18 }; // greens tilt less than this
+const ROLL_STEP = 0.5;
+
+// A ball rolling from `p` in direction `dir` with `roll` yards of run on flat
+// ground. Slopes speed it up or slow it down, bend it downhill, and a ball that
+// stops on a steep slope trickles on down it. Returns where it stops, on what,
+// whether it dropped, and the path it took.
+function rollOut(hole, p, dir, roll, surface) {
+  let left = roll, s = surface, dx = dir.x, dy = dir.y;
+  const most = roll + 40;
+  const path = [p];
+  for (let k = 0; k < 800; k++) {
+    const g = slopeAt(hole, p);
+    if (left <= 0) {
+      // Stopped: unless the slope is steep enough to start it off again.
+      const steep = Math.hypot(g.x, g.y);
+      if (steep <= (STEEP[s] ?? 0.2)) break;
+      dx = -g.x / steep; dy = -g.y / steep;
+      left = Math.min(3, (steep - (STEEP[s] ?? 0.2)) * 40);
+    }
+    // Downhill it runs on, uphill it slows; across a slope it falls away, more when slow.
+    const up = g.x * dx + g.y * dy;
+    const bend = 1.5 / (1 + left);
+    dx -= (g.x - up * dx) * bend; dy -= (g.y - up * dy) * bend;
+    const n = Math.hypot(dx, dy) || 1;
+    dx /= n; dy /= n;
+    const q = { x: p.x + dx * Math.min(ROLL_STEP, left), y: p.y + dy * Math.min(ROLL_STEP, left) };
+    left = Math.min(most, left - ROLL_STEP * (1 + 12 * up));
     const t = surfaceAt(hole, q);
     if (t === 'rough' && s !== 'rough') left *= 0.3;
     p = q; s = t;
-    if (dist(p, hole.pin) < 0.35 && left < 4) { result.holed = true; p = { ...hole.pin }; break; }
+    if (k % 4 === 3) path.push(p);
+    if (dist(p, hole.pin) < 0.35 && left < 4) { p = { ...hole.pin }; break; }
     if (t === 'water' || t === 'bunker' || t === 'trees') break;
   }
-  result.rest = p;
-  result.surface = s;
-  if (dist(p, hole.pin) < 0.35) { result.holed = true; result.rest = { ...hole.pin }; }
-  return result;
+  path.push(p);
+  const holed = dist(p, hole.pin) < 0.35;
+  return { rest: holed ? { ...hole.pin } : p, surface: s, holed, path };
 }
 
 // Where to drop after going in the water: back along the line towards where the
@@ -1960,8 +2292,9 @@ function waterDrop(hole, wet, from) {
 }
 
 // ---- putting.js ----
-// Putting is automatic, as in Sim Golf: the golfer's putting skill and the
-// distance decide whether it drops, and if not, how far away it finishes.
+// Putting is automatic, as in Sim Golf: the golfer's putting skill, the
+// distance and the slope of the green decide whether it drops, and if not, how
+// far away it finishes. Putts across a slope break, and downhill ones run on.
 // Distances here are yards; the game shows putts in feet.
 
 
@@ -1975,19 +2308,44 @@ function holeChance(golfer, ft) {
   return Math.min(0.99, Math.exp(-(ft - 1.5) / reach) * (0.9 + 0.1 * golfer.skills.putting / 100));
 }
 
-// Roll one putt from `from` at the hole. Returns { holed, rest, feet }.
-function putt(rng, golfer, from, pin) {
+// How the green slopes along a putt (+ uphill) and across it (+ falls to the
+// golfer's right), rise over run.
+function puttSlope(hole, from, pin) {
+  const d = dist(from, pin) || 1;
+  const ux = (pin.x - from.x) / d, uy = (pin.y - from.y) / d;
+  const g = hole ? slopeAt(hole, { x: (from.x + pin.x) / 2, y: (from.y + pin.y) / 2 }, 2) : { x: 0, y: 0 };
+  return { up: g.x * ux + g.y * uy, falls: g.x * -uy + g.y * ux, ux, uy };
+}
+
+// Roll one putt from `from` at the hole on `hole`'s green. Returns { holed, rest,
+// feet, path }, with the path curving as the putt breaks.
+function putt(rng, golfer, from, pin, hole = null) {
   const d = dist(from, pin);
   const ft = d * 3;
-  if (rng.chance(holeChance(golfer, ft))) return { holed: true, rest: { ...pin }, feet: feet(d) };
-  // A miss finishes a few feet away: further on long putts, closer for good putters.
-  const leaveFt = 0.8 + Math.abs(rng.gauss()) * ft * (0.07 + 0.1 * (1 - golfer.skills.putting / 100));
-  const ux = (pin.x - from.x) / (d || 1), uy = (pin.y - from.y) / (d || 1);
-  const past = rng.chance(0.6) ? 1 : -1; // a bold putt goes by
-  const a = rng.gauss() * 0.5;
-  const ca = Math.cos(a) * past, sa = Math.sin(a);
-  const leave = leaveFt / 3;
-  return { holed: false, rest: { x: pin.x + (ux * ca - uy * sa) * leave, y: pin.y + (uy * ca + ux * sa) * leave }, feet: feet(d) };
+  const { up, falls, ux, uy } = puttSlope(hole, from, pin);
+  // Break and pace are harder to judge from further away; downhill putts are quick.
+  const read = 1 + ft * (1.3 * Math.abs(falls) + 0.8 * Math.max(0, -up));
+  const holed = rng.chance(holeChance(golfer, ft) / read);
+  let rest = { ...pin };
+  if (!holed) {
+    // A miss finishes a few feet away: further on long putts and downhill, closer for good putters.
+    const leaveFt = 0.8 + Math.abs(rng.gauss()) * ft * (0.07 + 0.1 * (1 - golfer.skills.putting / 100)) * (1 + 10 * Math.max(0, -up));
+    const past = rng.chance(0.6) ? 1 : -1; // a bold putt goes by
+    // It tends to miss on the low side.
+    const a = rng.gauss() * 0.5 - Math.sign(falls) * Math.min(0.6, Math.abs(falls) * 15);
+    const ca = Math.cos(a) * past, sa = Math.sin(a);
+    const leave = leaveFt / 3;
+    rest = { x: pin.x + (ux * ca - uy * sa) * leave, y: pin.y + (uy * ca + ux * sa) * leave };
+  }
+  // The ball starts out on the high side and curls down to where it stops.
+  const curl = Math.max(-0.4, Math.min(0.4, falls * 6)) * dist(from, rest);
+  const via = { x: (from.x + rest.x) / 2 - uy * curl, y: (from.y + rest.y) / 2 + ux * curl };
+  const path = [];
+  for (let k = 0; k <= 16; k++) {
+    const t = k / 16, a = (1 - t) ** 2, b = 2 * t * (1 - t), c = t * t;
+    path.push({ x: a * from.x + b * via.x + c * rest.x, y: a * from.y + b * via.y + c * rest.y });
+  }
+  return { holed, rest, feet: feet(d), path };
 }
 
 // ---- play.js ----
@@ -2044,7 +2402,7 @@ function settle(state, shot) {
 }
 
 // Roll the current player's next putt, without moving the ball yet.
-const nextPutt = (state, rng) => putt(rng, current(state).golfer, current(state).at, state.hole.pin);
+const nextPutt = (state, rng) => putt(rng, current(state).golfer, current(state).at, state.hole.pin, state.hole);
 
 function settlePutt(state, p) {
   const me = current(state);
@@ -2311,9 +2669,7 @@ function rescale() {
 // The aim clamped to what the current shot can reach.
 function clampAim(p) {
   const me = current(game.play);
-  const max = maxCarry(me.golfer, shotType(ui.shot), me.lie, game.hole);
-  const d = dist(me.at, p);
-  return d <= max ? p : { x: me.at.x + (p.x - me.at.x) * max / d, y: me.at.y + (p.y - me.at.y) * max / d };
+  return clampToReach(me.golfer, shotType(ui.shot), me.lie, game.hole, me.at, p);
 }
 
 const humanTurn = () => !current(game.play).golfer.ai;
@@ -2321,7 +2677,7 @@ const humanTurn = () => !current(game.play).golfer.ai;
 function shoot() {
   if (ui.phase !== 'aim' || !ui.aim) return;
   const shot = hit(game.play, rng, ui.aim, ui.shot, game.weather, game.wind, (p) => isOutOfBounds(world.view, p));
-  const rollLen = dist(shot.landing, shot.rest);
+  const rollLen = pathLength(shot.path);
   const swingAt = performance.now();
   ui.anim = { shot, swingAt, start: swingAt + SWING, flight: 700 + shot.carry * 4, roll: rollLen > 0.5 ? 250 + rollLen * 25 : 0 };
   ui.phase = 'flight';
@@ -2342,17 +2698,40 @@ function pickShot(key) {
   if (ui.aim) ui.aim = clampAim(ui.aim);
 }
 
+const pathLength = (path) => path.slice(1).reduce((t, p, i) => t + dist(p, path[i]), 0);
+
+// The point a share `e` of the way along a path of points.
+function alongPath(path, e) {
+  let left = e * pathLength(path);
+  for (let i = 1; i < path.length; i++) {
+    const d = dist(path[i - 1], path[i]);
+    if (left <= d && d > 0) return { x: path[i - 1].x + (path[i].x - path[i - 1].x) * left / d, y: path[i - 1].y + (path[i].y - path[i - 1].y) * left / d };
+    left -= d;
+  }
+  return { ...path[path.length - 1] };
+}
+
+// Where the ball is in the air between two points: `z` is its height in yards
+// (above the sea, like the ground) and `h` how high it is off the ground.
+function inFlight(from, to, type, t) {
+  const p = flightPoint(from, to, type, t);
+  const ground = world.view.ground;
+  const z = ground(from) + (ground(to) - ground(from)) * t + p.h;
+  return { x: p.x, y: p.y, z, h: Math.max(0, z - ground(p)) };
+}
+const onGround = (p) => ({ x: p.x, y: p.y, z: world.view.ground(p), h: 0 });
+
 // Where the ball is right now, in yards, with its height.
 function ballNow(now) {
   const me = current(game.play);
   const a = ui.anim;
-  if (!a) return { ...me.at, h: 0 };
+  if (!a) return onGround(me.at);
   const t = (now - a.start) / a.flight;
-  if (t < 0) return { ...a.shot.from, h: 0 }; // still swinging
-  if (t < 1) return flightPoint(a.shot.from, a.shot.landing, shotType(a.shot.type), t);
+  if (t < 0) return onGround(a.shot.from); // still swinging
+  if (t < 1) return inFlight(a.shot.from, a.shot.landing, shotType(a.shot.type), t);
   const r = a.roll ? Math.min(1, (now - a.start - a.flight) / a.roll) : 1;
   const e = 1 - (1 - r) ** 2; // slows as it rolls out
-  return { x: a.shot.landing.x + (a.shot.rest.x - a.shot.landing.x) * e, y: a.shot.landing.y + (a.shot.rest.y - a.shot.landing.y) * e, h: 0 };
+  return onGround(a.shot.path ? alongPath(a.shot.path, e) : a.shot.rest);
 }
 
 function update(now) {
@@ -2441,7 +2820,7 @@ function updatePutting(now) {
     if (now < ui.nextPuttAt) return;
     const me = current(game.play);
     const p = nextPutt(game.play, rng);
-    ui.anim = { putt: p, shot: { from: me.at, landing: me.at, rest: p.rest }, start: now, flight: 0, roll: Math.min(2500, 500 + p.feet * 30) };
+    ui.anim = { putt: p, shot: { from: me.at, landing: me.at, rest: p.rest, path: p.path }, start: now, flight: 0, roll: Math.min(2500, 500 + p.feet * 30) };
     ui.banner = { text: `PUTT FROM ${p.feet} FT`, until: Infinity };
     return;
   }
@@ -2493,9 +2872,6 @@ function dot(x, y, color) {
   ctx.fillRect(Math.round(x), Math.round(y), 1, 1);
 }
 
-// Yards of height to pixels on display.
-const heightPx = (h) => h / world.view.grid.cell * TH * 1.5;
-
 // The planned shot: its flight as a dotted arc, and an oval where it's likely to land.
 function drawAim() {
   const me = current(game.play);
@@ -2504,10 +2880,10 @@ function drawAim() {
   const d = dist(me.at, ui.aim);
   const steps = Math.max(12, Math.round(d / 2));
   for (let k = 1; k < steps; k += 2) {
-    const p = flightPoint(me.at, ui.aim, type, k / steps);
-    const s = v.worldToScreen(p);
+    const p = inFlight(me.at, ui.aim, type, k / steps);
+    const s = v.worldToScreen(p), up = v.worldToScreen(p, p.z);
     dot(s.x, s.y, 'rgba(0, 0, 0, 0.25)');
-    dot(s.x, s.y - heightPx(p.h), '#ffffff');
+    dot(up.x, up.y, '#ffffff');
   }
   const max = maxCarry(me.golfer, type, me.lie, game.hole);
   const sp = shotSpread(me.golfer, type, me.lie, d, max, game.weather);
@@ -2550,15 +2926,15 @@ function render(now) {
     const a = playing ? ui.anim : null;
     const from = a ? a.shot.from : p.at;
     const stand = v.worldToScreen(from);
-    const ball = playing ? ballNow(now) : { ...p.at, h: 0 };
+    const ball = playing ? ballNow(now) : onGround(p.at);
     const pose = mood ? mood.kind : a?.swingAt ? 'swing' : 'stand';
     const frame = golferFrame(pose, a?.swingAt ? (now - a.swingAt) / SWING : 0, now);
     const x = stand.x + (mood ? 9 : playing ? -5 : 6); // after holing, stand clear of the flag
     items.push({ y: stand.y, draw: () => drawDinky(ctx, frame, x, stand.y + 1, p.golfer.shirt) || drawSprite(ctx, 'golfer', x, stand.y, { c: p.golfer.shirt }) });
     if (p.holed) return;
-    const s = v.worldToScreen(ball);
+    const s = v.worldToScreen(ball), up = v.worldToScreen(ball, ball.z);
     items.push({ y: s.y + 0.5, draw: () => {
-      const y = Math.round(s.y - heightPx(ball.h)), bx = Math.round(s.x);
+      const y = Math.round(up.y), bx = Math.round(s.x);
       if (ball.h > 0.3) { ctx.fillStyle = 'rgba(0, 0, 0, 0.45)'; ctx.fillRect(bx - 1, Math.round(s.y), 2, 1); }
       if (ball.h > 4 && drawDinky(ctx, ballFrame(ball.h), bx, y + 1)) return;
       ctx.fillStyle = '#ffffff';
@@ -2575,10 +2951,11 @@ function render(now) {
   const type = shotType(ui.shot);
   const max = Math.round(maxCarry(me.golfer, type, me.lie, game.hole));
   const aimYds = ui.aim ? Math.round(dist(me.at, ui.aim)) : 0;
+  const slope = ui.aim ? Math.round(playsAs(game.hole, me.at, ui.aim)) - aimYds : 0; // + uphill
   const canHit = ui.phase === 'aim' && !!ui.aim && !ui.dragging && humanTurn();
   drawShotBar(hud, W, H, {
-    types: SHOT_TYPES, selected: ui.shot, max, aim: aimYds, canHit,
-    club: chooseClub(me.golfer, type, aimYds || max, me.lie).toUpperCase(),
+    types: SHOT_TYPES, selected: ui.shot, max, aim: aimYds, slope, canHit,
+    club: chooseClub(me.golfer, type, aimYds + slope || max, me.lie).toUpperCase(),
     lie: LIE_NAMES[me.lie] ?? me.lie.toUpperCase(), toPin: Math.round(toPin(game.play)), stroke: me.holed ? me.strokes : me.strokes + 1,
     hint: !humanTurn() && ui.phase !== 'done' ? `${who(me.golfer)} IS PLAYING` : ui.phase === 'putting' ? 'PUTTING...' : ui.phase !== 'aim' ? '' : !ui.aim ? 'DRAG ON THE COURSE TO AIM' : ui.dragging ? 'LET GO TO SET THE AIM' : 'CHANGE SHOT OR DRAG AGAIN',
   });

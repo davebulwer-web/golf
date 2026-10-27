@@ -113,7 +113,9 @@ export function drawShotBar(ctx, W, H, info) {
 
   const x = 12 + info.types.length * 46 + 10;
   drawText(ctx, `CLUB: ${info.club}`, x, top + 8, GOLD);
-  drawText(ctx, info.aim ? `AIM: ${info.aim} YDS  (MAX ${info.max})` : `MAX: ${info.max} YDS`, x, top + 17);
+  // Uphill shots play longer, downhill shorter.
+  const slope = info.slope ? `  ${info.slope > 0 ? 'UP' : 'DOWN'} ${Math.abs(info.slope)}` : '';
+  drawText(ctx, info.aim ? `AIM: ${info.aim} YDS${slope}  (MAX ${info.max})` : `MAX: ${info.max} YDS`, x, top + 17);
   drawText(ctx, `LIE: ${info.lie}`, x, top + 26);
   drawText(ctx, `TO PIN: ${info.toPin} YDS   STROKE ${info.stroke}`, x, top + 35);
   const act = actionButtons(W, H);

@@ -5,11 +5,10 @@
 import { makeRng, dist, STYLES } from './course-generator.js';
 import { buildCourse } from './course.js';
 import { layoutHole, shiftView, addSurroundings, drawHole, isOutOfBounds } from './hole-view.js';
-import { TH } from './iso.js';
 import { drawSprite } from './art.js';
 import { drawHud, drawShotBar, drawBanner, drawScorecard, shotButtons, actionButtons, BAR_TOP } from './hud.js';
 import { roundWeather, holeWind } from './weather.js';
-import { SHOT_TYPES, shotType, maxCarry, chooseClub, shotSpread, flightPoint } from './shots.js';
+import { SHOT_TYPES, shotType, maxCarry, chooseClub, shotSpread, flightPoint, clampToReach, playsAs } from './shots.js';
 import { PLAYER, RIVAL } from './golfers.js';
 import { startHole, current, toPin, hit, settle, nextPutt, settlePutt, newRound, standing, nextTurn, allHoled, pickUp, PICK_UP } from './play.js';
 import { planShot } from './ai.js';
@@ -153,9 +152,7 @@ function rescale() {
 // The aim clamped to what the current shot can reach.
 function clampAim(p) {
   const me = current(game.play);
-  const max = maxCarry(me.golfer, shotType(ui.shot), me.lie, game.hole);
-  const d = dist(me.at, p);
-  return d <= max ? p : { x: me.at.x + (p.x - me.at.x) * max / d, y: me.at.y + (p.y - me.at.y) * max / d };
+  return clampToReach(me.golfer, shotType(ui.shot), me.lie, game.hole, me.at, p);
 }
 
 const humanTurn = () => !current(game.play).golfer.ai;
@@ -163,7 +160,7 @@ const humanTurn = () => !current(game.play).golfer.ai;
 function shoot() {
   if (ui.phase !== 'aim' || !ui.aim) return;
   const shot = hit(game.play, rng, ui.aim, ui.shot, game.weather, game.wind, (p) => isOutOfBounds(world.view, p));
-  const rollLen = dist(shot.landing, shot.rest);
+  const rollLen = pathLength(shot.path);
   const swingAt = performance.now();
   ui.anim = { shot, swingAt, start: swingAt + SWING, flight: 700 + shot.carry * 4, roll: rollLen > 0.5 ? 250 + rollLen * 25 : 0 };
   ui.phase = 'flight';
@@ -184,17 +181,40 @@ function pickShot(key) {
   if (ui.aim) ui.aim = clampAim(ui.aim);
 }
 
+const pathLength = (path) => path.slice(1).reduce((t, p, i) => t + dist(p, path[i]), 0);
+
+// The point a share `e` of the way along a path of points.
+function alongPath(path, e) {
+  let left = e * pathLength(path);
+  for (let i = 1; i < path.length; i++) {
+    const d = dist(path[i - 1], path[i]);
+    if (left <= d && d > 0) return { x: path[i - 1].x + (path[i].x - path[i - 1].x) * left / d, y: path[i - 1].y + (path[i].y - path[i - 1].y) * left / d };
+    left -= d;
+  }
+  return { ...path[path.length - 1] };
+}
+
+// Where the ball is in the air between two points: `z` is its height in yards
+// (above the sea, like the ground) and `h` how high it is off the ground.
+function inFlight(from, to, type, t) {
+  const p = flightPoint(from, to, type, t);
+  const ground = world.view.ground;
+  const z = ground(from) + (ground(to) - ground(from)) * t + p.h;
+  return { x: p.x, y: p.y, z, h: Math.max(0, z - ground(p)) };
+}
+const onGround = (p) => ({ x: p.x, y: p.y, z: world.view.ground(p), h: 0 });
+
 // Where the ball is right now, in yards, with its height.
 function ballNow(now) {
   const me = current(game.play);
   const a = ui.anim;
-  if (!a) return { ...me.at, h: 0 };
+  if (!a) return onGround(me.at);
   const t = (now - a.start) / a.flight;
-  if (t < 0) return { ...a.shot.from, h: 0 }; // still swinging
-  if (t < 1) return flightPoint(a.shot.from, a.shot.landing, shotType(a.shot.type), t);
+  if (t < 0) return onGround(a.shot.from); // still swinging
+  if (t < 1) return inFlight(a.shot.from, a.shot.landing, shotType(a.shot.type), t);
   const r = a.roll ? Math.min(1, (now - a.start - a.flight) / a.roll) : 1;
   const e = 1 - (1 - r) ** 2; // slows as it rolls out
-  return { x: a.shot.landing.x + (a.shot.rest.x - a.shot.landing.x) * e, y: a.shot.landing.y + (a.shot.rest.y - a.shot.landing.y) * e, h: 0 };
+  return onGround(a.shot.path ? alongPath(a.shot.path, e) : a.shot.rest);
 }
 
 function update(now) {
@@ -283,7 +303,7 @@ function updatePutting(now) {
     if (now < ui.nextPuttAt) return;
     const me = current(game.play);
     const p = nextPutt(game.play, rng);
-    ui.anim = { putt: p, shot: { from: me.at, landing: me.at, rest: p.rest }, start: now, flight: 0, roll: Math.min(2500, 500 + p.feet * 30) };
+    ui.anim = { putt: p, shot: { from: me.at, landing: me.at, rest: p.rest, path: p.path }, start: now, flight: 0, roll: Math.min(2500, 500 + p.feet * 30) };
     ui.banner = { text: `PUTT FROM ${p.feet} FT`, until: Infinity };
     return;
   }
@@ -335,9 +355,6 @@ function dot(x, y, color) {
   ctx.fillRect(Math.round(x), Math.round(y), 1, 1);
 }
 
-// Yards of height to pixels on display.
-const heightPx = (h) => h / world.view.grid.cell * TH * 1.5;
-
 // The planned shot: its flight as a dotted arc, and an oval where it's likely to land.
 function drawAim() {
   const me = current(game.play);
@@ -346,10 +363,10 @@ function drawAim() {
   const d = dist(me.at, ui.aim);
   const steps = Math.max(12, Math.round(d / 2));
   for (let k = 1; k < steps; k += 2) {
-    const p = flightPoint(me.at, ui.aim, type, k / steps);
-    const s = v.worldToScreen(p);
+    const p = inFlight(me.at, ui.aim, type, k / steps);
+    const s = v.worldToScreen(p), up = v.worldToScreen(p, p.z);
     dot(s.x, s.y, 'rgba(0, 0, 0, 0.25)');
-    dot(s.x, s.y - heightPx(p.h), '#ffffff');
+    dot(up.x, up.y, '#ffffff');
   }
   const max = maxCarry(me.golfer, type, me.lie, game.hole);
   const sp = shotSpread(me.golfer, type, me.lie, d, max, game.weather);
@@ -392,15 +409,15 @@ function render(now) {
     const a = playing ? ui.anim : null;
     const from = a ? a.shot.from : p.at;
     const stand = v.worldToScreen(from);
-    const ball = playing ? ballNow(now) : { ...p.at, h: 0 };
+    const ball = playing ? ballNow(now) : onGround(p.at);
     const pose = mood ? mood.kind : a?.swingAt ? 'swing' : 'stand';
     const frame = golferFrame(pose, a?.swingAt ? (now - a.swingAt) / SWING : 0, now);
     const x = stand.x + (mood ? 9 : playing ? -5 : 6); // after holing, stand clear of the flag
     items.push({ y: stand.y, draw: () => drawDinky(ctx, frame, x, stand.y + 1, p.golfer.shirt) || drawSprite(ctx, 'golfer', x, stand.y, { c: p.golfer.shirt }) });
     if (p.holed) return;
-    const s = v.worldToScreen(ball);
+    const s = v.worldToScreen(ball), up = v.worldToScreen(ball, ball.z);
     items.push({ y: s.y + 0.5, draw: () => {
-      const y = Math.round(s.y - heightPx(ball.h)), bx = Math.round(s.x);
+      const y = Math.round(up.y), bx = Math.round(s.x);
       if (ball.h > 0.3) { ctx.fillStyle = 'rgba(0, 0, 0, 0.45)'; ctx.fillRect(bx - 1, Math.round(s.y), 2, 1); }
       if (ball.h > 4 && drawDinky(ctx, ballFrame(ball.h), bx, y + 1)) return;
       ctx.fillStyle = '#ffffff';
@@ -417,10 +434,11 @@ function render(now) {
   const type = shotType(ui.shot);
   const max = Math.round(maxCarry(me.golfer, type, me.lie, game.hole));
   const aimYds = ui.aim ? Math.round(dist(me.at, ui.aim)) : 0;
+  const slope = ui.aim ? Math.round(playsAs(game.hole, me.at, ui.aim)) - aimYds : 0; // + uphill
   const canHit = ui.phase === 'aim' && !!ui.aim && !ui.dragging && humanTurn();
   drawShotBar(hud, W, H, {
-    types: SHOT_TYPES, selected: ui.shot, max, aim: aimYds, canHit,
-    club: chooseClub(me.golfer, type, aimYds || max, me.lie).toUpperCase(),
+    types: SHOT_TYPES, selected: ui.shot, max, aim: aimYds, slope, canHit,
+    club: chooseClub(me.golfer, type, aimYds + slope || max, me.lie).toUpperCase(),
     lie: LIE_NAMES[me.lie] ?? me.lie.toUpperCase(), toPin: Math.round(toPin(game.play)), stroke: me.holed ? me.strokes : me.strokes + 1,
     hint: !humanTurn() && ui.phase !== 'done' ? `${who(me.golfer)} IS PLAYING` : ui.phase === 'putting' ? 'PUTTING...' : ui.phase !== 'aim' ? '' : !ui.aim ? 'DRAG ON THE COURSE TO AIM' : ui.dragging ? 'LET GO TO SET THE AIM' : 'CHANGE SHOT OR DRAG AGAIN',
   });

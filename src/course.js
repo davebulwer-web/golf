@@ -6,6 +6,7 @@
 
 import { generateCourse, STYLES, makeRng, pointAt, blobGap, dist } from './course-generator.js';
 import { courseMap } from './course-map.js';
+import { terrainFor } from './terrain.js';
 
 for (const st of Object.values(STYLES)) {
   st.dogleg = Math.min(0.95, st.dogleg + 0.2);
@@ -31,6 +32,9 @@ export function buildCourse(def, { layout = true } = {}) {
   for (const hole of course.holes) addHazards(hole);
   // Lay the course out; a seaside hole with no room on the coast loses its sea.
   if (layout) for (const n of courseMap(course).inland) course.holes[n].sea = null;
+  // Hills and slopes, from where each hole sits on the map.
+  const map = layout ? courseMap(course) : null;
+  course.holes.forEach((hole, n) => { hole.terrain = terrainFor(course, map ? map.places[n] : { x: 0, y: 0, rot: 0 }, map?.coast ?? null); });
   return course;
 }
 
