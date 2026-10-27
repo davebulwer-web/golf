@@ -56,7 +56,7 @@ const holes = Number(process.argv[3] ?? 1);
       }
       await page.waitForTimeout(150);
     }
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(2000); // the score banner shows before the card
     if (h === holes - 1) await page.screenshot({ path: `${name}-card.png` });
     await page.keyboard.press('Enter');
     await page.waitForTimeout(300);
