@@ -12,7 +12,9 @@ The game fills the window and shows the whole hole. Zoom in with the mouse wheel
 
 Water costs a shot and you drop back on dry land; past the woods is out of bounds (stroke and distance). Once you're on the green the view zooms in and the putting plays itself: each putt is decided by the golfer's putting skill and the distance.
 
-Scoring is medal play. After each hole the scorecard shows the round so far (front nine, back nine, total against par); `Enter` goes on to the next hole and `Tab` shows or hides the card. The hole card at the top left keeps the running score.
+You play against Bertie, a computer golfer. Whoever is farthest from the pin plays next, as in a real game. Bertie picks a shot by trying each shot type and a spread of landing spots in his head, using the same shot model and wind as you, and takes the one that should leave the fewest strokes; his nerve decides how much a risky shot puts him off. You'll see his aim line for a moment before he hits.
+
+Scoring is medal play. After each hole the scorecard shows the round so far for both of you (front nine, back nine, total against par); `Enter` goes on to the next hole and `Tab` shows or hides the card. The hole card at the top left keeps the running score.
 
 Other keys: `N` / `P` jump to the next or previous hole (for testing; skipped holes stay blank on the card), `R` a new random course, `S` change course style. You can also pick a hole in the address bar, e.g. `golf.html?style=links&seed=7&hole=2`.
 
@@ -24,6 +26,7 @@ The game is plain JavaScript and a canvas, with no engine or libraries.
 - `src/course.js`: the game's tweaks to the generator: more doglegs and extra hazards, on their own random stream.
 - `src/shots.js`: the five shot types, reach, club choice, scatter, wind, roll and water drops.
 - `src/golfers.js`: golfers and their skills.
+- `src/ai.js`: how the computer golfer chooses its shot.
 - `src/putting.js`: automatic putting from skill and distance.
 - `src/play.js`: playing a hole and a round: strokes, putts, penalties and whose turn it is.
 - `src/iso.js`: the isometric projection between grid tiles, yards and screen pixels.
@@ -32,4 +35,4 @@ The game is plain JavaScript and a canvas, with no engine or libraries.
 - `src/weather.js`: the wind for a round and how it blows across each hole.
 - `src/hud.js`, `src/main.js`: the on-screen panels and the page itself.
 
-`index.html` loads the source files directly, which needs a local web server (for example `npx serve`). After changing anything in `src/`, rebuild the single-file version with `node tools/build.mjs`. `node tools/screenshots.cjs` saves screenshots of a few holes to `screenshots/`, and `node tools/playtest.cjs` plays a hole aiming at the pin (both need Playwright). `node tools/check-shots.mjs` prints tables of shot distances, scatter and hazard counts.
+`index.html` loads the source files directly, which needs a local web server (for example `npx serve`). After changing anything in `src/`, rebuild the single-file version with `node tools/build.mjs`. `node tools/screenshots.cjs` saves screenshots of a few holes to `screenshots/`, and `node tools/playtest.cjs` plays holes for you aiming at the pin while Bertie plays his own shots (both need Playwright). `node tools/check-shots.mjs` prints tables of shot distances, scatter and hazard counts.

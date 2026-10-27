@@ -64,5 +64,36 @@ export function settlePutt(state, p) {
   me.holed = p.holed;
 }
 
-// A round's scores, hole by hole (null until played).
-export const newRound = (course, key) => ({ key, pars: course.holes.map((h) => h.par), scores: Array(18).fill(null), putts: Array(18).fill(null) });
+// A round's scores for each golfer, hole by hole (null until played).
+export const newRound = (course, key, golfers) => ({
+  key, pars: course.holes.map((h) => h.par),
+  players: golfers.map((g) => ({ name: g.name, shirt: g.shirt, scores: Array(18).fill(null), putts: Array(18).fill(null) })),
+});
+
+// Score against par so far, and how many holes that covers.
+export function standing(round, i) {
+  const done = round.players[i].scores.map((sc, h) => (sc == null ? null : sc - round.pars[h])).filter((d) => d != null);
+  return { toPar: done.reduce((t, d) => t + d, 0), holes: done.length };
+}
+
+// Golf's order of play: whoever is furthest from the hole goes next. On the tee,
+// everyone is level, so the order the golfers were listed in decides.
+export function nextTurn(state) {
+  let best = -1, far = -1;
+  state.players.forEach((p, i) => {
+    if (p.holed) return;
+    const d = dist(p.at, state.hole.pin);
+    if (d > far + 0.01) { far = d; best = i; }
+  });
+  return best;
+}
+
+export const allHoled = (state) => state.players.every((p) => p.holed);
+
+// A golfer who reaches this many strokes picks up and takes it as their score.
+export const PICK_UP = 10;
+export function pickUp(state) {
+  const me = current(state);
+  me.strokes = PICK_UP;
+  me.holed = true;
+}
