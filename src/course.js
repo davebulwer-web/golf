@@ -5,6 +5,7 @@
 // overall shape; the extra hazards come from their own random stream.
 
 import { generateCourse, STYLES, makeRng, pointAt, blobGap, dist } from './course-generator.js';
+import { courseMap } from './course-map.js';
 
 for (const st of Object.values(STYLES)) {
   st.dogleg = Math.min(0.95, st.dogleg + 0.2);
@@ -24,9 +25,12 @@ function blob(r, x, y, R, amp = 0.22, stretch = [1, 1.5]) {
   return { x, y, r: R, rot: r.range(0, Math.PI), sx: r.range(...stretch), h };
 }
 
-export function buildCourse(def) {
+// Pass { layout: false } to skip laying the holes out on the course map (quicker, for stats).
+export function buildCourse(def, { layout = true } = {}) {
   const course = generateCourse(def);
   for (const hole of course.holes) addHazards(hole);
+  // Lay the course out; a seaside hole with no room on the coast loses its sea.
+  if (layout) for (const n of courseMap(course).inland) course.holes[n].sea = null;
   return course;
 }
 

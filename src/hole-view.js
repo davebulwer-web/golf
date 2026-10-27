@@ -1,6 +1,7 @@
 // Draws a whole hole as isometric pixel art into a packed pixel buffer.
 
-import { holeToGrid, pointAt, TEE_SETS } from './course-generator.js';
+import { holeToGrid, holeBounds, pointAt, surfaceAt, TEE_SETS } from './course-generator.js';
+import { neighbours, courseMap, coastAt, toMap } from './course-map.js';
 import { fitView, makeView } from './iso.js';
 import { groundPalette, STYLE_ART, SPRITES, blit, recolor, hex } from './art.js';
 
@@ -26,31 +27,90 @@ export function layoutHole(hole, box) {
     best = fitView(holeToGrid(hole, { cell }), box);
     if (best.fits) break;
   }
-  best.view.look = thinTrees(best.view.grid);
+  const { rows, cols, tiles } = best.view.grid;
+  best.view.own = thinTrees({ c0: 0, r0: 0, rows, cols, tiles }, best.view.grid.cell);
+  best.view.look = best.view.own;
+  best.view.others = [];
   return best.view;
 }
 
 // The same view moved by (dx, dy) pixels, e.g. to draw into a bigger image with a margin.
 export function shiftView(view, dx, dy) {
-  return { ...makeView(view.grid, view.ox + dx, view.oy + dy), look: view.look };
+  return { ...makeView(view.grid, view.ox + dx, view.oy + dy), own: view.own, look: view.look, others: view.others };
 }
 
-// Beyond the band of woods is out of bounds.
+// What to draw at tile (col, row): a surface, or 'land' for open grass.
+const lookAt = (look, c, r) => look.tiles[r - look.r0]?.[c - look.c0] ?? 'land';
+
+// Beyond this hole's own band of woods is out of bounds, other holes included.
 export function isOutOfBounds(view, p) {
   const t = view.grid.toTile(p);
-  return (view.look[t.row]?.[t.col] ?? 'land') === 'land';
+  return lookAt(view.own, t.col, t.row) === 'land';
 }
+
+// Fill in everything around the hole that shows in a W x H image: the other
+// holes of the course nearby (from the course map) and, on links, the open sea.
+export function addSurroundings(view, course, index, W, H) {
+  const { grid } = view;
+  const hole = course.holes[index];
+  const others = neighbours(course, index);
+  const { places, coast } = courseMap(course);
+  const ownBounds = holeBounds(hole, 0);
+  const corners = [[0, 0], [W, 0], [0, H + 16], [W, H + 16]].map(([x, y]) => view.screenToTile(x, y));
+  const c0 = Math.floor(Math.min(...corners.map((t) => t.col))) - 1, c1 = Math.ceil(Math.max(...corners.map((t) => t.col))) + 1;
+  const r0 = Math.floor(Math.min(...corners.map((t) => t.row))) - 1, r1 = Math.ceil(Math.max(...corners.map((t) => t.row))) + 1;
+  const tiles = [];
+  const own = { ...view.own, tiles: view.own.tiles.map((row) => row.slice()) };
+  for (let r = r0; r <= r1; r++) {
+    const row = new Array(c1 - c0 + 1);
+    for (let c = c0; c <= c1; c++) {
+      const s = view.tileToScreen(c, r);
+      let t = 'trees';
+      if (s.x < -TILE_PAD || s.x > W + TILE_PAD || s.y < -TILE_PAD || s.y > H + 3 * TILE_PAD) t = 'land';
+      else {
+        const mine = grid.tiles[r]?.[c];
+        const p = grid.toWorld(c, r);
+        if (mine && mine !== 'trees') t = mine;
+        else if (!mine && hole.sea && p.x > ownBounds.minX && p.x < ownBounds.maxX && p.y > ownBounds.minY && p.y < ownBounds.maxY) {
+          const here = surfaceAt(hole, p, true);
+          if (here === 'sea' || here === 'beach') t = here;
+        }
+        if (t === 'trees') {
+          for (const o of others) {
+            const q = o.toThere(p), b = o.bounds;
+            if (q.x < b.minX || q.x > b.maxX || q.y < b.minY || q.y > b.maxY) continue;
+            const there = surfaceAt(o.hole, q, true);
+            if (there !== 'trees') {
+              t = there;
+              break;
+            }
+          }
+        }
+        if (t === 'trees') t = coastAt(coast, toMap(places[index], p)) ?? 'trees';
+        // Other holes and the open sea are out of bounds.
+        if (t !== 'trees' && (!mine || mine === 'trees') && own.tiles[r - own.r0]?.[c - own.c0]) own.tiles[r - own.r0][c - own.c0] = 'land';
+      }
+      row[c - c0] = t;
+    }
+    tiles.push(row);
+  }
+  view.look = thinTrees({ c0, r0, rows: tiles.length, cols: c1 - c0 + 1, tiles }, grid.cell);
+  view.others = others;
+  view.own = own;
+}
+const TILE_PAD = 24;
 
 // The generator fills everything outside the rough with trees. For drawing, keep
 // a ragged band of woods along the hole and open grass beyond it (still trees for play).
 const WOODS_YARDS = 22;
-function thinTrees(grid) {
-  const { rows, cols, cell, tiles } = grid;
+// `area` is { c0, r0, rows, cols, tiles } with tiles[r - r0][c - c0].
+function thinTrees(area, cell) {
+  const { c0, r0, rows, cols, tiles } = area;
   const far = new Int16Array(rows * cols).fill(-1);
   const queue = [];
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
-      if (tiles[r][c] !== 'trees') { far[r * cols + c] = 0; queue.push(r * cols + c); }
+      if (tiles[r][c] !== 'trees' && tiles[r][c] !== 'land') { far[r * cols + c] = 0; queue.push(r * cols + c); }
     }
   }
   for (let q = 0; q < queue.length; q++) {
@@ -62,10 +122,11 @@ function thinTrees(grid) {
       queue.push(kk);
     }
   }
-  return tiles.map((row, r) => row.map((t, c) => {
-    const depth = (WOODS_YARDS * (0.6 + 0.8 * hash(c >> 1, r >> 1, 21))) / cell;
-    return t === 'trees' && far[r * cols + c] > depth ? 'land' : t;
+  const out = tiles.map((row, r) => row.map((t, c) => {
+    const depth = (WOODS_YARDS * (0.6 + 0.8 * hash((c + c0) >> 1, (r + r0) >> 1, 21))) / cell;
+    return t === 'trees' && (far[r * cols + c] < 0 || far[r * cols + c] > depth) ? 'land' : t;
   }));
+  return { c0, r0, rows, cols, tiles: out };
 }
 
 // The surface under every screen pixel, plus its tile, for texturing.
@@ -83,7 +144,7 @@ function sampleGround(view, W, H) {
       const t = view.screenToTile(x + 0.5, y + 0.5);
       const c = Math.round(t.col), r = Math.round(t.row);
       const k = y * W + x;
-      surf[k] = id(view.look[r]?.[c] ?? 'land');
+      surf[k] = id(lookAt(view.look, c, r));
       tc[k] = c; tr[k] = r;
     }
   }
@@ -126,7 +187,7 @@ function paintScenery(buf, W, H, view, style) {
   const items = [];
   for (let r = r0; r <= r1; r++) {
     for (let c = c0; c <= c1; c++) {
-      const s = view.look[r]?.[c] ?? 'land';
+      const s = lookAt(view.look, c, r);
       const density = s === 'trees' ? art.density : s === 'copse' ? 0.85 : s === 'land' ? landDensity(art, c, r) : 0;
       if (!density || hash(c, r, 11) >= density) continue;
       const p = view.tileToScreen(c, r);
@@ -153,6 +214,11 @@ function paintMarkers(buf, W, H, view, hole, actors) {
   }
   const pin = view.worldToScreen(hole.pin);
   items.push({ y: pin.y, draw: () => blit(buf, W, H, SPRITES.flag, pin.x, pin.y) });
+  // Flags on the other holes' greens.
+  for (const o of view.others) {
+    const at = view.worldToScreen(o.toHere(o.hole.pin));
+    items.push({ y: at.y, draw: () => blit(buf, W, H, SPRITES.flag, at.x, at.y) });
+  }
   for (const a of actors) {
     const p = view.worldToScreen(a.at);
     if (a.ball) items.push({ y: p.y, draw: () => put(buf, W, H, p.x, p.y, hex('#ffffff')) });
@@ -176,5 +242,18 @@ export function drawHole(buf, W, H, hole, view, actors = []) {
   const ground = sampleGround(view, W, H);
   paintGround(buf, W, H, hole.style, ground);
   paintScenery(buf, W, H, view, hole.style);
+  if (view.others.length) shadeOutOfBounds(buf, W, H, view, ground);
   paintMarkers(buf, W, H, view, hole, actors);
+}
+
+// Darken everything out of bounds a little, so the hole being played stands out
+// from its neighbours. The sea is left alone: it has its own edge.
+function shadeOutOfBounds(buf, W, H, view, g) {
+  const open = new Set(['sea', 'beach'].map((s) => g.names.indexOf(s)));
+  for (let k = 0; k < W * H; k++) {
+    if (open.has(g.surf[k]) || lookAt(view.own, g.tc[k], g.tr[k]) !== 'land') continue;
+    const c = buf[k];
+    const r = (c & 255) * 0.8, gr = ((c >>> 8) & 255) * 0.8, b = ((c >>> 16) & 255) * 0.82;
+    buf[k] = (c & 0xff000000) | (b << 16) | (gr << 8) | r;
+  }
 }

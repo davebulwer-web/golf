@@ -47,7 +47,7 @@ for (const style of Object.keys(STYLES)) {
     }
     return `${(doglegs / 20).toFixed(1)} doglegs, ${(bunkers / 20).toFixed(0)} bunkers, ${(water / 20).toFixed(1)} water`;
   };
-  console.log(style.padEnd(10), tally(buildCourse));
+  console.log(style.padEnd(10), tally((def) => buildCourse(def, { layout: false })));
 }
 
 console.log('\nPutting for the player: average putts and three-putt rate (2000 tries each)');
