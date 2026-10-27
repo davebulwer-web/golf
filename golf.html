@@ -5,13 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Golf</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #14101f; }
-  body { display: flex; align-items: center; justify-content: center; overflow: hidden; }
-  canvas { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+  html, body { margin: 0; height: 100%; background: #14101f; overflow: hidden; }
+  canvas { position: fixed; left: 0; top: 0; image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+  #hud { pointer-events: none; }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
+<canvas id="hud"></canvas>
 <script>
 (() => {
 // ---- course-generator.js ----
@@ -582,6 +583,89 @@ function quickStrokeIndex(course) {
   return course.holes.map((h) => si[h.number]);
 }
 
+// ---- course.js ----
+// The game's take on the generator: more doglegs and more hazards than the
+// management game, so shaping a shot round a corner or away from trouble pays.
+// The generator itself is untouched. The tweaks below only change probabilities
+// and sizes, never how many random numbers it draws, so every hole keeps its
+// overall shape; the extra hazards come from their own random stream.
+
+
+for (const st of Object.values(STYLES)) {
+  st.dogleg = Math.min(0.95, st.dogleg + 0.2);
+  st.bend = Math.round(st.bend * 1.2);
+  st.sharpDogleg = Math.min(0.5, (st.sharpDogleg ?? 0) * 2.5);
+}
+
+// Like the generator's blobs: a circle with a wobbly edge, stretched and turned.
+function blob(r, x, y, R, amp = 0.22, stretch = [1, 1.5]) {
+  const h = [];
+  let left = amp;
+  for (let k = 2; k <= 4 && left > 0.01; k++) {
+    const a = k === 4 ? left : r.range(0.3, 0.7) * left;
+    h.push([k, a, r.range(0, Math.PI * 2)]);
+    left -= a;
+  }
+  return { x, y, r: R, rot: r.range(0, Math.PI), sx: r.range(...stretch), h };
+}
+
+function buildCourse(def) {
+  const course = generateCourse(def);
+  for (const hole of course.holes) addHazards(hole);
+  return course;
+}
+
+function addHazards(hole) {
+  const st = STYLES[hole.style];
+  const r = makeRng(hole.seed ^ 0x4a7a2d);
+  const wet = st.water[1] + 0.15; // how often a style picks water over sand
+  const clearOfGreen = (p, rad) => blobGap(hole.green, p) > rad + 3;
+  const add = (p, rad, water) => {
+    if (!clearOfGreen(p, rad)) return;
+    if (water) hole.water.push(blob(r, p.x, p.y, rad, 0.28, [1, 1.7]));
+    else hole.bunkers.push({ ...blob(r, p.x, p.y, rad, st.potBunkers ? 0.08 : 0.24, st.potBunkers ? [1, 1.15] : [1, 1.6]), greenside: false });
+  };
+  const bunkerR = () => r.range(...st.fwBunkerR) * 1.1;
+
+  if (hole.par === 3) {
+    // A second guard on the other side of the green, so the shape of the shot in matters.
+    if (r.chance(0.6)) {
+      const a = r.range(0, Math.PI * 2), rad = r.range(...st.gsBunkerR);
+      const d = hole.green.r + rad * 0.7;
+      add({ x: hole.green.x + Math.cos(a) * d, y: hole.green.y + Math.sin(a) * d }, rad, false);
+    }
+    return;
+  }
+
+  const pts = hole.line.points;
+  const seg0 = hole.line.segs[0], seg1 = hole.line.segs[1];
+  const turn = seg1 ? seg0.ux * seg1.uy - seg0.uy * seg1.ux : 0; // > 0 turns left
+  if (Math.abs(turn) > 0.12) {
+    // Dogleg: trouble on the inside to punish cutting the corner, and a bunker
+    // straight through the corner to catch a shot that doesn't turn.
+    const inside = turn > 0 ? 1 : -1; // pointAt's positive offset is to the left
+    const bendS = seg0.len;
+    const rad = r.range(12, 20);
+    add(pointAt(hole.line, bendS - rad * 0.8, inside * (hole.fwHalf + rad * 0.5)), rad, r.chance(wet));
+    const through = r.range(18, 32), rad2 = bunkerR();
+    add({ x: pts[1].x + seg0.ux * through, y: pts[1].y + seg0.uy * through }, rad2, false);
+  } else {
+    // Straight hole: hazards either side of the driving zone, staggered, so the
+    // safe line favours one shape over the other.
+    const side = r.chance(0.5) ? 1 : -1;
+    const s1 = Math.min(r.range(215, 250), hole.line.length * 0.6);
+    const rad = r.range(10, 18);
+    add(pointAt(hole.line, s1, side * (hole.fwHalf + rad * 0.4)), rad, r.chance(wet));
+    add(pointAt(hole.line, s1 + r.range(20, 40), -side * (hole.fwHalf + 2)), bunkerR(), false);
+  }
+  // Par 5s get something to think about on the lay-up too.
+  if (hole.par === 5) {
+    const s = hole.line.length - r.range(90, 130);
+    const p = pointAt(hole.line, s, (r.chance(0.5) ? 1 : -1) * hole.fwHalf * r.range(0.2, 0.9));
+    if (dist(p, hole.green) > hole.green.r + 25) add(p, bunkerR(), r.chance(wet * 0.6));
+  }
+}
+
 // ---- art.js ----
 // Placeholder pixel art: ground colours, sprites and a tiny bitmap font.
 // Everything is drawn from code so there are no image files to load.
@@ -790,6 +874,29 @@ const recolor = (sprite, map) => {
 };
 
 
+// A sprite as a small canvas, for drawing things that move over the hole.
+const spriteCache = new Map();
+function spriteImage(name, recolors = {}) {
+  const key = name + JSON.stringify(recolors);
+  if (!spriteCache.has(key)) {
+    const s = SPRITES[name];
+    const c = document.createElement('canvas');
+    c.width = s.w; c.height = s.h;
+    const g = c.getContext('2d');
+    const img = g.createImageData(s.w, s.h);
+    const tint = recolor(s, recolors);
+    blit(new Uint32Array(img.data.buffer), s.w, s.h, s, s.ax, s.ay, tint);
+    g.putImageData(img, 0, 0);
+    spriteCache.set(key, c);
+  }
+  return spriteCache.get(key);
+}
+
+function drawSprite(ctx, name, x, y, recolors) {
+  const s = SPRITES[name];
+  ctx.drawImage(spriteImage(name, recolors), Math.round(x) - s.ax, Math.round(y) - s.ay);
+}
+
 // ---------- Font ----------
 // 3x5 pixel font. Each glyph is 15 bits, read left to right, top to bottom.
 
@@ -853,10 +960,15 @@ function makeView(grid, ox, oy) {
   };
   // World yards (as used by the generator) to screen pixels.
   const worldToScreen = (p) => tileToScreen((p.x - originX) / cell - 0.5, (p.y - originY) / cell - 0.5);
+  // Screen pixels to world yards, on the ground.
+  const screenToWorld = (x, y) => {
+    const t = screenToTile(x, y);
+    return { x: originX + (t.col + 0.5) * cell, y: originY + (t.row + 0.5) * cell };
+  };
   // A direction in world yards to a screen direction, in pixels per yard.
   const worldDirToScreen = (dx, dy) => ({ x: (dx + dy) / cell * TW / 2, y: (dx - dy) / cell * TH / 2 });
 
-  return { grid, ox, oy, tileToScreen, screenToTile, worldToScreen, worldDirToScreen };
+  return { grid, ox, oy, tileToScreen, screenToTile, worldToScreen, screenToWorld, worldDirToScreen };
 }
 
 // Place a grid so its playable part (everything that isn't the tree margin) is
@@ -928,6 +1040,17 @@ function layoutHole(hole, box) {
   }
   best.view.look = thinTrees(best.view.grid);
   return best.view;
+}
+
+// The same view moved by (dx, dy) pixels, e.g. to draw into a bigger image with a margin.
+function shiftView(view, dx, dy) {
+  return { ...makeView(view.grid, view.ox + dx, view.oy + dy), look: view.look };
+}
+
+// Beyond the band of woods is out of bounds.
+function isOutOfBounds(view, p) {
+  const t = view.grid.toTile(p);
+  return (view.look[t.row]?.[t.col] ?? 'land') === 'land';
 }
 
 // The generator fills everything outside the rough with trees. For drawing, keep
@@ -1088,11 +1211,13 @@ function drawHud(ctx, W, H, { course, hole, tee, weather, wind, windScreen }) {
   const title = `HOLE ${hole.number}`;
   const line2 = `PAR ${hole.par}  ${teeYards(hole, tee)} YDS`;
   const line3 = `${course.name}  ${STYLES[course.style].name}`;
-  const w = Math.max(textWidth(title, 2), textWidth(line2), textWidth(line3)) + 12;
-  panel(ctx, 6, 6, w, 34);
+  const keys = 'N/P HOLE  R COURSE  S STYLE  +/- ZOOM';
+  const w = Math.max(textWidth(title, 2), textWidth(line2), textWidth(line3), textWidth(keys)) + 12;
+  panel(ctx, 6, 6, w, 42);
   drawText(ctx, title, 12, 11, GOLD, 2);
   drawText(ctx, line2, 12, 24);
   drawText(ctx, line3, 12, 31, '#c8c0e8');
+  drawText(ctx, keys, 12, 39, '#8a80b0', 1, null);
 
   // Wind, top right: an arrow showing where it blows on screen, and its strength.
   const words = windWords(wind);
@@ -1106,9 +1231,6 @@ function drawHud(ctx, W, H, { course, hole, tee, weather, wind, windScreen }) {
   for (let a = 0; a < 32; a++) ctx.fillRect(Math.round(cx + Math.cos(a / 5.1) * 8), Math.round(cy + Math.sin(a / 5.1) * 4), 1, 1);
   if (weather.windMph >= 1) arrow(ctx, cx, cy, windScreen, 8, '#f4f4f4');
 
-  // Controls, bottom.
-  const help = 'N/P: HOLE   R: NEW COURSE   S: STYLE';
-  drawText(ctx, help, Math.round((W - textWidth(help)) / 2), H - 10, '#e8e4f8');
 }
 
 // A pixel arrow from (x, y) along screen direction `d`, `len` pixels long.
@@ -1123,66 +1245,634 @@ function arrow(ctx, x, y, d, len, color) {
   }
 }
 
+// ---------- Shot bar ----------
+
+const BAR_H = 46;
+const BAR_TOP = (H) => H - BAR_H - 4;
+
+// Where each shot button sits, for drawing and for clicks.
+const shotButtons = (H, count) => Array.from({ length: count }, (_, i) => ({ x: 12 + i * 46, y: BAR_TOP(H) + 6, w: 42, h: 34 }));
+
+// Little side-on pictures of each shot's flight, like Sim Golf's shot buttons.
+const ICONS = {
+  straight: (t) => ({ x: t * 28, y: 10 * Math.sin(Math.PI * t) }),
+  fade: (t) => ({ x: t * 28, y: 10 * Math.sin(Math.PI * t ** 1.5) }),
+  draw: (t) => ({ x: t * 30, y: 8 * Math.sin(Math.PI * t ** 0.65) }),
+  lob: (t) => ({ x: 6 + t * 16, y: 13 * Math.sin(Math.PI * t) }),
+  runner: (t) => ({ x: t * 30, y: t < 0.6 ? 4 * Math.sin(Math.PI * t / 0.6) : 0 }),
+};
+
+// The hit and cancel buttons at the right of the bar.
+const actionButtons = (W, H) => ({
+  hit: { x: W - 12 - 64, y: BAR_TOP(H) + 6, w: 64, h: 34 },
+  cancel: { x: W - 12 - 64 - 6 - 48, y: BAR_TOP(H) + 6, w: 48, h: 34 },
+});
+
+function button(ctx, b, label, sub, on, color) {
+  ctx.fillStyle = on ? color : '#2c2050';
+  ctx.fillRect(b.x, b.y, b.w, b.h);
+  ctx.fillStyle = on ? GOLD : '#5a4a90';
+  ctx.fillRect(b.x, b.y, b.w, 1); ctx.fillRect(b.x, b.y + b.h - 1, b.w, 1);
+  ctx.fillRect(b.x, b.y, 1, b.h); ctx.fillRect(b.x + b.w - 1, b.y, 1, b.h);
+  const scale = textWidth(label, 2) <= b.w - 8 ? 2 : 1;
+  drawText(ctx, label, b.x + Math.round((b.w - textWidth(label, scale)) / 2), b.y + 8, on ? '#ffffff' : '#6a5a98', scale, on ? '#1a1a2a' : null);
+  drawText(ctx, sub, b.x + Math.round((b.w - textWidth(sub)) / 2), b.y + 25, on ? '#e8e4f8' : '#6a5a98', 1, null);
+}
+
+// `info`: { types, selected, club, aim, max, lie, toPin, stroke, hint, canHit }
+function drawShotBar(ctx, W, H, info) {
+  const top = BAR_TOP(H);
+  panel(ctx, 6, top, W - 12, BAR_H);
+  shotButtons(H, info.types.length).forEach((b, i) => {
+    const t = info.types[i], on = t.key === info.selected;
+    ctx.fillStyle = on ? '#6a56b8' : '#2c2050';
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.fillStyle = on ? GOLD : '#5a4a90';
+    ctx.fillRect(b.x, b.y, b.w, 1); ctx.fillRect(b.x, b.y + b.h - 1, b.w, 1);
+    ctx.fillRect(b.x, b.y, 1, b.h); ctx.fillRect(b.x + b.w - 1, b.y, 1, b.h);
+    ctx.fillStyle = on ? '#ffffff' : '#c8c0e8';
+    for (let k = 0; k <= 40; k++) {
+      const p = ICONS[t.key](k / 40);
+      ctx.fillRect(Math.round(b.x + 6 + p.x), Math.round(b.y + 20 - p.y), 1, 1);
+    }
+    ctx.fillStyle = '#7a9a4a';
+    ctx.fillRect(b.x + 4, b.y + 21, b.w - 8, 1);
+    drawText(ctx, `${i + 1} ${t.name}`, b.x + Math.round((b.w - textWidth(`${i + 1} ${t.name}`)) / 2), b.y + 25, on ? '#ffffff' : '#c8c0e8', 1, null);
+  });
+
+  const x = 12 + info.types.length * 46 + 10;
+  drawText(ctx, `CLUB: ${info.club}`, x, top + 8, GOLD);
+  drawText(ctx, info.aim ? `AIM: ${info.aim} YDS  (MAX ${info.max})` : `MAX: ${info.max} YDS`, x, top + 17);
+  drawText(ctx, `LIE: ${info.lie}`, x, top + 26);
+  drawText(ctx, `TO PIN: ${info.toPin} YDS   STROKE ${info.stroke}`, x, top + 35);
+  const act = actionButtons(W, H);
+  button(ctx, act.cancel, 'CANCEL', 'ESC', info.canHit, '#7a3a4a');
+  button(ctx, act.hit, 'HIT', 'SPACE', info.canHit, '#3a8a3a');
+  if (info.hint) drawText(ctx, info.hint, act.cancel.x - 10 - textWidth(info.hint), top + 35, '#c8c0e8');
+}
+
+// A banner across the middle top, for things like "IN THE WATER".
+function drawBanner(ctx, W, text, sub) {
+  const w = Math.max(textWidth(text, 2), sub ? textWidth(sub) : 0) + 20;
+  const x = Math.round((W - w) / 2);
+  panel(ctx, x, 54, w, sub ? 30 : 20);
+  drawText(ctx, text, Math.round((W - textWidth(text, 2)) / 2), 59, GOLD, 2);
+  if (sub) drawText(ctx, sub, Math.round((W - textWidth(sub)) / 2), 74);
+}
+
+// ---- golfers.js ----
+// Golfers and their skills. Skills run 0 to 100.
+//   power      how far they can hit it
+//   accuracy   how tight full shots land around the aim
+//   shortGame  the same for lobs, chips and anything inside 100 yards
+//   recovery   how well they play from rough, sand, waste and trees
+//   putting    used once putting arrives
+
+const PLAYER = {
+  name: 'You', shirt: '#d03a2a',
+  skills: { power: 55, accuracy: 55, shortGame: 55, recovery: 50, putting: 55 },
+};
+
+// ---- shots.js ----
+// The five shots, how far each can go, and what actually happens when one is hit.
+// Distances are yards. The player aims where the ball should land; skills and
+// luck decide how close it gets, then it rolls out.
+
+
+// reach: share of a full shot's carry. curve: +1 bends right, -1 bends left.
+// apex: how high it flies. roll: share of the carry it rolls on firm grass.
+// wind: how much the wind moves it. spread: how wide it scatters.
+const SHOT_TYPES = [
+  { key: 'straight', name: 'Normal', reach: 1, curve: 0, apex: 1, roll: 0.12, wind: 1, spread: 1 },
+  { key: 'fade', name: 'Fade', reach: 0.95, curve: 1, apex: 1.1, roll: 0.07, wind: 1, spread: 0.85 },
+  { key: 'draw', name: 'Draw', reach: 1.02, curve: -1, apex: 0.9, roll: 0.18, wind: 1, spread: 1.1 },
+  { key: 'lob', name: 'Lob', reach: 0.45, curve: 0, apex: 2.2, roll: 0.03, wind: 1.3, spread: 1 },
+  { key: 'runner', name: 'Runner', reach: 0.8, curve: 0, apex: 0.35, roll: 0.35, wind: 0.5, spread: 0.9 },
+];
+const shotType = (key) => SHOT_TYPES.find((t) => t.key === key);
+
+// How a lie cuts distance and widens the scatter, before the recovery skill helps.
+const LIE_REACH = { tee: 1, fairway: 0.97, fringe: 0.9, green: 0.6, rough: 0.82, waste: 0.82, bunker: 0.55, trees: 0.45 };
+const LIE_SPREAD = { tee: 1, fairway: 1, fringe: 1.05, green: 1.2, rough: 1.35, waste: 1.3, bunker: 1.6, trees: 2 };
+// How far the ball rolls on landing, as a share of the shot's normal roll.
+const ROLL = { green: 1, fairway: 1, tee: 0.9, fringe: 0.8, waste: 0.4, rough: 0.25, trees: 0.1, bunker: 0, water: 0 };
+const HARD_LIES = new Set(['rough', 'waste', 'bunker', 'trees']);
+
+const fullCarry = (golfer) => 190 + 0.9 * golfer.skills.power;
+
+function lieReach(golfer, type, lie) {
+  // A low runner is the way out of the trees.
+  const base = lie === 'trees' && type.key === 'runner' ? 0.7 : LIE_REACH[lie] ?? 1;
+  return base + (1 - base) * 0.3 * golfer.skills.recovery / 100;
+}
+
+// Furthest the golfer can carry this shot from this lie.
+const maxCarry = (golfer, type, lie, hole) => fullCarry(golfer) * type.reach * lieReach(golfer, type, lie) * (hole.altitude ?? 1);
+
+// Clubs and their carry for an average golfer; scaled by each golfer's power.
+const CLUBS = [
+  ['Driver', 235], ['3 Wood', 215], ['5 Wood', 200], ['4 Iron', 185], ['5 Iron', 175], ['6 Iron', 165],
+  ['7 Iron', 155], ['8 Iron', 145], ['9 Iron', 133], ['Pitching Wedge', 120], ['Gap Wedge', 105], ['Sand Wedge', 90], ['Lob Wedge', 70],
+];
+
+// The club for a shot, picked automatically from the distance.
+function chooseClub(golfer, type, carry, lie) {
+  const scale = fullCarry(golfer) / 235;
+  if (type.key === 'lob') return carry > 70 * scale || lie === 'bunker' ? 'Sand Wedge' : 'Lob Wedge';
+  if (lie === 'bunker' && carry < 90 * scale) return 'Sand Wedge';
+  // A runner is played with less loft, so a longer club for the same carry.
+  const need = carry * (type.key === 'runner' ? 1.25 : 1);
+  const usable = CLUBS.filter(([name]) => name !== 'Driver' || lie === 'tee');
+  let pick = usable[0][0];
+  for (const [name, yards] of usable) if (yards * scale >= need) pick = name;
+  return pick;
+}
+
+// How widely a shot scatters around the aim: standard deviations in yards along
+// and across the line, and the chance of a mishit. Pushing for the maximum
+// distance is where it gets risky.
+function shotSpread(golfer, type, lie, carry, max, weather) {
+  const s = golfer.skills;
+  const skill = type.key === 'lob' || carry < 100 ? s.shortGame : s.accuracy;
+  const effort = Math.min(1, carry / max);
+  let pct = (0.025 + 0.055 * (1 - skill / 100)) * type.spread;
+  const lieSpread = LIE_SPREAD[lie] ?? 1;
+  pct *= HARD_LIES.has(lie) ? 1 + (lieSpread - 1) * (1 - 0.5 * s.recovery / 100) : lieSpread;
+  pct *= 0.7 + 0.9 * effort ** 3;
+  const gust = (weather?.windMph ?? 0) * 0.08 * type.wind;
+  let mishit = 0.01 + 0.08 * effort ** 4 * (1 - skill / 150);
+  if (lie === 'trees') mishit += 0.1 * (1 - s.recovery / 120);
+  if (lie === 'bunker') mishit += 0.06 * (1 - s.recovery / 100);
+  return {
+    long: Math.max(1.5, carry * pct * 0.8 + gust),
+    lat: Math.max(1.5, carry * pct + gust),
+    mishit,
+  };
+}
+
+// Where a point sits on a shot's flight at t from 0 (struck) to 1 (landing):
+// ground position in yards plus height `h` in yards. Fades and draws start off
+// line and bend back to the landing spot.
+function flightPoint(from, to, type, t) {
+  const d = dist(from, to) || 1;
+  const ux = (to.x - from.x) / d, uy = (to.y - from.y) / d;
+  const bend = -type.curve * d * 0.07 * Math.sin(Math.PI * t); // fades start left, draws start right
+  const h = type.apex * Math.min(d, 220) * 0.11 * Math.sin(Math.PI * t);
+  return { x: from.x + (to.x - from.x) * t + uy * bend, y: from.y + (to.y - from.y) * t - ux * bend, h };
+}
+
+// Hit a shot. `ball` is { at, lie }; `aim` is where the golfer wants it to land.
+// `wind` is from holeWind (mph along and across the hole). Returns the whole story
+// of the shot for animating and scoring.
+function playShot(rng, golfer, ball, aim, typeKey, hole, weather, wind) {
+  const type = shotType(typeKey);
+  const from = ball.at;
+  const max = maxCarry(golfer, type, ball.lie, hole);
+  let d = dist(from, aim);
+  if (d > max) { aim = { x: from.x + (aim.x - from.x) * max / d, y: from.y + (aim.y - from.y) * max / d }; d = max; }
+  const ux = (aim.x - from.x) / (d || 1), uy = (aim.y - from.y) / (d || 1);
+  const rx = uy, ry = -ux; // to the golfer's right
+
+  const spread = shotSpread(golfer, type, ball.lie, d, max, weather);
+  let along = rng.gauss() * spread.long, across = rng.gauss() * spread.lat;
+  const mishit = rng.chance(spread.mishit);
+  if (mishit) {
+    along -= d * rng.range(0.2, 0.45);
+    across += (rng.chance(0.5) ? 1 : -1) * d * rng.range(0.1, 0.22);
+  }
+  // Wind in the hole's frame: `across` is +x and `along` is +y.
+  const drift = d * 0.0045 * type.wind;
+  const landing = {
+    x: aim.x + ux * along + rx * across + wind.across * drift,
+    y: aim.y + uy * along + ry * across + wind.along * drift,
+  };
+
+  const landedOn = surfaceAt(hole, landing);
+  const result = {
+    type: typeKey, club: chooseClub(golfer, type, d, ball.lie), from, aim, landing, mishit,
+    carry: dist(from, landing), landedOn, rest: landing, surface: landedOn, holed: false,
+  };
+  if (landedOn === 'water') return result;
+
+  // Roll on along the line of flight, stopping in sand, water or trees, slowing in rough.
+  let roll = result.carry * type.roll * (ROLL[landedOn] ?? 0.5) * (1 + 5 * (weather?.firm ?? 0));
+  if (type.key === 'lob' && landedOn === 'green') roll *= 0.5;
+  const c = result.carry || 1;
+  const vx = (landing.x - from.x) / c, vy = (landing.y - from.y) / c;
+  let p = landing, s = landedOn;
+  for (let left = roll; left > 0; left -= 0.5) {
+    const q = { x: p.x + vx * Math.min(0.5, left), y: p.y + vy * Math.min(0.5, left) };
+    const t = surfaceAt(hole, q);
+    if (t === 'rough' && s !== 'rough') left *= 0.3;
+    p = q; s = t;
+    if (dist(p, hole.pin) < 0.35 && left < 4) { result.holed = true; p = { ...hole.pin }; break; }
+    if (t === 'water' || t === 'bunker' || t === 'trees') break;
+  }
+  result.rest = p;
+  result.surface = s;
+  if (dist(p, hole.pin) < 0.35) { result.holed = true; result.rest = { ...hole.pin }; }
+  return result;
+}
+
+// Where to drop after going in the water: back along the line towards where the
+// shot was played from, onto dry land.
+function waterDrop(hole, wet, from) {
+  const d = dist(wet, from) || 1;
+  const ux = (from.x - wet.x) / d, uy = (from.y - wet.y) / d;
+  for (let k = 1; k <= d; k++) {
+    const p = { x: wet.x + ux * k, y: wet.y + uy * k };
+    if (surfaceAt(hole, p) !== 'water') {
+      const q = { x: p.x + ux * 2, y: p.y + uy * 2 };
+      return surfaceAt(hole, q) === 'water' ? p : q;
+    }
+  }
+  return { ...from };
+}
+
+// ---- play.js ----
+// Playing a hole: whose turn it is, where each ball lies, strokes and penalties.
+
+
+// Start a hole with every golfer's ball on the given tee.
+function startHole(hole, golfers, tee = 'white') {
+  const at = pointAt(hole.line, hole.tees[tee]);
+  return {
+    hole,
+    players: golfers.map((golfer) => ({ golfer, at: { ...at }, lie: 'tee', strokes: 0, onGreen: false, holed: false })),
+    turn: 0,
+  };
+}
+
+const current = (state) => state.players[state.turn];
+const toPin = (state) => dist(current(state).at, state.hole.pin);
+
+// Hit the current player's shot. Returns the shot plus what it cost, without
+// moving the ball yet, so the caller can animate it first and then call `settle`.
+function hit(state, rng, aim, typeKey, weather, wind, outOfBounds) {
+  const p = current(state);
+  const shot = playShot(rng, p.golfer, { at: p.at, lie: p.lie }, aim, typeKey, state.hole, weather, wind);
+  shot.penalty = 0;
+  shot.next = { at: shot.rest, lie: shot.surface };
+  if (shot.surface === 'water') {
+    shot.penalty = 1;
+    shot.note = 'IN THE WATER. ONE SHOT PENALTY';
+    const drop = waterDrop(state.hole, shot.rest, p.at);
+    shot.next = { at: drop, lie: surfaceAt(state.hole, drop) };
+  } else if (outOfBounds(shot.rest)) {
+    shot.penalty = 1;
+    shot.note = 'OUT OF BOUNDS. STROKE AND DISTANCE';
+    shot.next = { at: { ...p.at }, lie: p.lie };
+  } else if (shot.holed) {
+    shot.note = 'HOLED IT!';
+  } else if (shot.surface === 'green') {
+    shot.note = 'ON THE GREEN';
+  } else if (shot.mishit) {
+    shot.note = 'MISHIT!';
+  }
+  return shot;
+}
+
+// Move the ball to where the shot finished and count the strokes.
+function settle(state, shot) {
+  const p = current(state);
+  p.strokes += 1 + shot.penalty;
+  p.at = shot.next.at;
+  p.lie = shot.next.lie;
+  p.holed = shot.holed;
+  p.onGreen = p.lie === 'green';
+}
+
 // ---- main.js ----
-// Step 1: show a generated hole as isometric pixel art, with the wind.
-// The URL can pick the course: ?style=tropical&seed=1989&hole=1
+// Step 2: play shots on a generated hole. Pick a shot, drag out where it should
+// land, then hit it. The URL can pick the course: ?style=tropical&seed=1989&hole=1
 
 
-// The game draws at this size and is scaled up to fill the window, keeping pixels square.
-const W = 960, H = 540;
 const STYLE_KEYS = Object.keys(STYLES);
 const TEE = 'white';
+// Spare picture round the whole-hole view, so there's somewhere to pan when zoomed in.
+const MARGIN = 200;
+const MAX_ZOOM = 2;
 
+// Two canvases fill the window: the hole, scaled up by `fitScale + zoom`, and the
+// panels on top, always at `fitScale`. Both keep their pixels square and crisp.
 const canvas = document.getElementById('game');
-canvas.width = W; canvas.height = H;
+const hudCanvas = document.getElementById('hud');
 const ctx = canvas.getContext('2d');
-const image = ctx.createImageData(W, H);
-const buf = new Uint32Array(image.data.buffer);
+const hud = hudCanvas.getContext('2d');
+const rng = makeRng(Math.floor(Math.random() * 2 ** 31));
 
 const params = new URLSearchParams(location.search);
-const state = {
+const settings = {
   style: STYLE_KEYS.includes(params.get('style')) ? params.get('style') : 'tropical',
   seed: Number(params.get('seed')) || 1989,
   hole: Math.min(18, Math.max(1, Number(params.get('hole')) || 1)),
 };
 
-function render() {
-  const course = generateCourse({ name: `Course ${state.seed}`, style: state.style, par: 72, length: 'standard', seed: state.seed });
-  const hole = course.holes[state.hole - 1];
+// fitScale: screen pixels per game pixel when the whole hole is shown. W x H: the
+// game's size in pixels at that scale (the panels are laid out on this).
+const display = { fitScale: 1, W: 0, H: 0, zoom: 0 };
+const cam = { x: MARGIN, y: MARGIN, manual: false };
+let game, world;
+// phase: 'aim' (waiting for a shot), 'flight', 'roll', 'done'
+const ui = { shot: 'straight', dragging: false, aim: null, phase: 'aim', anim: null, banner: null };
+
+const scale = () => display.fitScale + display.zoom;
+
+function sizeCanvas(c, k) {
+  c.width = Math.ceil(innerWidth / k);
+  c.height = Math.ceil(innerHeight / k);
+  c.style.width = `${c.width * k}px`;
+  c.style.height = `${c.height * k}px`;
+}
+
+// Fit the game to the window: the biggest whole-number scale that leaves at least 800 x 450 game pixels.
+function measure() {
+  display.fitScale = Math.max(1, Math.floor(Math.min(innerWidth / 800, innerHeight / 450)));
+  sizeCanvas(hudCanvas, display.fitScale);
+  sizeCanvas(canvas, scale());
+  display.W = hudCanvas.width;
+  display.H = hudCanvas.height;
+}
+
+// Draw the hole once into a picture big enough for the whole-hole view plus a margin.
+function buildWorld() {
+  const { W, H } = display;
+  const fit = layoutHole(game.hole, { x: 8, y: 54, w: W - 16, h: BAR_TOP(H) - 60 });
+  const view = shiftView(fit, MARGIN, MARGIN);
+  const w = W + 2 * MARGIN, h = H + 2 * MARGIN;
+  const img = new ImageData(w, h);
+  drawHole(new Uint32Array(img.data.buffer), w, h, game.hole, view);
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  c.getContext('2d').putImageData(img, 0, 0);
+  world = { canvas: c, view, w, h };
+  aimCamera(true);
+}
+
+function loadHole() {
+  const course = buildCourse({ name: `Course ${settings.seed}`, style: settings.style, par: 72, length: 'standard', seed: settings.seed });
+  const hole = course.holes[settings.hole - 1];
   const weather = roundWeather(course);
-  const wind = holeWind(weather, hole);
-  // Leave room for the panels at the top and the help line at the bottom.
-  const view = layoutHole(hole, { x: 8, y: 44, w: W - 16, h: H - 60 });
-
-  const teeAt = pointAt(hole.line, hole.tees[TEE]);
-  drawHole(buf, W, H, hole, view, [{ at: teeAt, golfer: true, ball: true, shirt: '#d03a2a' }]);
-  ctx.putImageData(image, 0, 0);
-  drawHud(ctx, W, H, { course, hole, tee: TEE, weather, wind, windScreen: view.worldDirToScreen(wind.across, wind.along) });
-
-  history.replaceState(null, '', `?style=${state.style}&seed=${state.seed}&hole=${state.hole}`);
+  game = { course, hole, weather, wind: holeWind(weather, hole), play: startHole(hole, [PLAYER], TEE) };
+  Object.assign(ui, { dragging: false, aim: null, phase: 'aim', anim: null, banner: null });
+  cam.manual = false;
+  buildWorld();
+  history.replaceState(null, '', `?style=${settings.style}&seed=${settings.seed}&hole=${settings.hole}`);
 }
 
-// Scale the canvas to the window: whole-number steps when there's room, so pixels stay crisp.
-function fit() {
-  const s = Math.min(innerWidth / W, innerHeight / H);
-  const scale = s >= 1 ? Math.floor(s) : s;
-  canvas.style.width = `${W * scale}px`;
-  canvas.style.height = `${H * scale}px`;
+// ---------- Camera ----------
+
+// Whole hole: fixed. Zoomed in: follow the ball (unless the player has panned).
+function aimCamera(snap) {
+  if (display.zoom === 0) { cam.x = MARGIN; cam.y = MARGIN; cam.manual = false; return; }
+  if (cam.manual) return;
+  // While aiming, keep both the ball and the aim in view.
+  const ball = ballNow(performance.now());
+  const focus = ui.aim && ui.phase === 'aim' ? { x: (ball.x + ui.aim.x) / 2, y: (ball.y + ui.aim.y) / 2 } : ball;
+  const b = world.view.worldToScreen(focus);
+  const tx = b.x - canvas.width / 2, ty = b.y - canvas.height / 2;
+  cam.x = snap ? tx : cam.x + (tx - cam.x) * 0.12;
+  cam.y = snap ? ty : cam.y + (ty - cam.y) * 0.12;
+  clampCamera();
 }
+
+function clampCamera() {
+  cam.x = Math.max(0, Math.min(world.w - canvas.width, cam.x));
+  cam.y = Math.max(0, Math.min(world.h - canvas.height, cam.y));
+}
+
+function setZoom(z) {
+  z = Math.max(0, Math.min(MAX_ZOOM, z));
+  if (z === display.zoom) return;
+  display.zoom = z;
+  sizeCanvas(canvas, scale());
+  cam.manual = false;
+  aimCamera(true);
+}
+
+// ---------- Shots ----------
+
+// The aim clamped to what the current shot can reach.
+function clampAim(p) {
+  const me = current(game.play);
+  const max = maxCarry(me.golfer, shotType(ui.shot), me.lie, game.hole);
+  const d = dist(me.at, p);
+  return d <= max ? p : { x: me.at.x + (p.x - me.at.x) * max / d, y: me.at.y + (p.y - me.at.y) * max / d };
+}
+
+function shoot() {
+  if (ui.phase !== 'aim' || !ui.aim) return;
+  const shot = hit(game.play, rng, ui.aim, ui.shot, game.weather, game.wind, (p) => isOutOfBounds(world.view, p));
+  const rollLen = dist(shot.landing, shot.rest);
+  ui.anim = { shot, start: performance.now(), flight: 700 + shot.carry * 4, roll: rollLen > 0.5 ? 250 + rollLen * 25 : 0 };
+  ui.phase = 'flight';
+  ui.aim = null;
+  ui.dragging = false;
+  cam.manual = false;
+}
+
+function cancelAim() {
+  ui.dragging = false;
+  ui.aim = null;
+}
+
+function pickShot(key) {
+  ui.shot = key;
+  if (ui.aim) ui.aim = clampAim(ui.aim);
+}
+
+// Where the ball is right now, in yards, with its height.
+function ballNow(now) {
+  const me = current(game.play);
+  const a = ui.anim;
+  if (!a) return { ...me.at, h: 0 };
+  const t = (now - a.start) / a.flight;
+  if (t < 1) return flightPoint(a.shot.from, a.shot.landing, shotType(a.shot.type), t);
+  const r = a.roll ? Math.min(1, (now - a.start - a.flight) / a.roll) : 1;
+  const e = 1 - (1 - r) ** 2; // slows as it rolls out
+  return { x: a.shot.landing.x + (a.shot.rest.x - a.shot.landing.x) * e, y: a.shot.landing.y + (a.shot.rest.y - a.shot.landing.y) * e, h: 0 };
+}
+
+function update(now) {
+  const a = ui.anim;
+  if (!a) return;
+  if (ui.phase === 'flight' && now - a.start >= a.flight) ui.phase = 'roll';
+  if (ui.phase === 'roll' && now - a.start >= a.flight + a.roll) {
+    settle(game.play, a.shot);
+    const me = current(game.play);
+    ui.anim = null;
+    if (me.holed) {
+      ui.phase = 'done';
+      ui.banner = { text: `HOLED IN ${me.strokes}!`, sub: `${scoreName(me.strokes - game.hole.par)}. ENTER TO PLAY AGAIN`, until: Infinity };
+    } else if (me.onGreen) {
+      ui.phase = 'done';
+      ui.banner = { text: `ON THE GREEN IN ${me.strokes}`, sub: 'PUTTING COMES IN STEP 3. ENTER TO PLAY AGAIN', until: Infinity };
+    } else {
+      ui.phase = 'aim';
+      if (a.shot.note) ui.banner = { text: a.shot.note, until: now + 2500 };
+    }
+  }
+}
+
+const scoreName = (d) => ({ '-3': 'ALBATROSS', '-2': 'EAGLE', '-1': 'BIRDIE', 0: 'PAR', 1: 'BOGEY', 2: 'DOUBLE BOGEY' })[d] ?? (d < 0 ? `${-d} UNDER` : `${d} OVER`);
+
+// ---------- Drawing ----------
+
+const LIE_NAMES = { tee: 'TEE', fairway: 'FAIRWAY', fringe: 'FRINGE', green: 'GREEN', rough: 'ROUGH', waste: 'WASTE GROUND', bunker: 'BUNKER', trees: 'TREES' };
+
+function dot(x, y, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(Math.round(x), Math.round(y), 1, 1);
+}
+
+// Yards of height to pixels on display.
+const heightPx = (h) => h / world.view.grid.cell * TH * 1.5;
+
+// The planned shot: its flight as a dotted arc, and an oval where it's likely to land.
+function drawAim() {
+  const me = current(game.play);
+  const type = shotType(ui.shot);
+  const v = world.view;
+  const d = dist(me.at, ui.aim);
+  const steps = Math.max(12, Math.round(d / 2));
+  for (let k = 1; k < steps; k += 2) {
+    const p = flightPoint(me.at, ui.aim, type, k / steps);
+    const s = v.worldToScreen(p);
+    dot(s.x, s.y, 'rgba(0, 0, 0, 0.25)');
+    dot(s.x, s.y - heightPx(p.h), '#ffffff');
+  }
+  const max = maxCarry(me.golfer, type, me.lie, game.hole);
+  const sp = shotSpread(me.golfer, type, me.lie, d, max, game.weather);
+  const ux = (ui.aim.x - me.at.x) / (d || 1), uy = (ui.aim.y - me.at.y) / (d || 1);
+  // Redder as the shot gets riskier.
+  const risk = Math.min(1, (d / max) ** 3 + sp.mishit * 3);
+  const col = `rgb(255, ${Math.round(240 - 170 * risk)}, ${Math.round(120 - 100 * risk)})`;
+  for (let k = 0; k < 48; k++) {
+    const a = k / 48 * Math.PI * 2;
+    const along = Math.cos(a) * sp.long * 1.5, across = Math.sin(a) * sp.lat * 1.5;
+    const s = v.worldToScreen({ x: ui.aim.x + ux * along + uy * across, y: ui.aim.y + uy * along - ux * across });
+    dot(s.x, s.y, col);
+  }
+  const c = v.worldToScreen(ui.aim);
+  for (const [dx, dy] of [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]]) dot(c.x + dx, c.y + dy, col);
+}
+
+function render(now) {
+  const v = world.view;
+  const me = current(game.play);
+  ctx.setTransform(1, 0, 0, 1, -Math.round(cam.x), -Math.round(cam.y));
+  ctx.drawImage(world.canvas, 0, 0);
+
+  if (ui.phase === 'aim' && ui.aim) drawAim();
+
+  // Golfer stands beside the ball, or where the shot was played from while it's in the air.
+  const stand = v.worldToScreen(ui.anim ? ui.anim.shot.from : me.at);
+  drawSprite(ctx, 'golfer', stand.x - 3, stand.y, { c: me.golfer.shirt });
+  if (!me.holed) {
+    const b = ballNow(now);
+    const s = v.worldToScreen(b);
+    const y = Math.round(s.y - heightPx(b.h)), x = Math.round(s.x);
+    if (b.h > 0.3) { ctx.fillStyle = 'rgba(0, 0, 0, 0.45)'; ctx.fillRect(x - 1, Math.round(s.y), 2, 1); }
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(x - 1, y - 1, 2, 2);
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  const { W, H } = display;
+  hud.clearRect(0, 0, W, H);
+  drawHud(hud, W, H, { course: game.course, hole: game.hole, tee: TEE, weather: game.weather, wind: game.wind, windScreen: v.worldDirToScreen(game.wind.across, game.wind.along) });
+  const type = shotType(ui.shot);
+  const max = Math.round(maxCarry(me.golfer, type, me.lie, game.hole));
+  const aimYds = ui.aim ? Math.round(dist(me.at, ui.aim)) : 0;
+  const canHit = ui.phase === 'aim' && !!ui.aim && !ui.dragging;
+  drawShotBar(hud, W, H, {
+    types: SHOT_TYPES, selected: ui.shot, max, aim: aimYds, canHit,
+    club: chooseClub(me.golfer, type, aimYds || max, me.lie).toUpperCase(),
+    lie: LIE_NAMES[me.lie] ?? me.lie.toUpperCase(), toPin: Math.round(toPin(game.play)), stroke: me.strokes + 1,
+    hint: ui.phase !== 'aim' ? '' : !ui.aim ? 'DRAG ON THE COURSE TO AIM' : ui.dragging ? 'LET GO TO SET THE AIM' : 'CHANGE SHOT OR DRAG AGAIN',
+  });
+  if (ui.banner && now < ui.banner.until) drawBanner(hud, W, ui.banner.text, ui.banner.sub);
+}
+
+function frame(now) {
+  update(now);
+  aimCamera(false);
+  render(now);
+  requestAnimationFrame(frame);
+}
+
+// ---------- Input ----------
+
+// Mouse position in panel pixels, and on the hole in yards.
+const toHud = (e) => ({ x: e.clientX / display.fitScale, y: e.clientY / display.fitScale });
+const toYards = (e) => world.view.screenToWorld(e.clientX / scale() + Math.round(cam.x), e.clientY / scale() + Math.round(cam.y));
+const inside = (p, b) => p.x >= b.x && p.x < b.x + b.w && p.y >= b.y && p.y < b.y + b.h;
+
+canvas.addEventListener('mousedown', (e) => {
+  if (e.button === 2) { cancelAim(); return; }
+  if (e.button !== 0) return;
+  const p = toHud(e);
+  if (p.y >= BAR_TOP(display.H)) {
+    const b = shotButtons(display.H, SHOT_TYPES.length).findIndex((r) => inside(p, r));
+    if (b >= 0) pickShot(SHOT_TYPES[b].key);
+    const act = actionButtons(display.W, display.H);
+    if (inside(p, act.hit)) shoot();
+    if (inside(p, act.cancel)) cancelAim();
+    return;
+  }
+  if (ui.phase !== 'aim') return;
+  ui.dragging = true;
+  ui.aim = clampAim(toYards(e));
+});
+addEventListener('mousemove', (e) => {
+  if (ui.dragging) ui.aim = clampAim(toYards(e));
+});
+addEventListener('mouseup', (e) => {
+  if (!ui.dragging || e.button !== 0) return;
+  ui.dragging = false;
+  // Letting go sets the aim; it's hit with the HIT button or space.
+  if (ui.aim && dist(current(game.play).at, ui.aim) < 5) ui.aim = null;
+});
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+canvas.addEventListener('wheel', (e) => { e.preventDefault(); setZoom(display.zoom + (e.deltaY < 0 ? 1 : -1)); }, { passive: false });
+
+const PAN = { arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] };
 
 addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
-  if (k === 'n') state.hole = state.hole % 18 + 1;
-  else if (k === 'p') state.hole = (state.hole + 16) % 18 + 1;
-  else if (k === 'r') { state.seed = Math.floor(Math.random() * 1e6); state.hole = 1; }
-  else if (k === 's') state.style = STYLE_KEYS[(STYLE_KEYS.indexOf(state.style) + 1) % STYLE_KEYS.length];
-  else return;
-  render();
+  if (k >= '1' && k <= '5') return pickShot(SHOT_TYPES[Number(k) - 1].key);
+  if (k === ' ') { e.preventDefault(); return shoot(); }
+  if (k === 'escape') return cancelAim();
+  if (k === '+' || k === '=') return setZoom(display.zoom + 1);
+  if (k === '-' || k === '_') return setZoom(display.zoom - 1);
+  if (PAN[k] && display.zoom > 0) {
+    e.preventDefault();
+    cam.manual = true;
+    cam.x += PAN[k][0] * 24; cam.y += PAN[k][1] * 24;
+    return clampCamera();
+  }
+  if (k === 'c') { cam.manual = false; return; }
+  if (k === 'n') settings.hole = settings.hole % 18 + 1;
+  else if (k === 'p') settings.hole = (settings.hole + 16) % 18 + 1;
+  else if (k === 'r') { settings.seed = Math.floor(Math.random() * 1e6); settings.hole = 1; }
+  else if (k === 's') settings.style = STYLE_KEYS[(STYLE_KEYS.indexOf(settings.style) + 1) % STYLE_KEYS.length];
+  else if (k !== 'enter') return;
+  loadHole();
 });
-addEventListener('resize', fit);
 
-fit();
-render();
+// Redraw the hole for the new window size once resizing settles.
+let resizing;
+addEventListener('resize', () => {
+  clearTimeout(resizing);
+  resizing = setTimeout(() => { measure(); buildWorld(); }, 150);
+});
+
+// Lets the test tools play shots without a mouse.
+window.golf = { get game() { return game; }, get world() { return world; }, ui, cam, display, shoot, clampAim, setZoom };
+
+measure();
+loadHole();
+requestAnimationFrame(frame);
 
 })();
 </script>

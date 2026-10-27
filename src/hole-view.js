@@ -1,7 +1,7 @@
 // Draws a whole hole as isometric pixel art into a packed pixel buffer.
 
 import { holeToGrid, pointAt, TEE_SETS } from './course-generator.js';
-import { fitView } from './iso.js';
+import { fitView, makeView } from './iso.js';
 import { groundPalette, STYLE_ART, SPRITES, blit, recolor, hex } from './art.js';
 
 // Yards per tile, most detailed first. The first one that fits the screen is used.
@@ -28,6 +28,17 @@ export function layoutHole(hole, box) {
   }
   best.view.look = thinTrees(best.view.grid);
   return best.view;
+}
+
+// The same view moved by (dx, dy) pixels, e.g. to draw into a bigger image with a margin.
+export function shiftView(view, dx, dy) {
+  return { ...makeView(view.grid, view.ox + dx, view.oy + dy), look: view.look };
+}
+
+// Beyond the band of woods is out of bounds.
+export function isOutOfBounds(view, p) {
+  const t = view.grid.toTile(p);
+  return (view.look[t.row]?.[t.col] ?? 'land') === 'land';
 }
 
 // The generator fills everything outside the rough with trees. For drawing, keep

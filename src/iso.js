@@ -22,10 +22,15 @@ export function makeView(grid, ox, oy) {
   };
   // World yards (as used by the generator) to screen pixels.
   const worldToScreen = (p) => tileToScreen((p.x - originX) / cell - 0.5, (p.y - originY) / cell - 0.5);
+  // Screen pixels to world yards, on the ground.
+  const screenToWorld = (x, y) => {
+    const t = screenToTile(x, y);
+    return { x: originX + (t.col + 0.5) * cell, y: originY + (t.row + 0.5) * cell };
+  };
   // A direction in world yards to a screen direction, in pixels per yard.
   const worldDirToScreen = (dx, dy) => ({ x: (dx + dy) / cell * TW / 2, y: (dx - dy) / cell * TH / 2 });
 
-  return { grid, ox, oy, tileToScreen, screenToTile, worldToScreen, worldDirToScreen };
+  return { grid, ox, oy, tileToScreen, screenToTile, worldToScreen, screenToWorld, worldDirToScreen };
 }
 
 // Place a grid so its playable part (everything that isn't the tree margin) is
