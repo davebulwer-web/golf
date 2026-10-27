@@ -2225,7 +2225,8 @@ function sizeCanvas(c, k) {
 
 // Fit the game to the window: the biggest whole-number scale that leaves at least 800 x 450 game pixels.
 function measure() {
-  display.fitScale = Math.max(1, Math.floor(Math.min(innerWidth / 800, innerHeight / 450)));
+  // Scale up as far as the window allows while keeping at least 640 x 360 game pixels.
+  display.fitScale = Math.max(1, Math.floor(Math.min(innerWidth / 640, innerHeight / 360)));
   sizeCanvas(hudCanvas, display.fitScale);
   sizeCanvas(canvas, scale());
   display.W = hudCanvas.width;
