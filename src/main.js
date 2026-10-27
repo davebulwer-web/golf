@@ -1,16 +1,17 @@
-// Step 2: play shots on a generated hole. Pick a shot, drag out where it should
-// land, then hit it. The URL can pick the course: ?style=tropical&seed=1989&hole=1
+// Play a round on a generated course. Pick a shot, drag out where it should
+// land, then hit it; putting on the green plays itself. The URL can pick the course: ?style=tropical&seed=1989&hole=1
 
 import { makeRng, dist, STYLES } from './course-generator.js';
 import { buildCourse } from './course.js';
 import { layoutHole, shiftView, drawHole, isOutOfBounds } from './hole-view.js';
 import { TH } from './iso.js';
 import { drawSprite } from './art.js';
-import { drawHud, drawShotBar, drawBanner, shotButtons, actionButtons, BAR_TOP } from './hud.js';
+import { drawHud, drawShotBar, drawBanner, drawScorecard, shotButtons, actionButtons, BAR_TOP } from './hud.js';
 import { roundWeather, holeWind } from './weather.js';
 import { SHOT_TYPES, shotType, maxCarry, chooseClub, shotSpread, flightPoint } from './shots.js';
 import { PLAYER } from './golfers.js';
-import { startHole, current, toPin, hit, settle } from './play.js';
+import { startHole, current, toPin, hit, settle, nextPutt, settlePutt, newRound } from './play.js';
+import { feet } from './putting.js';
 
 const STYLE_KEYS = Object.keys(STYLES);
 const TEE = 'white';
@@ -35,13 +36,16 @@ const settings = {
 
 // fitScale: screen pixels per game pixel when the whole hole is shown. W x H: the
 // game's size in pixels at that scale (the panels are laid out on this).
-const display = { fitScale: 1, W: 0, H: 0, zoom: 0 };
+// zoom is the player's choice; onGreen zooms right in while putting.
+const display = { fitScale: 1, W: 0, H: 0, zoom: 0, onGreen: false };
 const cam = { x: MARGIN, y: MARGIN, manual: false };
-let game, world;
+let game, world, round;
 // phase: 'aim' (waiting for a shot), 'flight', 'roll', 'done'
-const ui = { shot: 'straight', dragging: false, aim: null, phase: 'aim', anim: null, banner: null };
+// phase also 'putting' while the putts play out on the green.
+const ui = { shot: 'straight', dragging: false, aim: null, phase: 'aim', anim: null, banner: null, card: false, nextPuttAt: 0 };
 
-const scale = () => display.fitScale + display.zoom;
+const zoomNow = () => (display.onGreen ? MAX_ZOOM : display.zoom);
+const scale = () => display.fitScale + zoomNow();
 
 function sizeCanvas(c, k) {
   c.width = Math.ceil(innerWidth / k);
@@ -79,7 +83,11 @@ function loadHole() {
   const hole = course.holes[settings.hole - 1];
   const weather = roundWeather(course);
   game = { course, hole, weather, wind: holeWind(weather, hole), play: startHole(hole, [PLAYER], TEE) };
-  Object.assign(ui, { dragging: false, aim: null, phase: 'aim', anim: null, banner: null });
+  // Scores carry on from hole to hole on the same course.
+  const key = `${settings.style}:${settings.seed}`;
+  if (round?.key !== key) round = newRound(course, key);
+  Object.assign(ui, { dragging: false, aim: null, phase: 'aim', anim: null, banner: null, card: false });
+  greenZoom(false);
   cam.manual = false;
   buildWorld();
   history.replaceState(null, '', `?style=${settings.style}&seed=${settings.seed}&hole=${settings.hole}`);
@@ -89,7 +97,7 @@ function loadHole() {
 
 // Whole hole: fixed. Zoomed in: follow the ball (unless the player has panned).
 function aimCamera(snap) {
-  if (display.zoom === 0) { cam.x = MARGIN; cam.y = MARGIN; cam.manual = false; return; }
+  if (zoomNow() === 0) { cam.x = MARGIN; cam.y = MARGIN; cam.manual = false; return; }
   if (cam.manual) return;
   // While aiming, keep both the ball and the aim in view.
   const ball = ballNow(performance.now());
@@ -110,6 +118,16 @@ function setZoom(z) {
   z = Math.max(0, Math.min(MAX_ZOOM, z));
   if (z === display.zoom) return;
   display.zoom = z;
+  rescale();
+}
+
+function greenZoom(on) {
+  if (on === display.onGreen) return;
+  display.onGreen = on;
+  if (world) rescale();
+}
+
+function rescale() {
   sizeCanvas(canvas, scale());
   cam.manual = false;
   aimCamera(true);
@@ -159,6 +177,7 @@ function ballNow(now) {
 }
 
 function update(now) {
+  if (ui.phase === 'putting') return updatePutting(now);
   const a = ui.anim;
   if (!a) return;
   if (ui.phase === 'flight' && now - a.start >= a.flight) ui.phase = 'roll';
@@ -167,16 +186,58 @@ function update(now) {
     const me = current(game.play);
     ui.anim = null;
     if (me.holed) {
-      ui.phase = 'done';
-      ui.banner = { text: `HOLED IN ${me.strokes}!`, sub: `${scoreName(me.strokes - game.hole.par)}. ENTER TO PLAY AGAIN`, until: Infinity };
+      holeFinished();
     } else if (me.onGreen) {
-      ui.phase = 'done';
-      ui.banner = { text: `ON THE GREEN IN ${me.strokes}`, sub: 'PUTTING COMES IN STEP 3. ENTER TO PLAY AGAIN', until: Infinity };
+      ui.phase = 'putting';
+      ui.nextPuttAt = now + 900;
+      ui.banner = { text: `ON THE GREEN IN ${me.strokes}`, until: now + 900 };
+      greenZoom(true);
     } else {
       ui.phase = 'aim';
       if (a.shot.note) ui.banner = { text: a.shot.note, until: now + 2500 };
     }
   }
+}
+
+// Putts play out one at a time, with a pause between them.
+function updatePutting(now) {
+  const a = ui.anim;
+  if (!a) {
+    if (now < ui.nextPuttAt) return;
+    const me = current(game.play);
+    const p = nextPutt(game.play, rng);
+    ui.anim = { putt: p, shot: { from: me.at, landing: me.at, rest: p.rest }, start: now, flight: 0, roll: Math.min(2500, 500 + p.feet * 30) };
+    ui.banner = { text: `PUTT FROM ${p.feet} FT`, until: Infinity };
+    return;
+  }
+  if (now - a.start < a.roll) return;
+  settlePutt(game.play, a.putt);
+  ui.anim = null;
+  const me = current(game.play);
+  if (me.holed) return holeFinished();
+  ui.banner = { text: `MISSED. ${feet(dist(me.at, game.hole.pin))} FT LEFT`, until: now + 900 };
+  ui.nextPuttAt = now + 900;
+}
+
+// The round so far against par, e.g. '+2 THRU 3'.
+function standing() {
+  const done = round.scores.map((sc, i) => (sc == null ? null : sc - round.pars[i])).filter((d) => d != null);
+  if (!done.length) return '';
+  const d = done.reduce((t, v) => t + v, 0);
+  return `${d === 0 ? 'E' : d > 0 ? `+${d}` : d} THRU ${done.length}`;
+}
+
+// Record the score and show the card.
+function holeFinished() {
+  const me = current(game.play);
+  round.scores[game.hole.number - 1] = me.strokes;
+  round.putts[game.hole.number - 1] = me.putts;
+  ui.phase = 'done';
+  ui.card = true;
+  const last = game.hole.number === 18;
+  const putts = me.putts === 0 ? 'NO PUTTS' : me.putts === 1 ? '1 PUTT' : `${me.putts} PUTTS`;
+  const name = me.strokes === 1 ? 'HOLE IN ONE' : scoreName(me.strokes - game.hole.par);
+  ui.banner = { text: `${name}! ${me.strokes} SHOTS, ${putts}`, sub: last ? 'ROUND OVER. ENTER FOR A NEW ROUND' : 'ENTER FOR THE NEXT HOLE', until: Infinity };
 }
 
 const scoreName = (d) => ({ '-3': 'ALBATROSS', '-2': 'EAGLE', '-1': 'BIRDIE', 0: 'PAR', 1: 'BOGEY', 2: 'DOUBLE BOGEY' })[d] ?? (d < 0 ? `${-d} UNDER` : `${d} OVER`);
@@ -245,7 +306,7 @@ function render(now) {
 
   const { W, H } = display;
   hud.clearRect(0, 0, W, H);
-  drawHud(hud, W, H, { course: game.course, hole: game.hole, tee: TEE, weather: game.weather, wind: game.wind, windScreen: v.worldDirToScreen(game.wind.across, game.wind.along) });
+  drawHud(hud, W, H, { course: game.course, hole: game.hole, tee: TEE, weather: game.weather, wind: game.wind, windScreen: v.worldDirToScreen(game.wind.across, game.wind.along), standing: standing() });
   const type = shotType(ui.shot);
   const max = Math.round(maxCarry(me.golfer, type, me.lie, game.hole));
   const aimYds = ui.aim ? Math.round(dist(me.at, ui.aim)) : 0;
@@ -253,10 +314,14 @@ function render(now) {
   drawShotBar(hud, W, H, {
     types: SHOT_TYPES, selected: ui.shot, max, aim: aimYds, canHit,
     club: chooseClub(me.golfer, type, aimYds || max, me.lie).toUpperCase(),
-    lie: LIE_NAMES[me.lie] ?? me.lie.toUpperCase(), toPin: Math.round(toPin(game.play)), stroke: me.strokes + 1,
-    hint: ui.phase !== 'aim' ? '' : !ui.aim ? 'DRAG ON THE COURSE TO AIM' : ui.dragging ? 'LET GO TO SET THE AIM' : 'CHANGE SHOT OR DRAG AGAIN',
+    lie: LIE_NAMES[me.lie] ?? me.lie.toUpperCase(), toPin: Math.round(toPin(game.play)), stroke: me.holed ? me.strokes : me.strokes + 1,
+    hint: ui.phase === 'putting' ? 'PUTTING...' : ui.phase !== 'aim' ? '' : !ui.aim ? 'DRAG ON THE COURSE TO AIM' : ui.dragging ? 'LET GO TO SET THE AIM' : 'CHANGE SHOT OR DRAG AGAIN',
   });
   if (ui.banner && now < ui.banner.until) drawBanner(hud, W, ui.banner.text, ui.banner.sub);
+  if (ui.card) {
+    const played = round.scores.filter((s) => s != null).length;
+    drawScorecard(hud, W, H, round, game.hole.number, played === 18 ? 'ROUND COMPLETE' : `${game.course.name.toUpperCase()}  SCORECARD`);
+  }
 }
 
 function frame(now) {
@@ -317,6 +382,12 @@ addEventListener('keydown', (e) => {
     return clampCamera();
   }
   if (k === 'c') { cam.manual = false; return; }
+  if (k === 'tab') { e.preventDefault(); ui.card = !ui.card; return; }
+  if (k === 'enter' && ui.phase === 'done') {
+    // On to the next hole, or a fresh round after the 18th.
+    if (game.hole.number === 18) { settings.hole = 1; round = null; } else settings.hole += 1;
+    return loadHole();
+  }
   if (k === 'n') settings.hole = settings.hole % 18 + 1;
   else if (k === 'p') settings.hole = (settings.hole + 16) % 18 + 1;
   else if (k === 'r') { settings.seed = Math.floor(Math.random() * 1e6); settings.hole = 1; }
@@ -333,7 +404,7 @@ addEventListener('resize', () => {
 });
 
 // Lets the test tools play shots without a mouse.
-window.golf = { get game() { return game; }, get world() { return world; }, ui, cam, display, shoot, clampAim, setZoom };
+window.golf = { get game() { return game; }, get world() { return world; }, get round() { return round; }, ui, cam, display, shoot, clampAim, setZoom };
 
 measure();
 loadHole();
