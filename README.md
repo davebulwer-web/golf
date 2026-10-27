@@ -10,7 +10,9 @@ Pick a shot from the bar at the bottom (or press `1` to `5`): normal, fade, draw
 
 The game fills the window and shows the whole hole. Zoom in with the mouse wheel or `+` / `-`; zoomed in, the view follows the ball and the arrow keys pan (`C` re-centres).
 
-Water costs a shot and you drop back on dry land; past the woods is out of bounds (stroke and distance). Once you're on the green the view zooms in and the putting plays itself: each putt is decided by the golfer's putting skill and the distance.
+The whole course is laid out on one map, as in Sim Golf: each tee is a short walk from the green before, and the neighbouring holes show around the one you're playing, a little darker. On links and tropical courses the seaside holes run along one coastline, with open sea beyond.
+
+Water costs a shot and you drop back on dry land. Past the woods is out of bounds (stroke and distance), and that includes the other holes and the open sea. Once you're on the green the view zooms in and the putting plays itself: each putt is decided by the golfer's putting skill and the distance.
 
 You play against Bertie, a computer golfer. Whoever is farthest from the pin plays next, as in a real game. Bertie picks a shot by trying each shot type and a spread of landing spots in his head, using the same shot model and wind as you, and takes the one that should leave the fewest strokes; his nerve decides how much a risky shot puts him off. You'll see his aim line for a moment before he hits.
 
@@ -24,13 +26,14 @@ The game is plain JavaScript and a canvas, with no engine or libraries.
 
 - `src/course-generator.js`: the course generator (see `src/COURSE-GENERATOR.md`).
 - `src/course.js`: the game's tweaks to the generator: more doglegs and extra hazards, on their own random stream.
+- `src/course-map.js`: lays the 18 holes out on one map (where each hole sits and which way it faces) and the coastline for seaside courses.
 - `src/shots.js`: the five shot types, reach, club choice, scatter, wind, roll and water drops.
 - `src/golfers.js`: golfers and their skills.
 - `src/ai.js`: how the computer golfer chooses its shot.
 - `src/putting.js`: automatic putting from skill and distance.
 - `src/play.js`: playing a hole and a round: strokes, putts, penalties and whose turn it is.
 - `src/iso.js`: the isometric projection between grid tiles, yards and screen pixels.
-- `src/hole-view.js`: draws a whole hole as pixel art (ground, trees, tees, flag, golfers).
+- `src/hole-view.js`: draws a whole hole as pixel art (ground, trees, tees, flag, golfers) with its neighbours around it.
 - `src/art.js`: placeholder pixel art, colours per course style and a small bitmap font.
 - `src/weather.js`: the wind for a round and how it blows across each hole.
 - `src/hud.js`, `src/main.js`: the on-screen panels and the page itself.

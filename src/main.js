@@ -4,7 +4,7 @@
 
 import { makeRng, dist, STYLES } from './course-generator.js';
 import { buildCourse } from './course.js';
-import { layoutHole, shiftView, drawHole, isOutOfBounds } from './hole-view.js';
+import { layoutHole, shiftView, addSurroundings, drawHole, isOutOfBounds } from './hole-view.js';
 import { TH } from './iso.js';
 import { drawSprite } from './art.js';
 import { drawHud, drawShotBar, drawBanner, drawScorecard, shotButtons, actionButtons, BAR_TOP } from './hud.js';
@@ -75,6 +75,7 @@ function buildWorld() {
   const fit = layoutHole(game.hole, { x: 8, y: 54, w: W - 16, h: BAR_TOP(H) - 60 });
   const view = shiftView(fit, MARGIN, MARGIN);
   const w = W + 2 * MARGIN, h = H + 2 * MARGIN;
+  addSurroundings(view, game.course, game.hole.number - 1, w, h);
   const img = new ImageData(w, h);
   drawHole(new Uint32Array(img.data.buffer), w, h, game.hole, view);
   const c = document.createElement('canvas');
