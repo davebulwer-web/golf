@@ -136,42 +136,54 @@ export function drawBanner(ctx, W, text, sub) {
 const sum = (a) => a.reduce((t, v) => t + (v ?? 0), 0);
 export const toParText = (d) => (d === 0 ? 'E' : d > 0 ? `+${d}` : `${d}`);
 
-// Medal play card: each hole's score against par, front nine, back nine and total.
+// Medal play card: each golfer's score on each hole against par, front nine,
+// back nine and total.
 export function drawScorecard(ctx, W, H, round, holeNumber, title) {
-  const COL = 14, LABEL = 34, w = LABEL + 9 * COL + 26 + 12, h = 112;
+  const n = round.players.length;
+  const COL = 14, LABEL = 34, ROW = 10, blockH = (2 + n) * ROW + 4;
+  const w = LABEL + 9 * COL + 26 + 12, h = 18 + 2 * blockH + 10 + n * 10 + 16;
   const x0 = Math.round((W - w) / 2), y0 = Math.round((H - h) / 2) - 10;
   panel(ctx, x0, y0, w, h);
   drawText(ctx, title, x0 + Math.round((w - textWidth(title)) / 2), y0 + 6, GOLD);
 
-  const played = round.scores.map((s, i) => (s == null ? null : s - round.pars[i]));
   const block = (from, label, y) => {
-    const cols = [...Array(9)].map((_, i) => from + i);
     const xs = (i) => x0 + 6 + LABEL + i * COL;
     ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
     ctx.fillRect(x0 + 6, y - 2, w - 12, 9);
     drawText(ctx, 'HOLE', x0 + 6, y, '#c8c0e8', 1, null);
-    drawText(ctx, 'PAR', x0 + 6, y + 10, '#c8c0e8', 1, null);
-    drawText(ctx, 'SCORE', x0 + 6, y + 20, '#c8c0e8', 1, null);
-    cols.forEach((n, i) => {
-      const cx = xs(i), mid = (s) => cx + Math.round((COL - textWidth(s)) / 2);
-      if (n + 1 === holeNumber) { ctx.fillStyle = 'rgba(242, 201, 58, 0.25)'; ctx.fillRect(cx, y - 2, COL - 1, 29); }
-      drawText(ctx, `${n + 1}`, mid(`${n + 1}`), y, '#ffffff', 1, null);
-      drawText(ctx, `${round.pars[n]}`, mid(`${round.pars[n]}`), y + 10, '#c8c0e8', 1, null);
-      const s = round.scores[n];
-      if (s != null) drawText(ctx, `${s}`, mid(`${s}`), y + 20, played[n] < 0 ? GOLD : played[n] > 0 ? '#f08a8a' : '#ffffff', 1, null);
-    });
+    drawText(ctx, 'PAR', x0 + 6, y + ROW, '#c8c0e8', 1, null);
+    round.players.forEach((p, r) => drawText(ctx, p.name, x0 + 6, y + (2 + r) * ROW, p.label ?? p.shirt, 1, null));
+    for (let i = 0; i < 9; i++) {
+      const hn = from + i, cx = xs(i), mid = (s) => cx + Math.round((COL - textWidth(s)) / 2);
+      if (hn + 1 === holeNumber) { ctx.fillStyle = 'rgba(242, 201, 58, 0.25)'; ctx.fillRect(cx, y - 2, COL - 1, (2 + n) * ROW - 1); }
+      drawText(ctx, `${hn + 1}`, mid(`${hn + 1}`), y, '#ffffff', 1, null);
+      drawText(ctx, `${round.pars[hn]}`, mid(`${round.pars[hn]}`), y + ROW, '#c8c0e8', 1, null);
+      round.players.forEach((p, r) => {
+        const sc = p.scores[hn];
+        if (sc == null) return;
+        const d = sc - round.pars[hn];
+        drawText(ctx, `${sc}`, mid(`${sc}`), y + (2 + r) * ROW, d < 0 ? GOLD : d > 0 ? '#f08a8a' : '#ffffff', 1, null);
+      });
+    }
     const tx = xs(9) + 4;
-    const scores = round.scores.slice(from, from + 9), pars = round.pars.slice(from, from + 9);
     drawText(ctx, label, tx, y, '#ffffff', 1, null);
-    drawText(ctx, `${sum(pars)}`, tx, y + 10, '#c8c0e8', 1, null);
-    if (scores.some((s) => s != null)) drawText(ctx, `${sum(scores)}`, tx, y + 20, '#ffffff', 1, null);
+    drawText(ctx, `${sum(round.pars.slice(from, from + 9))}`, tx, y + ROW, '#c8c0e8', 1, null);
+    round.players.forEach((p, r) => {
+      const part = p.scores.slice(from, from + 9);
+      if (part.some((sc) => sc != null)) drawText(ctx, `${sum(part)}`, tx, y + (2 + r) * ROW, '#ffffff', 1, null);
+    });
   };
   block(0, 'OUT', y0 + 18);
-  block(9, 'IN', y0 + 52);
+  block(9, 'IN', y0 + 18 + blockH);
 
-  const holes = played.filter((d) => d != null);
-  const total = `TOTAL ${sum(round.scores)}  (${toParText(sum(holes))})   PAR ${sum(round.pars)}`;
-  drawText(ctx, holes.length ? total : 'NO HOLES PLAYED YET', x0 + Math.round((w - textWidth(holes.length ? total : 'NO HOLES PLAYED YET')) / 2), y0 + 86, GOLD);
+  let ty = y0 + 18 + 2 * blockH + 6;
+  round.players.forEach((p) => {
+    const played = p.scores.map((sc, i) => (sc == null ? null : sc - round.pars[i])).filter((d) => d != null);
+    const line = played.length ? `${p.name}: ${sum(p.scores)}  (${toParText(sum(played))} THRU ${played.length})` : `${p.name}: NO HOLES YET`;
+    drawText(ctx, line, x0 + Math.round((w - textWidth(line)) / 2), ty, GOLD);
+    ty += 10;
+  });
+  const y1 = ty;
   const help = 'TAB: SHOW OR HIDE CARD';
-  drawText(ctx, help, x0 + Math.round((w - textWidth(help)) / 2), y0 + 98, '#8a80b0', 1, null);
+  drawText(ctx, help, x0 + Math.round((w - textWidth(help)) / 2), y1 + 2, '#8a80b0', 1, null);
 }
