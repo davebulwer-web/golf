@@ -10,7 +10,7 @@ const STEP = 10;      // yards per cell of the layout map
 const GAP = 4;        // cells of woods kept between neighbouring holes
 const SEA_REACH = 120; // yards of open sea a links hole keeps clear beside it
 const TURNS = 24;      // headings tried for each hole
-const WALKS = [[25, 40, 60, 80], [110, 150, 200], [260, 330, 400]]; // tee distances from the last green, then further if nothing fits
+const WALKS = [[25, 40, 60, 80], [110, 150, 200], [260, 330, 400], [550, 700, 900]]; // tee distances from the last green, then further if nothing fits
 const COAST = 60;     // how far the coastline runs from the first tee, on courses by the sea
 
 // Where a hole sits: a hole point p maps to the map at (x, y) + p turned by `rot`.
@@ -62,7 +62,7 @@ export function courseMap(course) {
   const r = makeRng((course.seed ?? 1) ^ 0x3c0a5e);
   const blocked = new Map(); // land plus the woods round it (cell -> hole number): nothing else goes here
   const wet = new Set();     // open sea: other sea may share it, land may not
-  const places = [], inland = [];
+  const places = [], inland = [], clashes = [];
   let lastGreen = null;
   let coast = null;
   if (course.holes.some((h) => h.sea)) {
@@ -114,7 +114,8 @@ export function courseMap(course) {
       if (!best || score < best.score) best = { place, score, clash };
     };
     const from = lastGreen ?? { x: 0, y: 0 };
-    if (!lastGreen) tryPlace({ x: 0, y: 0, rot: r.range(0, Math.PI * 2) }, 0);
+    // The first tee is at (0, 0), facing whichever way fits best (inland, by the sea).
+    if (!lastGreen) for (let t = 0; t < TURNS; t++) tryPlace({ x: 0, y: 0, rot: (t / TURNS) * Math.PI * 2 }, 0);
     if (coast && fp.toSea) {
       // Seaside holes also try spots along the coast, facing straight out to sea.
       const { u } = coast;
@@ -145,6 +146,7 @@ export function courseMap(course) {
     }
     places.push(best.place);
     if (fp.toSea && best.clash > 0) inland.push(n); // no room on the coast: it plays inland instead
+    if (best.clash > 0) clashes.push(n);
     lastGreen = toMap(best.place, greenAt);
     // Mark this hole's ground, with a strip of woods round its land.
     for (const p of fp.land) {
@@ -159,7 +161,7 @@ export function courseMap(course) {
     for (const p of fp.sea) wet.add(key(...cellOf(toMap(best.place, p))));
   });
 
-  const map = { places, coast, inland };
+  const map = { places, coast, inland, clashes };
   cache.set(id, map);
   return map;
 }
