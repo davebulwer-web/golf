@@ -141,7 +141,7 @@ export const toParText = (d) => (d === 0 ? 'E' : d > 0 ? `+${d}` : `${d}`);
 export function drawScorecard(ctx, W, H, round, holeNumber, title) {
   const n = round.players.length;
   const COL = 14, LABEL = 34, ROW = 10, blockH = (2 + n) * ROW + 4;
-  const w = LABEL + 9 * COL + 26 + 12, h = 18 + 2 * blockH + 10 + n * 10 + 16;
+  const w = LABEL + 9 * COL + 26 + 12, h = 18 + 2 * blockH + 10 + n * 10 + 24;
   const x0 = Math.round((W - w) / 2), y0 = Math.round((H - h) / 2) - 10;
   panel(ctx, x0, y0, w, h);
   drawText(ctx, title, x0 + Math.round((w - textWidth(title)) / 2), y0 + 6, GOLD);
@@ -186,4 +186,6 @@ export function drawScorecard(ctx, W, H, round, holeNumber, title) {
   const y1 = ty;
   const help = 'TAB: SHOW OR HIDE CARD';
   drawText(ctx, help, x0 + Math.round((w - textWidth(help)) / 2), y1 + 2, '#8a80b0', 1, null);
+  const credit = 'SPRITES: MIKE MOORE, PIXELBITSNBYTES.COM';
+  drawText(ctx, credit, x0 + Math.round((w - textWidth(credit)) / 2), y1 + 10, '#6a6090', 1, null);
 }
