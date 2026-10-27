@@ -2,13 +2,14 @@
 
 import { pointAt, surfaceAt, dist } from './course-generator.js';
 import { playShot, waterDrop } from './shots.js';
+import { putt } from './putting.js';
 
 // Start a hole with every golfer's ball on the given tee.
 export function startHole(hole, golfers, tee = 'white') {
   const at = pointAt(hole.line, hole.tees[tee]);
   return {
     hole,
-    players: golfers.map((golfer) => ({ golfer, at: { ...at }, lie: 'tee', strokes: 0, onGreen: false, holed: false })),
+    players: golfers.map((golfer) => ({ golfer, at: { ...at }, lie: 'tee', strokes: 0, putts: 0, onGreen: false, holed: false })),
     turn: 0,
   };
 }
@@ -51,3 +52,17 @@ export function settle(state, shot) {
   p.holed = shot.holed;
   p.onGreen = p.lie === 'green';
 }
+
+// Roll the current player's next putt, without moving the ball yet.
+export const nextPutt = (state, rng) => putt(rng, current(state).golfer, current(state).at, state.hole.pin);
+
+export function settlePutt(state, p) {
+  const me = current(state);
+  me.strokes += 1;
+  me.putts += 1;
+  me.at = p.rest;
+  me.holed = p.holed;
+}
+
+// A round's scores, hole by hole (null until played).
+export const newRound = (course, key) => ({ key, pars: course.holes.map((h) => h.par), scores: Array(18).fill(null), putts: Array(18).fill(null) });

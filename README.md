@@ -10,9 +10,11 @@ Pick a shot from the bar at the bottom (or press `1` to `5`): normal, fade, draw
 
 The game fills the window and shows the whole hole. Zoom in with the mouse wheel or `+` / `-`; zoomed in, the view follows the ball and the arrow keys pan (`C` re-centres).
 
-Water costs a shot and you drop back on dry land; past the woods is out of bounds (stroke and distance). Putting arrives in the next step, so the hole stops when you reach the green. `Enter` replays the hole.
+Water costs a shot and you drop back on dry land; past the woods is out of bounds (stroke and distance). Once you're on the green the view zooms in and the putting plays itself: each putt is decided by the golfer's putting skill and the distance.
 
-Other keys: `N` / `P` next and previous hole, `R` a new random course, `S` change course style. You can also pick a hole in the address bar, e.g. `golf.html?style=links&seed=7&hole=2`.
+Scoring is medal play. After each hole the scorecard shows the round so far (front nine, back nine, total against par); `Enter` goes on to the next hole and `Tab` shows or hides the card. The hole card at the top left keeps the running score.
+
+Other keys: `N` / `P` jump to the next or previous hole (for testing; skipped holes stay blank on the card), `R` a new random course, `S` change course style. You can also pick a hole in the address bar, e.g. `golf.html?style=links&seed=7&hole=2`.
 
 ## Working on it
 
@@ -22,7 +24,8 @@ The game is plain JavaScript and a canvas, with no engine or libraries.
 - `src/course.js`: the game's tweaks to the generator: more doglegs and extra hazards, on their own random stream.
 - `src/shots.js`: the five shot types, reach, club choice, scatter, wind, roll and water drops.
 - `src/golfers.js`: golfers and their skills.
-- `src/play.js`: playing a hole: strokes, penalties and whose turn it is.
+- `src/putting.js`: automatic putting from skill and distance.
+- `src/play.js`: playing a hole and a round: strokes, putts, penalties and whose turn it is.
 - `src/iso.js`: the isometric projection between grid tiles, yards and screen pixels.
 - `src/hole-view.js`: draws a whole hole as pixel art (ground, trees, tees, flag, golfers).
 - `src/art.js`: placeholder pixel art, colours per course style and a small bitmap font.

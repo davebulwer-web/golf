@@ -15,15 +15,17 @@ function panel(ctx, x, y, w, h) {
 }
 
 // `wind` is from holeWind; `windScreen` is the same wind as a screen direction.
-export function drawHud(ctx, W, H, { course, hole, tee, weather, wind, windScreen }) {
+// `standing` is the round so far, e.g. '+2 THRU 3'.
+export function drawHud(ctx, W, H, { course, hole, tee, weather, wind, windScreen, standing }) {
   // Hole card, top left.
   const title = `HOLE ${hole.number}`;
   const line2 = `PAR ${hole.par}  ${teeYards(hole, tee)} YDS`;
   const line3 = `${course.name}  ${STYLES[course.style].name}`;
   const keys = 'N/P HOLE  R COURSE  S STYLE  +/- ZOOM';
-  const w = Math.max(textWidth(title, 2), textWidth(line2), textWidth(line3), textWidth(keys)) + 12;
+  const w = Math.max(textWidth(title, 2) + (standing ? textWidth(standing) + 8 : 0), textWidth(line2), textWidth(line3), textWidth(keys)) + 12;
   panel(ctx, 6, 6, w, 42);
   drawText(ctx, title, 12, 11, GOLD, 2);
+  if (standing) drawText(ctx, standing, 12 + textWidth(title, 2) + 8, 15, '#ffffff');
   drawText(ctx, line2, 12, 24);
   drawText(ctx, line3, 12, 31, '#c8c0e8');
   drawText(ctx, keys, 12, 39, '#8a80b0', 1, null);
@@ -127,4 +129,49 @@ export function drawBanner(ctx, W, text, sub) {
   panel(ctx, x, 54, w, sub ? 30 : 20);
   drawText(ctx, text, Math.round((W - textWidth(text, 2)) / 2), 59, GOLD, 2);
   if (sub) drawText(ctx, sub, Math.round((W - textWidth(sub)) / 2), 74);
+}
+
+// ---------- Scorecard ----------
+
+const sum = (a) => a.reduce((t, v) => t + (v ?? 0), 0);
+export const toParText = (d) => (d === 0 ? 'E' : d > 0 ? `+${d}` : `${d}`);
+
+// Medal play card: each hole's score against par, front nine, back nine and total.
+export function drawScorecard(ctx, W, H, round, holeNumber, title) {
+  const COL = 14, LABEL = 34, w = LABEL + 9 * COL + 26 + 12, h = 112;
+  const x0 = Math.round((W - w) / 2), y0 = Math.round((H - h) / 2) - 10;
+  panel(ctx, x0, y0, w, h);
+  drawText(ctx, title, x0 + Math.round((w - textWidth(title)) / 2), y0 + 6, GOLD);
+
+  const played = round.scores.map((s, i) => (s == null ? null : s - round.pars[i]));
+  const block = (from, label, y) => {
+    const cols = [...Array(9)].map((_, i) => from + i);
+    const xs = (i) => x0 + 6 + LABEL + i * COL;
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.fillRect(x0 + 6, y - 2, w - 12, 9);
+    drawText(ctx, 'HOLE', x0 + 6, y, '#c8c0e8', 1, null);
+    drawText(ctx, 'PAR', x0 + 6, y + 10, '#c8c0e8', 1, null);
+    drawText(ctx, 'SCORE', x0 + 6, y + 20, '#c8c0e8', 1, null);
+    cols.forEach((n, i) => {
+      const cx = xs(i), mid = (s) => cx + Math.round((COL - textWidth(s)) / 2);
+      if (n + 1 === holeNumber) { ctx.fillStyle = 'rgba(242, 201, 58, 0.25)'; ctx.fillRect(cx, y - 2, COL - 1, 29); }
+      drawText(ctx, `${n + 1}`, mid(`${n + 1}`), y, '#ffffff', 1, null);
+      drawText(ctx, `${round.pars[n]}`, mid(`${round.pars[n]}`), y + 10, '#c8c0e8', 1, null);
+      const s = round.scores[n];
+      if (s != null) drawText(ctx, `${s}`, mid(`${s}`), y + 20, played[n] < 0 ? GOLD : played[n] > 0 ? '#f08a8a' : '#ffffff', 1, null);
+    });
+    const tx = xs(9) + 4;
+    const scores = round.scores.slice(from, from + 9), pars = round.pars.slice(from, from + 9);
+    drawText(ctx, label, tx, y, '#ffffff', 1, null);
+    drawText(ctx, `${sum(pars)}`, tx, y + 10, '#c8c0e8', 1, null);
+    if (scores.some((s) => s != null)) drawText(ctx, `${sum(scores)}`, tx, y + 20, '#ffffff', 1, null);
+  };
+  block(0, 'OUT', y0 + 18);
+  block(9, 'IN', y0 + 52);
+
+  const holes = played.filter((d) => d != null);
+  const total = `TOTAL ${sum(round.scores)}  (${toParText(sum(holes))})   PAR ${sum(round.pars)}`;
+  drawText(ctx, holes.length ? total : 'NO HOLES PLAYED YET', x0 + Math.round((w - textWidth(holes.length ? total : 'NO HOLES PLAYED YET')) / 2), y0 + 86, GOLD);
+  const help = 'TAB: SHOW OR HIDE CARD';
+  drawText(ctx, help, x0 + Math.round((w - textWidth(help)) / 2), y0 + 98, '#8a80b0', 1, null);
 }
