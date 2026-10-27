@@ -90,7 +90,8 @@ function loadHole() {
   greenZoom(false);
   cam.manual = false;
   buildWorld();
-  history.replaceState(null, '', `?style=${settings.style}&seed=${settings.seed}&hole=${settings.hole}`);
+  // Keep the address shareable where the page is allowed to change it.
+  try { history.replaceState(null, '', `?style=${settings.style}&seed=${settings.seed}&hole=${settings.hole}`); } catch { /* sandboxed */ }
 }
 
 // ---------- Camera ----------
