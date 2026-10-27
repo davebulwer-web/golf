@@ -14,6 +14,7 @@ import { PLAYER, RIVAL } from './golfers.js';
 import { startHole, current, toPin, hit, settle, nextPutt, settlePutt, newRound, standing, nextTurn, allHoled, pickUp, PICK_UP } from './play.js';
 import { planShot } from './ai.js';
 import { feet } from './putting.js';
+import { drawDinky, dinkySize, golferFrame, ballFrame, flagFrame, LIE_BANNERS, scoreBanner } from './dinky.js';
 
 const STYLE_KEYS = Object.keys(STYLES);
 const TEE = 'white';
@@ -48,7 +49,11 @@ let game, world, round;
 const ui = {
   shot: 'straight', humanShot: 'straight', dragging: false, aim: null, phase: 'aim', anim: null, banner: null,
   card: false, nextPuttAt: 0, aiAt: 0, aiPlanned: false,
+  pop: null,  // a picture banner, e.g. BIRDIE: { names, start, until }
+  moods: [],  // golfers celebrating or sulking after holing out: { kind, until } by player
 };
+
+const SWING = 450; // ms for the swing before the ball leaves
 
 const zoomNow = () => (display.onGreen ? MAX_ZOOM : display.zoom);
 const scale = () => display.fitScale + zoomNow();
@@ -93,7 +98,7 @@ function loadHole() {
   // Scores carry on from hole to hole on the same course.
   const key = `${settings.style}:${settings.seed}`;
   if (round?.key !== key) round = newRound(course, key, GOLFERS);
-  Object.assign(ui, { dragging: false, aim: null, phase: 'aim', anim: null, banner: null, card: false });
+  Object.assign(ui, { dragging: false, aim: null, phase: 'aim', anim: null, banner: null, card: false, cardAt: 0, pop: null, moods: [] });
   greenZoom(false);
   cam.manual = false;
   buildWorld();
@@ -158,7 +163,8 @@ function shoot() {
   if (ui.phase !== 'aim' || !ui.aim) return;
   const shot = hit(game.play, rng, ui.aim, ui.shot, game.weather, game.wind, (p) => isOutOfBounds(world.view, p));
   const rollLen = dist(shot.landing, shot.rest);
-  ui.anim = { shot, start: performance.now(), flight: 700 + shot.carry * 4, roll: rollLen > 0.5 ? 250 + rollLen * 25 : 0 };
+  const swingAt = performance.now();
+  ui.anim = { shot, swingAt, start: swingAt + SWING, flight: 700 + shot.carry * 4, roll: rollLen > 0.5 ? 250 + rollLen * 25 : 0 };
   ui.phase = 'flight';
   ui.aim = null;
   ui.dragging = false;
@@ -183,6 +189,7 @@ function ballNow(now) {
   const a = ui.anim;
   if (!a) return { ...me.at, h: 0 };
   const t = (now - a.start) / a.flight;
+  if (t < 0) return { ...a.shot.from, h: 0 }; // still swinging
   if (t < 1) return flightPoint(a.shot.from, a.shot.landing, shotType(a.shot.type), t);
   const r = a.roll ? Math.min(1, (now - a.start - a.flight) / a.roll) : 1;
   const e = 1 - (1 - r) ** 2; // slows as it rolls out
@@ -198,7 +205,14 @@ function update(now) {
   if (ui.phase === 'roll' && now - a.start >= a.flight + a.roll) {
     settle(game.play, a.shot);
     ui.anim = null;
-    afterStroke(now, a.shot.note);
+    const me = current(game.play);
+    let note = a.shot.note;
+    const pic = note?.startsWith('OUT OF BOUNDS') ? 'txt-ob' : !me.holed && !note?.startsWith('IN THE WATER') && LIE_BANNERS[me.lie];
+    if (pic) {
+      showPop([pic], now);
+      if (note === 'ON THE GREEN') note = null; // the picture says it
+    }
+    afterStroke(now, note);
   }
 }
 
@@ -219,6 +233,7 @@ function updateComputer(now) {
 }
 
 const who = (golfer) => golfer.name.toUpperCase();
+const showPop = (names, now) => { ui.pop = { names, start: now, until: now + 1900 }; };
 const yourTurn = (golfer) => (golfer.ai ? `${who(golfer)} TO PLAY` : 'YOUR SHOT');
 
 // After any stroke: note a holed ball, then hand over to whoever is furthest away.
@@ -233,6 +248,9 @@ function afterStroke(now, note) {
     round.players[game.play.turn].putts[game.hole.number - 1] = me.putts;
     const name = me.strokes === 1 ? 'HOLE IN ONE' : scoreName(me.strokes - game.hole.par);
     if (me.strokes < PICK_UP) note = `${who(me.golfer)}: ${name}! ${me.strokes} SHOTS`;
+    const pics = scoreBanner(me.strokes, game.hole.par);
+    if (pics.length) showPop(pics, now);
+    ui.moods[game.play.turn] = { kind: me.strokes <= game.hole.par ? 'joy' : 'cry', until: now + 2800 };
   }
   if (allHoled(game.play)) return holeFinished();
   startTurn(now, note);
@@ -286,7 +304,7 @@ function standings() {
 // Everyone's holed out: show the hole's result and the card.
 function holeFinished() {
   ui.phase = 'done';
-  ui.card = true;
+  ui.cardAt = ui.pop ? ui.pop.until : 1; // let the last BIRDIE (or BOGEY) show before the card covers it
   ui.anim = null;
   const last = game.hole.number === 18;
   const result = game.play.players.map((p) => `${who(p.golfer)} ${p.strokes}`).join(', ');
@@ -296,6 +314,18 @@ function holeFinished() {
 const scoreName = (d) => ({ '-3': 'ALBATROSS', '-2': 'EAGLE', '-1': 'BIRDIE', 0: 'PAR', 1: 'BOGEY', 2: 'DOUBLE BOGEY' })[d] ?? (d < 0 ? `${-d} UNDER` : `${d} OVER`);
 
 // ---------- Drawing ----------
+
+// A picture banner (BIRDIE, IN THE ROUGH...) that drops in under the text banner.
+function drawPop(g, W, H, now) {
+  const drop = Math.max(0, 1 - (now - ui.pop.start) / 220);
+  let y = Math.round(H * 0.28 - 14 * drop * drop);
+  for (const name of ui.pop.names) {
+    const size = dinkySize(name);
+    if (!size) return;
+    drawDinky(g, name, Math.round(W / 2 - size.w / 2), y, null, true);
+    y += size.h + 2;
+  }
+}
 
 const LIE_NAMES = { tee: 'TEE', fairway: 'FAIRWAY', fringe: 'FRINGE', green: 'GREEN', rough: 'ROUGH', waste: 'WASTE GROUND', bunker: 'BUNKER', trees: 'TREES' };
 
@@ -346,19 +376,38 @@ function render(now) {
 
   // Each golfer stands beside their ball (or where they played from while it's
   // moving); whoever isn't playing steps to the other side so they don't overlap.
-  const people = game.play.players.map((p, i) => {
-    const playing = i === game.play.turn;
-    const from = playing && ui.anim ? ui.anim.shot.from : p.at;
-    return { p, playing, stand: v.worldToScreen(from), ball: playing ? ballNow(now) : { ...p.at, h: 0 } };
-  }).filter((x) => !x.p.holed).sort((a, b) => a.stand.y - b.stand.y);
-  for (const { p, playing, stand, ball } of people) {
-    drawSprite(ctx, 'golfer', stand.x + (playing ? -3 : 4), stand.y, { c: p.golfer.shirt });
-    const s = v.worldToScreen(ball);
-    const y = Math.round(s.y - heightPx(ball.h)), x = Math.round(s.x);
-    if (ball.h > 0.3) { ctx.fillStyle = 'rgba(0, 0, 0, 0.45)'; ctx.fillRect(x - 1, Math.round(s.y), 2, 1); }
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(x - 1, y - 1, 2, 2);
+  // Someone who's just holed out stays by the hole for a moment to celebrate or sulk.
+  // Flags and golfers are drawn back to front.
+  const items = [];
+  const pins = [game.hole.pin, ...v.others.map((o) => o.toHere(o.hole.pin))];
+  for (const pin of pins) {
+    const at = v.worldToScreen(pin);
+    items.push({ y: at.y, draw: () => drawDinky(ctx, flagFrame(now), at.x, at.y) || drawSprite(ctx, 'flag', at.x, at.y) });
   }
+  game.play.players.forEach((p, i) => {
+    const playing = i === game.play.turn;
+    const mood = ui.moods[i] && now < ui.moods[i].until ? ui.moods[i] : null;
+    if (p.holed && !mood) return;
+    const a = playing ? ui.anim : null;
+    const from = a ? a.shot.from : p.at;
+    const stand = v.worldToScreen(from);
+    const ball = playing ? ballNow(now) : { ...p.at, h: 0 };
+    const pose = mood ? mood.kind : a?.swingAt ? 'swing' : 'stand';
+    const frame = golferFrame(pose, a?.swingAt ? (now - a.swingAt) / SWING : 0, now);
+    const x = stand.x + (mood ? 9 : playing ? -5 : 6); // after holing, stand clear of the flag
+    items.push({ y: stand.y, draw: () => drawDinky(ctx, frame, x, stand.y + 1, p.golfer.shirt) || drawSprite(ctx, 'golfer', x, stand.y, { c: p.golfer.shirt }) });
+    if (p.holed) return;
+    const s = v.worldToScreen(ball);
+    items.push({ y: s.y + 0.5, draw: () => {
+      const y = Math.round(s.y - heightPx(ball.h)), bx = Math.round(s.x);
+      if (ball.h > 0.3) { ctx.fillStyle = 'rgba(0, 0, 0, 0.45)'; ctx.fillRect(bx - 1, Math.round(s.y), 2, 1); }
+      if (ball.h > 4 && drawDinky(ctx, ballFrame(ball.h), bx, y + 1)) return;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(bx - 1, y - 1, 2, 2);
+    } });
+  });
+  items.sort((a, b) => a.y - b.y);
+  for (const it of items) it.draw();
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 
   const { W, H } = display;
@@ -375,6 +424,8 @@ function render(now) {
     hint: !humanTurn() && ui.phase !== 'done' ? `${who(me.golfer)} IS PLAYING` : ui.phase === 'putting' ? 'PUTTING...' : ui.phase !== 'aim' ? '' : !ui.aim ? 'DRAG ON THE COURSE TO AIM' : ui.dragging ? 'LET GO TO SET THE AIM' : 'CHANGE SHOT OR DRAG AGAIN',
   });
   if (ui.banner && now < ui.banner.until) drawBanner(hud, W, ui.banner.text, ui.banner.sub);
+  if (ui.pop && now < ui.pop.until) drawPop(hud, W, H, now);
+  if (ui.cardAt && now >= ui.cardAt) { ui.card = true; ui.cardAt = 0; }
   if (ui.card) {
     const played = round.players[0].scores.filter((s) => s != null).length;
     drawScorecard(hud, W, H, round, game.hole.number, played === 18 ? 'ROUND COMPLETE' : `${game.course.name.toUpperCase()}  SCORECARD`);
@@ -439,7 +490,7 @@ addEventListener('keydown', (e) => {
     return clampCamera();
   }
   if (k === 'c') { cam.manual = false; return; }
-  if (k === 'tab') { e.preventDefault(); ui.card = !ui.card; return; }
+  if (k === 'tab') { e.preventDefault(); ui.card = !ui.card; ui.cardAt = 0; return; }
   if (k === 'enter' && ui.phase === 'done') {
     // On to the next hole, or a fresh round after the 18th.
     if (game.hole.number === 18) { settings.hole = 1; round = null; } else settings.hole += 1;

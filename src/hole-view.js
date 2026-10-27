@@ -204,7 +204,7 @@ function paintScenery(buf, W, H, view, style) {
 // Out on the open grass, trees grow in scattered clumps.
 const landDensity = (art, c, r) => art.density * (hash(c >> 3, r >> 3, 31) < 0.3 ? 0.45 : 0.015);
 
-// Tee markers, the flag and anything standing on the hole, e.g. golfers and balls.
+// Tee markers and anything standing on the hole, e.g. golfers and balls.
 function paintMarkers(buf, W, H, view, hole, actors) {
   const items = [];
   for (const t of TEE_SETS) {
@@ -212,13 +212,7 @@ function paintMarkers(buf, W, H, view, hole, actors) {
     const col = hex(t.color), dark = hex('#1a1a1a');
     for (const dx of [-3, 3]) items.push({ y: at.y, draw: () => { put(buf, W, H, at.x + dx, at.y, col); put(buf, W, H, at.x + dx, at.y + 1, dark); } });
   }
-  const pin = view.worldToScreen(hole.pin);
-  items.push({ y: pin.y, draw: () => blit(buf, W, H, SPRITES.flag, pin.x, pin.y) });
-  // Flags on the other holes' greens.
-  for (const o of view.others) {
-    const at = view.worldToScreen(o.toHere(o.hole.pin));
-    items.push({ y: at.y, draw: () => blit(buf, W, H, SPRITES.flag, at.x, at.y) });
-  }
+  // The flags are drawn over the top each frame, so they can wave.
   for (const a of actors) {
     const p = view.worldToScreen(a.at);
     if (a.ball) items.push({ y: p.y, draw: () => put(buf, W, H, p.x, p.y, hex('#ffffff')) });

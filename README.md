@@ -35,7 +35,12 @@ The game is plain JavaScript and a canvas, with no engine or libraries.
 - `src/iso.js`: the isometric projection between grid tiles, yards and screen pixels.
 - `src/hole-view.js`: draws a whole hole as pixel art (ground, trees, tees, flag, golfers) with its neighbours around it.
 - `src/art.js`: placeholder pixel art, colours per course style and a small bitmap font.
+- `src/dinky.js`: the Dinky Tiny Golf sprites: golfer poses (recoloured per player), the ball in flight, the waving flag and result banners.
 - `src/weather.js`: the wind for a round and how it blows across each hole.
 - `src/hud.js`, `src/main.js`: the on-screen panels and the page itself.
 
 `index.html` loads the source files directly, which needs a local web server (for example `npx serve`). After changing anything in `src/`, rebuild the single-file version with `node tools/build.mjs`. `node tools/screenshots.cjs` saves screenshots of a few holes to `screenshots/`, and `node tools/playtest.cjs` plays holes for you aiming at the pin while Bertie plays his own shots (both need Playwright). `node tools/check-shots.mjs` prints tables of shot distances, scatter and hazard counts.
+
+## Credits
+
+The golfer, ball, flag and result banner sprites are from **Dinky Tiny Golf** by Mike Moore ([www.pixelbitsnbytes.com](https://www.pixelbitsnbytes.com)), free to use with credit. The original files and their licence are in `assets/dinky/`; `node tools/pack-assets.mjs` packs them into `src/dinky-assets.js` so the game stays a single file. The rest of the art is placeholder pixel art drawn from code.
