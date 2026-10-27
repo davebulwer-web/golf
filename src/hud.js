@@ -20,11 +20,13 @@ export function drawHud(ctx, W, H, { course, hole, tee, weather, wind, windScree
   const title = `HOLE ${hole.number}`;
   const line2 = `PAR ${hole.par}  ${teeYards(hole, tee)} YDS`;
   const line3 = `${course.name}  ${STYLES[course.style].name}`;
-  const w = Math.max(textWidth(title, 2), textWidth(line2), textWidth(line3)) + 12;
-  panel(ctx, 6, 6, w, 34);
+  const keys = 'N/P HOLE  R COURSE  S STYLE  +/- ZOOM';
+  const w = Math.max(textWidth(title, 2), textWidth(line2), textWidth(line3), textWidth(keys)) + 12;
+  panel(ctx, 6, 6, w, 42);
   drawText(ctx, title, 12, 11, GOLD, 2);
   drawText(ctx, line2, 12, 24);
   drawText(ctx, line3, 12, 31, '#c8c0e8');
+  drawText(ctx, keys, 12, 39, '#8a80b0', 1, null);
 
   // Wind, top right: an arrow showing where it blows on screen, and its strength.
   const words = windWords(wind);
@@ -69,7 +71,24 @@ const ICONS = {
   runner: (t) => ({ x: t * 30, y: t < 0.6 ? 4 * Math.sin(Math.PI * t / 0.6) : 0 }),
 };
 
-// `info`: { types, selected, club, aim, max, lie, toPin, stroke, hint }
+// The hit and cancel buttons at the right of the bar.
+export const actionButtons = (W, H) => ({
+  hit: { x: W - 12 - 64, y: BAR_TOP(H) + 6, w: 64, h: 34 },
+  cancel: { x: W - 12 - 64 - 6 - 48, y: BAR_TOP(H) + 6, w: 48, h: 34 },
+});
+
+function button(ctx, b, label, sub, on, color) {
+  ctx.fillStyle = on ? color : '#2c2050';
+  ctx.fillRect(b.x, b.y, b.w, b.h);
+  ctx.fillStyle = on ? GOLD : '#5a4a90';
+  ctx.fillRect(b.x, b.y, b.w, 1); ctx.fillRect(b.x, b.y + b.h - 1, b.w, 1);
+  ctx.fillRect(b.x, b.y, 1, b.h); ctx.fillRect(b.x + b.w - 1, b.y, 1, b.h);
+  const scale = textWidth(label, 2) <= b.w - 8 ? 2 : 1;
+  drawText(ctx, label, b.x + Math.round((b.w - textWidth(label, scale)) / 2), b.y + 8, on ? '#ffffff' : '#6a5a98', scale, on ? '#1a1a2a' : null);
+  drawText(ctx, sub, b.x + Math.round((b.w - textWidth(sub)) / 2), b.y + 25, on ? '#e8e4f8' : '#6a5a98', 1, null);
+}
+
+// `info`: { types, selected, club, aim, max, lie, toPin, stroke, hint, canHit }
 export function drawShotBar(ctx, W, H, info) {
   const top = BAR_TOP(H);
   panel(ctx, 6, top, W - 12, BAR_H);
@@ -95,15 +114,17 @@ export function drawShotBar(ctx, W, H, info) {
   drawText(ctx, info.aim ? `AIM: ${info.aim} YDS  (MAX ${info.max})` : `MAX: ${info.max} YDS`, x, top + 17);
   drawText(ctx, `LIE: ${info.lie}`, x, top + 26);
   drawText(ctx, `TO PIN: ${info.toPin} YDS   STROKE ${info.stroke}`, x, top + 35);
-  if (info.hint) drawText(ctx, info.hint, W - 12 - textWidth(info.hint), top + 35, '#c8c0e8');
-  drawText(ctx, 'N/P: HOLE  R: NEW COURSE  S: STYLE', W - 12 - textWidth('N/P: HOLE  R: NEW COURSE  S: STYLE'), top + 8, '#8a80b0');
+  const act = actionButtons(W, H);
+  button(ctx, act.cancel, 'CANCEL', 'ESC', info.canHit, '#7a3a4a');
+  button(ctx, act.hit, 'HIT', 'SPACE', info.canHit, '#3a8a3a');
+  if (info.hint) drawText(ctx, info.hint, act.cancel.x - 10 - textWidth(info.hint), top + 35, '#c8c0e8');
 }
 
 // A banner across the middle top, for things like "IN THE WATER".
 export function drawBanner(ctx, W, text, sub) {
   const w = Math.max(textWidth(text, 2), sub ? textWidth(sub) : 0) + 20;
   const x = Math.round((W - w) / 2);
-  panel(ctx, x, 48, w, sub ? 30 : 20);
-  drawText(ctx, text, Math.round((W - textWidth(text, 2)) / 2), 53, GOLD, 2);
-  if (sub) drawText(ctx, sub, Math.round((W - textWidth(sub)) / 2), 68);
+  panel(ctx, x, 54, w, sub ? 30 : 20);
+  drawText(ctx, text, Math.round((W - textWidth(text, 2)) / 2), 59, GOLD, 2);
+  if (sub) drawText(ctx, sub, Math.round((W - textWidth(sub)) / 2), 74);
 }

@@ -6,7 +6,9 @@ A retro, pixel-art, isometric golf game in the style of Sid Meier's Sim Golf, bu
 
 Download `golf.html` and open it in a browser. It's a single self-contained file, so there's nothing to install.
 
-Pick a shot from the bar at the bottom (or press `1` to `5`): normal, fade, draw, lob or runner. Then press on the course and drag to where you want the ball to land, and let go to hit it. The dotted line shows the shot's flight and the oval shows where it's likely to land: it grows and turns red as you push for more distance. Clubs are picked for you. Wind isn't in the preview, so aim off for it. Right-click or `Esc` cancels a shot.
+Pick a shot from the bar at the bottom (or press `1` to `5`): normal, fade, draw, lob or runner. Then press on the course and drag to where you want the ball to land, and let go to set the aim. The dotted line shows the shot's flight and the oval shows where it's likely to land: it grows and turns red as you push for more distance. You can still change the shot type or drag again; press **HIT** (or space) to play it, or **CANCEL** (`Esc` or right-click) to clear it. Clubs are picked for you. Wind isn't in the preview, so aim off for it.
+
+The game fills the window and shows the whole hole. Zoom in with the mouse wheel or `+` / `-`; zoomed in, the view follows the ball and the arrow keys pan (`C` re-centres).
 
 Water costs a shot and you drop back on dry land; past the woods is out of bounds (stroke and distance). Putting arrives in the next step, so the hole stops when you reach the green. `Enter` replays the hole.
 

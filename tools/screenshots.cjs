@@ -12,7 +12,7 @@ const SHOTS = process.argv.slice(2).length ? process.argv.slice(2) : [
 (async () => {
   fs.mkdirSync('screenshots', { recursive: true });
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+  const page = await browser.newPage({ viewport: { width: 1903, height: 937 } });
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   for (const shot of SHOTS) {
@@ -20,7 +20,7 @@ const SHOTS = process.argv.slice(2).length ? process.argv.slice(2) : [
     await page.goto(`file://${path.resolve('golf.html')}?style=${style}&seed=${seed}&hole=${hole}`);
     await page.waitForTimeout(300);
     const file = `screenshots/${style}-${seed}-hole${hole}.png`;
-    await page.locator('#game').screenshot({ path: file });
+    await page.screenshot({ path: file });
     console.log(file);
   }
   await browser.close();

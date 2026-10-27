@@ -1,27 +1,29 @@
 // Step 2: play shots on a generated hole. Pick a shot, drag out where it should
-// land, let go to hit it. The URL can pick the course: ?style=tropical&seed=1989&hole=1
+// land, then hit it. The URL can pick the course: ?style=tropical&seed=1989&hole=1
 
 import { makeRng, dist, STYLES } from './course-generator.js';
 import { buildCourse } from './course.js';
-import { layoutHole, drawHole, isOutOfBounds } from './hole-view.js';
+import { layoutHole, shiftView, drawHole, isOutOfBounds } from './hole-view.js';
 import { TH } from './iso.js';
 import { drawSprite } from './art.js';
-import { drawHud, drawShotBar, drawBanner, shotButtons, BAR_TOP } from './hud.js';
+import { drawHud, drawShotBar, drawBanner, shotButtons, actionButtons, BAR_TOP } from './hud.js';
 import { roundWeather, holeWind } from './weather.js';
 import { SHOT_TYPES, shotType, maxCarry, chooseClub, shotSpread, flightPoint } from './shots.js';
 import { PLAYER } from './golfers.js';
 import { startHole, current, toPin, hit, settle } from './play.js';
 
-// The game draws at this size and is scaled up to fill the window, keeping pixels square.
-const W = 960, H = 540;
 const STYLE_KEYS = Object.keys(STYLES);
 const TEE = 'white';
+// Spare picture round the whole-hole view, so there's somewhere to pan when zoomed in.
+const MARGIN = 200;
+const MAX_ZOOM = 2;
 
+// Two canvases fill the window: the hole, scaled up by `fitScale + zoom`, and the
+// panels on top, always at `fitScale`. Both keep their pixels square and crisp.
 const canvas = document.getElementById('game');
-canvas.width = W; canvas.height = H;
+const hudCanvas = document.getElementById('hud');
 const ctx = canvas.getContext('2d');
-const base = ctx.createImageData(W, H);
-const buf = new Uint32Array(base.data.buffer);
+const hud = hudCanvas.getContext('2d');
 const rng = makeRng(Math.floor(Math.random() * 2 ** 31));
 
 const params = new URLSearchParams(location.search);
@@ -31,20 +33,86 @@ const settings = {
   hole: Math.min(18, Math.max(1, Number(params.get('hole')) || 1)),
 };
 
-// Everything about the hole being played.
-let game;
+// fitScale: screen pixels per game pixel when the whole hole is shown. W x H: the
+// game's size in pixels at that scale (the panels are laid out on this).
+const display = { fitScale: 1, W: 0, H: 0, zoom: 0 };
+const cam = { x: MARGIN, y: MARGIN, manual: false };
+let game, world;
 // phase: 'aim' (waiting for a shot), 'flight', 'roll', 'done'
 const ui = { shot: 'straight', dragging: false, aim: null, phase: 'aim', anim: null, banner: null };
+
+const scale = () => display.fitScale + display.zoom;
+
+function sizeCanvas(c, k) {
+  c.width = Math.ceil(innerWidth / k);
+  c.height = Math.ceil(innerHeight / k);
+  c.style.width = `${c.width * k}px`;
+  c.style.height = `${c.height * k}px`;
+}
+
+// Fit the game to the window: the biggest whole-number scale that leaves at least 800 x 450 game pixels.
+function measure() {
+  display.fitScale = Math.max(1, Math.floor(Math.min(innerWidth / 800, innerHeight / 450)));
+  sizeCanvas(hudCanvas, display.fitScale);
+  sizeCanvas(canvas, scale());
+  display.W = hudCanvas.width;
+  display.H = hudCanvas.height;
+}
+
+// Draw the hole once into a picture big enough for the whole-hole view plus a margin.
+function buildWorld() {
+  const { W, H } = display;
+  const fit = layoutHole(game.hole, { x: 8, y: 54, w: W - 16, h: BAR_TOP(H) - 60 });
+  const view = shiftView(fit, MARGIN, MARGIN);
+  const w = W + 2 * MARGIN, h = H + 2 * MARGIN;
+  const img = new ImageData(w, h);
+  drawHole(new Uint32Array(img.data.buffer), w, h, game.hole, view);
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  c.getContext('2d').putImageData(img, 0, 0);
+  world = { canvas: c, view, w, h };
+  aimCamera(true);
+}
 
 function loadHole() {
   const course = buildCourse({ name: `Course ${settings.seed}`, style: settings.style, par: 72, length: 'standard', seed: settings.seed });
   const hole = course.holes[settings.hole - 1];
   const weather = roundWeather(course);
-  const view = layoutHole(hole, { x: 8, y: 44, w: W - 16, h: BAR_TOP(H) - 50 });
-  drawHole(buf, W, H, hole, view);
-  game = { course, hole, weather, wind: holeWind(weather, hole), view, play: startHole(hole, [PLAYER], TEE) };
+  game = { course, hole, weather, wind: holeWind(weather, hole), play: startHole(hole, [PLAYER], TEE) };
   Object.assign(ui, { dragging: false, aim: null, phase: 'aim', anim: null, banner: null });
+  cam.manual = false;
+  buildWorld();
   history.replaceState(null, '', `?style=${settings.style}&seed=${settings.seed}&hole=${settings.hole}`);
+}
+
+// ---------- Camera ----------
+
+// Whole hole: fixed. Zoomed in: follow the ball (unless the player has panned).
+function aimCamera(snap) {
+  if (display.zoom === 0) { cam.x = MARGIN; cam.y = MARGIN; cam.manual = false; return; }
+  if (cam.manual) return;
+  // While aiming, keep both the ball and the aim in view.
+  const ball = ballNow(performance.now());
+  const focus = ui.aim && ui.phase === 'aim' ? { x: (ball.x + ui.aim.x) / 2, y: (ball.y + ui.aim.y) / 2 } : ball;
+  const b = world.view.worldToScreen(focus);
+  const tx = b.x - canvas.width / 2, ty = b.y - canvas.height / 2;
+  cam.x = snap ? tx : cam.x + (tx - cam.x) * 0.12;
+  cam.y = snap ? ty : cam.y + (ty - cam.y) * 0.12;
+  clampCamera();
+}
+
+function clampCamera() {
+  cam.x = Math.max(0, Math.min(world.w - canvas.width, cam.x));
+  cam.y = Math.max(0, Math.min(world.h - canvas.height, cam.y));
+}
+
+function setZoom(z) {
+  z = Math.max(0, Math.min(MAX_ZOOM, z));
+  if (z === display.zoom) return;
+  display.zoom = z;
+  sizeCanvas(canvas, scale());
+  cam.manual = false;
+  aimCamera(true);
 }
 
 // ---------- Shots ----------
@@ -58,11 +126,24 @@ function clampAim(p) {
 }
 
 function shoot() {
-  const shot = hit(game.play, rng, ui.aim, ui.shot, game.weather, game.wind, (p) => isOutOfBounds(game.view, p));
+  if (ui.phase !== 'aim' || !ui.aim) return;
+  const shot = hit(game.play, rng, ui.aim, ui.shot, game.weather, game.wind, (p) => isOutOfBounds(world.view, p));
   const rollLen = dist(shot.landing, shot.rest);
   ui.anim = { shot, start: performance.now(), flight: 700 + shot.carry * 4, roll: rollLen > 0.5 ? 250 + rollLen * 25 : 0 };
   ui.phase = 'flight';
   ui.aim = null;
+  ui.dragging = false;
+  cam.manual = false;
+}
+
+function cancelAim() {
+  ui.dragging = false;
+  ui.aim = null;
+}
+
+function pickShot(key) {
+  ui.shot = key;
+  if (ui.aim) ui.aim = clampAim(ui.aim);
 }
 
 // Where the ball is right now, in yards, with its height.
@@ -109,14 +190,14 @@ function dot(x, y, color) {
   ctx.fillRect(Math.round(x), Math.round(y), 1, 1);
 }
 
-// Yards of height to pixels on screen.
-const heightPx = (h) => h / game.view.grid.cell * TH * 1.5;
+// Yards of height to pixels on display.
+const heightPx = (h) => h / world.view.grid.cell * TH * 1.5;
 
 // The planned shot: its flight as a dotted arc, and an oval where it's likely to land.
 function drawAim() {
   const me = current(game.play);
   const type = shotType(ui.shot);
-  const v = game.view;
+  const v = world.view;
   const d = dist(me.at, ui.aim);
   const steps = Math.max(12, Math.round(d / 2));
   for (let k = 1; k < steps; k += 2) {
@@ -142,9 +223,10 @@ function drawAim() {
 }
 
 function render(now) {
-  ctx.putImageData(base, 0, 0);
-  const v = game.view;
+  const v = world.view;
   const me = current(game.play);
+  ctx.setTransform(1, 0, 0, 1, -Math.round(cam.x), -Math.round(cam.y));
+  ctx.drawImage(world.canvas, 0, 0);
 
   if (ui.phase === 'aim' && ui.aim) drawAim();
 
@@ -159,63 +241,82 @@ function render(now) {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(x - 1, y - 1, 2, 2);
   }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
 
-  drawHud(ctx, W, H, { course: game.course, hole: game.hole, tee: TEE, weather: game.weather, wind: game.wind, windScreen: v.worldDirToScreen(game.wind.across, game.wind.along) });
+  const { W, H } = display;
+  hud.clearRect(0, 0, W, H);
+  drawHud(hud, W, H, { course: game.course, hole: game.hole, tee: TEE, weather: game.weather, wind: game.wind, windScreen: v.worldDirToScreen(game.wind.across, game.wind.along) });
   const type = shotType(ui.shot);
   const max = Math.round(maxCarry(me.golfer, type, me.lie, game.hole));
   const aimYds = ui.aim ? Math.round(dist(me.at, ui.aim)) : 0;
-  drawShotBar(ctx, W, H, {
-    types: SHOT_TYPES, selected: ui.shot, max, aim: aimYds,
+  const canHit = ui.phase === 'aim' && !!ui.aim && !ui.dragging;
+  drawShotBar(hud, W, H, {
+    types: SHOT_TYPES, selected: ui.shot, max, aim: aimYds, canHit,
     club: chooseClub(me.golfer, type, aimYds || max, me.lie).toUpperCase(),
     lie: LIE_NAMES[me.lie] ?? me.lie.toUpperCase(), toPin: Math.round(toPin(game.play)), stroke: me.strokes + 1,
-    hint: ui.phase === 'aim' && !ui.aim ? 'DRAG ON THE COURSE TO AIM, LET GO TO HIT' : '',
+    hint: ui.phase !== 'aim' ? '' : !ui.aim ? 'DRAG ON THE COURSE TO AIM' : ui.dragging ? 'LET GO TO SET THE AIM' : 'CHANGE SHOT OR DRAG AGAIN',
   });
-  if (ui.banner && now < ui.banner.until) drawBanner(ctx, W, ui.banner.text, ui.banner.sub);
+  if (ui.banner && now < ui.banner.until) drawBanner(hud, W, ui.banner.text, ui.banner.sub);
 }
 
 function frame(now) {
   update(now);
+  aimCamera(false);
   render(now);
   requestAnimationFrame(frame);
 }
 
 // ---------- Input ----------
 
-const toCanvas = (e) => {
-  const r = canvas.getBoundingClientRect();
-  return { x: (e.clientX - r.left) * W / r.width, y: (e.clientY - r.top) * H / r.height };
-};
+// Mouse position in panel pixels, and on the hole in yards.
+const toHud = (e) => ({ x: e.clientX / display.fitScale, y: e.clientY / display.fitScale });
+const toYards = (e) => world.view.screenToWorld(e.clientX / scale() + Math.round(cam.x), e.clientY / scale() + Math.round(cam.y));
+const inside = (p, b) => p.x >= b.x && p.x < b.x + b.w && p.y >= b.y && p.y < b.y + b.h;
 
 canvas.addEventListener('mousedown', (e) => {
-  const p = toCanvas(e);
-  if (e.button === 2) { ui.dragging = false; ui.aim = null; return; }
-  const button = shotButtons(H, SHOT_TYPES.length).findIndex((b) => p.x >= b.x && p.x < b.x + b.w && p.y >= b.y && p.y < b.y + b.h);
-  if (button >= 0) { ui.shot = SHOT_TYPES[button].key; return; }
-  if (ui.phase !== 'aim' || p.y >= BAR_TOP(H)) return;
+  if (e.button === 2) { cancelAim(); return; }
+  if (e.button !== 0) return;
+  const p = toHud(e);
+  if (p.y >= BAR_TOP(display.H)) {
+    const b = shotButtons(display.H, SHOT_TYPES.length).findIndex((r) => inside(p, r));
+    if (b >= 0) pickShot(SHOT_TYPES[b].key);
+    const act = actionButtons(display.W, display.H);
+    if (inside(p, act.hit)) shoot();
+    if (inside(p, act.cancel)) cancelAim();
+    return;
+  }
+  if (ui.phase !== 'aim') return;
   ui.dragging = true;
-  ui.aim = clampAim(game.view.screenToWorld(p.x, p.y));
+  ui.aim = clampAim(toYards(e));
 });
 addEventListener('mousemove', (e) => {
-  if (!ui.dragging) return;
-  const p = toCanvas(e);
-  ui.aim = clampAim(game.view.screenToWorld(p.x, p.y));
+  if (ui.dragging) ui.aim = clampAim(toYards(e));
 });
 addEventListener('mouseup', (e) => {
   if (!ui.dragging || e.button !== 0) return;
   ui.dragging = false;
-  if (ui.aim && dist(current(game.play).at, ui.aim) >= 5) shoot();
-  else ui.aim = null;
+  // Letting go sets the aim; it's hit with the HIT button or space.
+  if (ui.aim && dist(current(game.play).at, ui.aim) < 5) ui.aim = null;
 });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+canvas.addEventListener('wheel', (e) => { e.preventDefault(); setZoom(display.zoom + (e.deltaY < 0 ? 1 : -1)); }, { passive: false });
+
+const PAN = { arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] };
 
 addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
-  if (k >= '1' && k <= '5') {
-    ui.shot = SHOT_TYPES[Number(k) - 1].key;
-    if (ui.aim) ui.aim = clampAim(ui.aim);
-    return;
+  if (k >= '1' && k <= '5') return pickShot(SHOT_TYPES[Number(k) - 1].key);
+  if (k === ' ') { e.preventDefault(); return shoot(); }
+  if (k === 'escape') return cancelAim();
+  if (k === '+' || k === '=') return setZoom(display.zoom + 1);
+  if (k === '-' || k === '_') return setZoom(display.zoom - 1);
+  if (PAN[k] && display.zoom > 0) {
+    e.preventDefault();
+    cam.manual = true;
+    cam.x += PAN[k][0] * 24; cam.y += PAN[k][1] * 24;
+    return clampCamera();
   }
-  if (k === 'escape') { ui.dragging = false; ui.aim = null; return; }
+  if (k === 'c') { cam.manual = false; return; }
   if (k === 'n') settings.hole = settings.hole % 18 + 1;
   else if (k === 'p') settings.hole = (settings.hole + 16) % 18 + 1;
   else if (k === 'r') { settings.seed = Math.floor(Math.random() * 1e6); settings.hole = 1; }
@@ -224,18 +325,16 @@ addEventListener('keydown', (e) => {
   loadHole();
 });
 
-// Scale the canvas to the window: whole-number steps when there's room, so pixels stay crisp.
-function fit() {
-  const s = Math.min(innerWidth / W, innerHeight / H);
-  const scale = s >= 1 ? Math.floor(s) : s;
-  canvas.style.width = `${W * scale}px`;
-  canvas.style.height = `${H * scale}px`;
-}
-addEventListener('resize', fit);
+// Redraw the hole for the new window size once resizing settles.
+let resizing;
+addEventListener('resize', () => {
+  clearTimeout(resizing);
+  resizing = setTimeout(() => { measure(); buildWorld(); }, 150);
+});
 
-// Lets the screenshot tool play shots without a mouse.
-window.golf = { get game() { return game; }, ui, shoot, clampAim };
+// Lets the test tools play shots without a mouse.
+window.golf = { get game() { return game; }, get world() { return world; }, ui, cam, display, shoot, clampAim, setZoom };
 
-fit();
+measure();
 loadHole();
 requestAnimationFrame(frame);

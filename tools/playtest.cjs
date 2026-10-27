@@ -11,7 +11,7 @@ const [style, seed, hole] = (process.argv[2] ?? 'stadium:12:7').split(':');
 (async () => {
   fs.mkdirSync('screenshots', { recursive: true });
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+  const page = await browser.newPage({ viewport: { width: 1903, height: 937 } });
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(`file://${path.resolve('golf.html')}?style=${style}&seed=${seed}&hole=${hole}`);
@@ -31,11 +31,11 @@ const [style, seed, hole] = (process.argv[2] ?? 'stadium:12:7').split(':');
       return { d: Math.round(d), shot: ui.shot, lie: me.lie };
     }, n);
     if (state.done) break;
-    if (n === 1) await page.locator('#game').screenshot({ path: `${name}-aim.png` });
+    if (n === 1) await page.screenshot({ path: `${name}-aim.png` });
     await page.evaluate(() => window.golf.shoot());
     if (n === 1) {
       await page.waitForTimeout(600);
-      await page.locator('#game').screenshot({ path: `${name}-flight.png` });
+      await page.screenshot({ path: `${name}-flight.png` });
     }
     await page.waitForFunction(() => window.golf.ui.phase === 'aim' || window.golf.ui.phase === 'done', null, { timeout: 15000 });
     const after = await page.evaluate(() => {
@@ -45,7 +45,7 @@ const [style, seed, hole] = (process.argv[2] ?? 'stadium:12:7').split(':');
     console.log(`shot ${n}: ${state.shot} from ${state.lie}, ${state.d} yds to pin -> ${after.lie}, strokes ${after.strokes} ${after.banner}`);
   }
   await page.waitForTimeout(200);
-  await page.locator('#game').screenshot({ path: `${name}-end.png` });
+  await page.screenshot({ path: `${name}-end.png` });
   await browser.close();
   if (errors.length) { console.error(errors.join('\n')); process.exit(1); }
 })();
