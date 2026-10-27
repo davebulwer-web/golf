@@ -30,6 +30,12 @@ export function layoutHole(hole, box) {
   return best.view;
 }
 
+// Beyond the band of woods is out of bounds.
+export function isOutOfBounds(view, p) {
+  const t = view.grid.toTile(p);
+  return (view.look[t.row]?.[t.col] ?? 'land') === 'land';
+}
+
 // The generator fills everything outside the rough with trees. For drawing, keep
 // a ragged band of woods along the hole and open grass beyond it (still trees for play).
 const WOODS_YARDS = 22;

@@ -206,6 +206,29 @@ export const recolor = (sprite, map) => {
 
 export { hex };
 
+// A sprite as a small canvas, for drawing things that move over the hole.
+const spriteCache = new Map();
+export function spriteImage(name, recolors = {}) {
+  const key = name + JSON.stringify(recolors);
+  if (!spriteCache.has(key)) {
+    const s = SPRITES[name];
+    const c = document.createElement('canvas');
+    c.width = s.w; c.height = s.h;
+    const g = c.getContext('2d');
+    const img = g.createImageData(s.w, s.h);
+    const tint = recolor(s, recolors);
+    blit(new Uint32Array(img.data.buffer), s.w, s.h, s, s.ax, s.ay, tint);
+    g.putImageData(img, 0, 0);
+    spriteCache.set(key, c);
+  }
+  return spriteCache.get(key);
+}
+
+export function drawSprite(ctx, name, x, y, recolors) {
+  const s = SPRITES[name];
+  ctx.drawImage(spriteImage(name, recolors), Math.round(x) - s.ax, Math.round(y) - s.ay);
+}
+
 // ---------- Font ----------
 // 3x5 pixel font. Each glyph is 15 bits, read left to right, top to bottom.
 

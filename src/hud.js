@@ -38,9 +38,6 @@ export function drawHud(ctx, W, H, { course, hole, tee, weather, wind, windScree
   for (let a = 0; a < 32; a++) ctx.fillRect(Math.round(cx + Math.cos(a / 5.1) * 8), Math.round(cy + Math.sin(a / 5.1) * 4), 1, 1);
   if (weather.windMph >= 1) arrow(ctx, cx, cy, windScreen, 8, '#f4f4f4');
 
-  // Controls, bottom.
-  const help = 'N/P: HOLE   R: NEW COURSE   S: STYLE';
-  drawText(ctx, help, Math.round((W - textWidth(help)) / 2), H - 10, '#e8e4f8');
 }
 
 // A pixel arrow from (x, y) along screen direction `d`, `len` pixels long.
@@ -53,4 +50,60 @@ function arrow(ctx, x, y, d, len, color) {
   for (const side of [-1, 1]) {
     for (let t = 0; t <= 3; t += 0.5) dot(tx - ux * t + -uy * side * t * 0.8, ty - uy * t + ux * side * t * 0.8);
   }
+}
+
+// ---------- Shot bar ----------
+
+const BAR_H = 46;
+export const BAR_TOP = (H) => H - BAR_H - 4;
+
+// Where each shot button sits, for drawing and for clicks.
+export const shotButtons = (H, count) => Array.from({ length: count }, (_, i) => ({ x: 12 + i * 46, y: BAR_TOP(H) + 6, w: 42, h: 34 }));
+
+// Little side-on pictures of each shot's flight, like Sim Golf's shot buttons.
+const ICONS = {
+  straight: (t) => ({ x: t * 28, y: 10 * Math.sin(Math.PI * t) }),
+  fade: (t) => ({ x: t * 28, y: 10 * Math.sin(Math.PI * t ** 1.5) }),
+  draw: (t) => ({ x: t * 30, y: 8 * Math.sin(Math.PI * t ** 0.65) }),
+  lob: (t) => ({ x: 6 + t * 16, y: 13 * Math.sin(Math.PI * t) }),
+  runner: (t) => ({ x: t * 30, y: t < 0.6 ? 4 * Math.sin(Math.PI * t / 0.6) : 0 }),
+};
+
+// `info`: { types, selected, club, aim, max, lie, toPin, stroke, hint }
+export function drawShotBar(ctx, W, H, info) {
+  const top = BAR_TOP(H);
+  panel(ctx, 6, top, W - 12, BAR_H);
+  shotButtons(H, info.types.length).forEach((b, i) => {
+    const t = info.types[i], on = t.key === info.selected;
+    ctx.fillStyle = on ? '#6a56b8' : '#2c2050';
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.fillStyle = on ? GOLD : '#5a4a90';
+    ctx.fillRect(b.x, b.y, b.w, 1); ctx.fillRect(b.x, b.y + b.h - 1, b.w, 1);
+    ctx.fillRect(b.x, b.y, 1, b.h); ctx.fillRect(b.x + b.w - 1, b.y, 1, b.h);
+    ctx.fillStyle = on ? '#ffffff' : '#c8c0e8';
+    for (let k = 0; k <= 40; k++) {
+      const p = ICONS[t.key](k / 40);
+      ctx.fillRect(Math.round(b.x + 6 + p.x), Math.round(b.y + 20 - p.y), 1, 1);
+    }
+    ctx.fillStyle = '#7a9a4a';
+    ctx.fillRect(b.x + 4, b.y + 21, b.w - 8, 1);
+    drawText(ctx, `${i + 1} ${t.name}`, b.x + Math.round((b.w - textWidth(`${i + 1} ${t.name}`)) / 2), b.y + 25, on ? '#ffffff' : '#c8c0e8', 1, null);
+  });
+
+  const x = 12 + info.types.length * 46 + 10;
+  drawText(ctx, `CLUB: ${info.club}`, x, top + 8, GOLD);
+  drawText(ctx, info.aim ? `AIM: ${info.aim} YDS  (MAX ${info.max})` : `MAX: ${info.max} YDS`, x, top + 17);
+  drawText(ctx, `LIE: ${info.lie}`, x, top + 26);
+  drawText(ctx, `TO PIN: ${info.toPin} YDS   STROKE ${info.stroke}`, x, top + 35);
+  if (info.hint) drawText(ctx, info.hint, W - 12 - textWidth(info.hint), top + 35, '#c8c0e8');
+  drawText(ctx, 'N/P: HOLE  R: NEW COURSE  S: STYLE', W - 12 - textWidth('N/P: HOLE  R: NEW COURSE  S: STYLE'), top + 8, '#8a80b0');
+}
+
+// A banner across the middle top, for things like "IN THE WATER".
+export function drawBanner(ctx, W, text, sub) {
+  const w = Math.max(textWidth(text, 2), sub ? textWidth(sub) : 0) + 20;
+  const x = Math.round((W - w) / 2);
+  panel(ctx, x, 48, w, sub ? 30 : 20);
+  drawText(ctx, text, Math.round((W - textWidth(text, 2)) / 2), 53, GOLD, 2);
+  if (sub) drawText(ctx, sub, Math.round((W - textWidth(sub)) / 2), 68);
 }
