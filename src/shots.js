@@ -3,6 +3,7 @@
 // luck decide how close it gets, then it rolls out.
 
 import { surfaceAt, dist } from './course-generator.js';
+import { rise, slopeAt } from './terrain.js';
 
 // reach: share of a full shot's carry. curve: +1 bends right, -1 bends left.
 // apex: how high it flies. roll: share of the carry it rolls on firm grass.
@@ -33,6 +34,23 @@ function lieReach(golfer, type, lie) {
 
 // Furthest the golfer can carry this shot from this lie.
 export const maxCarry = (golfer, type, lie, hole) => fullCarry(golfer) * type.reach * lieReach(golfer, type, lie) * (hole.altitude ?? 1);
+
+// How long a shot plays: uphill plays longer, downhill shorter, a yard for each
+// yard of rise or fall. The golfer allows for it when picking a club.
+export const playsAs = (hole, from, to) => dist(from, to) + rise(hole, from, to);
+
+// The furthest point towards `aim` that this shot can carry to, allowing for the slope.
+export function clampToReach(golfer, type, lie, hole, from, aim) {
+  const max = maxCarry(golfer, type, lie, hole);
+  if (playsAs(hole, from, aim) <= max) return aim;
+  let lo = 0, hi = 1;
+  const at = (f) => ({ x: from.x + (aim.x - from.x) * f, y: from.y + (aim.y - from.y) * f });
+  for (let k = 0; k < 20; k++) {
+    const mid = (lo + hi) / 2;
+    if (playsAs(hole, from, at(mid)) <= max) lo = mid; else hi = mid;
+  }
+  return at(lo);
+}
 
 // Clubs and their carry for an average golfer; scaled by each golfer's power.
 const CLUBS = [
@@ -93,12 +111,13 @@ export function playShot(rng, golfer, ball, aim, typeKey, hole, weather, wind) {
   const type = shotType(typeKey);
   const from = ball.at;
   const max = maxCarry(golfer, type, ball.lie, hole);
-  let d = dist(from, aim);
-  if (d > max) { aim = { x: from.x + (aim.x - from.x) * max / d, y: from.y + (aim.y - from.y) * max / d }; d = max; }
+  aim = clampToReach(golfer, type, ball.lie, hole, from, aim);
+  const d = dist(from, aim);
+  const plays = Math.max(1, playsAs(hole, from, aim));
   const ux = (aim.x - from.x) / (d || 1), uy = (aim.y - from.y) / (d || 1);
   const rx = uy, ry = -ux; // to the golfer's right
 
-  const spread = shotSpread(golfer, type, ball.lie, d, max, weather);
+  const spread = shotSpread(golfer, type, ball.lie, plays, max, weather);
   let along = rng.gauss() * spread.long, across = rng.gauss() * spread.lat;
   const mishit = rng.chance(spread.mishit);
   if (mishit) {
@@ -114,8 +133,8 @@ export function playShot(rng, golfer, ball, aim, typeKey, hole, weather, wind) {
 
   const landedOn = surfaceAt(hole, landing);
   const result = {
-    type: typeKey, club: chooseClub(golfer, type, d, ball.lie), from, aim, landing, mishit,
-    carry: dist(from, landing), landedOn, rest: landing, surface: landedOn, holed: false,
+    type: typeKey, club: chooseClub(golfer, type, plays, ball.lie), from, aim, landing, mishit,
+    carry: dist(from, landing), landedOn, rest: landing, surface: landedOn, holed: false, path: [landing],
   };
   if (landedOn === 'water') return result;
 
@@ -123,20 +142,50 @@ export function playShot(rng, golfer, ball, aim, typeKey, hole, weather, wind) {
   let roll = result.carry * type.roll * (ROLL[landedOn] ?? 0.5) * (1 + 5 * (weather?.firm ?? 0));
   if (type.key === 'lob' && landedOn === 'green') roll *= 0.5;
   const c = result.carry || 1;
-  const vx = (landing.x - from.x) / c, vy = (landing.y - from.y) / c;
-  let p = landing, s = landedOn;
-  for (let left = roll; left > 0; left -= 0.5) {
-    const q = { x: p.x + vx * Math.min(0.5, left), y: p.y + vy * Math.min(0.5, left) };
+  const r = rollOut(hole, landing, { x: (landing.x - from.x) / c, y: (landing.y - from.y) / c }, roll, landedOn);
+  Object.assign(result, r);
+  return result;
+}
+
+// How steep the ground must be for a ball to start rolling down it by itself.
+const STEEP = { green: 0.05, fringe: 0.06, tee: 0.08, fairway: 0.08, waste: 0.12, rough: 0.18 }; // greens tilt less than this
+const ROLL_STEP = 0.5;
+
+// A ball rolling from `p` in direction `dir` with `roll` yards of run on flat
+// ground. Slopes speed it up or slow it down, bend it downhill, and a ball that
+// stops on a steep slope trickles on down it. Returns where it stops, on what,
+// whether it dropped, and the path it took.
+export function rollOut(hole, p, dir, roll, surface) {
+  let left = roll, s = surface, dx = dir.x, dy = dir.y;
+  const most = roll + 40;
+  const path = [p];
+  for (let k = 0; k < 800; k++) {
+    const g = slopeAt(hole, p);
+    if (left <= 0) {
+      // Stopped: unless the slope is steep enough to start it off again.
+      const steep = Math.hypot(g.x, g.y);
+      if (steep <= (STEEP[s] ?? 0.2)) break;
+      dx = -g.x / steep; dy = -g.y / steep;
+      left = Math.min(3, (steep - (STEEP[s] ?? 0.2)) * 40);
+    }
+    // Downhill it runs on, uphill it slows; across a slope it falls away, more when slow.
+    const up = g.x * dx + g.y * dy;
+    const bend = 1.5 / (1 + left);
+    dx -= (g.x - up * dx) * bend; dy -= (g.y - up * dy) * bend;
+    const n = Math.hypot(dx, dy) || 1;
+    dx /= n; dy /= n;
+    const q = { x: p.x + dx * Math.min(ROLL_STEP, left), y: p.y + dy * Math.min(ROLL_STEP, left) };
+    left = Math.min(most, left - ROLL_STEP * (1 + 12 * up));
     const t = surfaceAt(hole, q);
     if (t === 'rough' && s !== 'rough') left *= 0.3;
     p = q; s = t;
-    if (dist(p, hole.pin) < 0.35 && left < 4) { result.holed = true; p = { ...hole.pin }; break; }
+    if (k % 4 === 3) path.push(p);
+    if (dist(p, hole.pin) < 0.35 && left < 4) { p = { ...hole.pin }; break; }
     if (t === 'water' || t === 'bunker' || t === 'trees') break;
   }
-  result.rest = p;
-  result.surface = s;
-  if (dist(p, hole.pin) < 0.35) { result.holed = true; result.rest = { ...hole.pin }; }
-  return result;
+  path.push(p);
+  const holed = dist(p, hole.pin) < 0.35;
+  return { rest: holed ? { ...hole.pin } : p, surface: s, holed, path };
 }
 
 // Where to drop after going in the water: back along the line towards where the

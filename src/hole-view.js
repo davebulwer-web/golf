@@ -2,7 +2,8 @@
 
 import { holeToGrid, holeBounds, pointAt, surfaceAt, TEE_SETS } from './course-generator.js';
 import { neighbours, courseMap, coastAt, toMap } from './course-map.js';
-import { fitView, makeView } from './iso.js';
+import { fitView, makeView, liftPx } from './iso.js';
+import { heightAt } from './terrain.js';
 import { groundPalette, STYLE_ART, SPRITES, blit, recolor, hex } from './art.js';
 
 // Yards per tile, most detailed first. The first one that fits the screen is used.
@@ -24,7 +25,7 @@ export const hash = (a, b, k = 0) => {
 export function layoutHole(hole, box) {
   let best;
   for (const cell of CELLS) {
-    best = fitView(holeToGrid(hole, { cell }), box);
+    best = fitView(holeToGrid(hole, { cell }), box, (p) => heightAt(hole, p));
     if (best.fits) break;
   }
   const { rows, cols, tiles } = best.view.grid;
@@ -36,7 +37,7 @@ export function layoutHole(hole, box) {
 
 // The same view moved by (dx, dy) pixels, e.g. to draw into a bigger image with a margin.
 export function shiftView(view, dx, dy) {
-  return { ...makeView(view.grid, view.ox + dx, view.oy + dy), own: view.own, look: view.look, others: view.others };
+  return { ...makeView(view.grid, view.ox + dx, view.oy + dy, view.ground), own: view.own, look: view.look, others: view.others, heights: view.heights };
 }
 
 // What to draw at tile (col, row): a surface, or 'land' for open grass.
@@ -56,20 +57,23 @@ export function addSurroundings(view, course, index, W, H) {
   const others = neighbours(course, index);
   const { places, coast } = courseMap(course);
   const ownBounds = holeBounds(hole, 0);
-  const corners = [[0, 0], [W, 0], [0, H + 16], [W, H + 16]].map(([x, y]) => view.screenToTile(x, y));
+  // Raised ground further down can still show, so look past the bottom edge.
+  const corners = [[0, 0], [W, 0], [0, H + LOW], [W, H + LOW]].map(([x, y]) => view.screenToTile(x, y));
   const c0 = Math.floor(Math.min(...corners.map((t) => t.col))) - 1, c1 = Math.ceil(Math.max(...corners.map((t) => t.col))) + 1;
   const r0 = Math.floor(Math.min(...corners.map((t) => t.row))) - 1, r1 = Math.ceil(Math.max(...corners.map((t) => t.row))) + 1;
   const tiles = [];
+  const h = new Float32Array((r1 - r0 + 1) * (c1 - c0 + 1));
   const own = { ...view.own, tiles: view.own.tiles.map((row) => row.slice()) };
   for (let r = r0; r <= r1; r++) {
     const row = new Array(c1 - c0 + 1);
     for (let c = c0; c <= c1; c++) {
       const s = view.tileToScreen(c, r);
       let t = 'trees';
-      if (s.x < -TILE_PAD || s.x > W + TILE_PAD || s.y < -TILE_PAD || s.y > H + 3 * TILE_PAD) t = 'land';
+      const p = grid.toWorld(c, r);
+      let z = null; // height, if it isn't this hole's own ground
+      if (s.x < -TILE_PAD || s.x > W + TILE_PAD || s.y < -TILE_PAD || s.y > H + LOW + TILE_PAD) t = 'land';
       else {
         const mine = grid.tiles[r]?.[c];
-        const p = grid.toWorld(c, r);
         if (mine && mine !== 'trees') t = mine;
         else if (!mine && hole.sea && p.x > ownBounds.minX && p.x < ownBounds.maxX && p.y > ownBounds.minY && p.y < ownBounds.maxY) {
           const here = surfaceAt(hole, p, true);
@@ -82,23 +86,46 @@ export function addSurroundings(view, course, index, W, H) {
             const there = surfaceAt(o.hole, q, true);
             if (there !== 'trees') {
               t = there;
+              z = heightAt(o.hole, q);
               break;
             }
           }
         }
-        if (t === 'trees') t = coastAt(coast, toMap(places[index], p)) ?? 'trees';
+        if (t === 'trees') {
+          t = coastAt(coast, toMap(places[index], p)) ?? 'trees';
+          if (t === 'sea') z = 0;
+          if (t === 'beach') z = 0.6;
+        }
         // Other holes and the open sea are out of bounds.
         if (t !== 'trees' && (!mine || mine === 'trees') && own.tiles[r - own.r0]?.[c - own.c0]) own.tiles[r - own.r0][c - own.c0] = 'land';
       }
       row[c - c0] = t;
+      h[(r - r0) * (c1 - c0 + 1) + c - c0] = z ?? heightAt(hole, p);
     }
     tiles.push(row);
   }
-  view.look = thinTrees({ c0, r0, rows: tiles.length, cols: c1 - c0 + 1, tiles }, grid.cell);
+  const area = { c0, r0, rows: tiles.length, cols: c1 - c0 + 1 };
+  view.look = thinTrees({ ...area, tiles }, grid.cell);
   view.others = others;
   view.own = own;
+  view.heights = { ...area, h };
+  // On this hole the ground is smooth; elsewhere it's the height of the tile drawn there.
+  const ground = (p) => {
+    const tl = grid.toTile(p);
+    return lookAt(own, tl.col, tl.row) === 'land' ? tileHeight(view, Math.floor((p.x - grid.originX) / grid.cell), Math.floor((p.y - grid.originY) / grid.cell)) : heightAt(hole, p);
+  };
+  view.baseGround = (p) => heightAt(hole, p);
+  Object.assign(view, makeView(grid, view.ox, view.oy, ground));
 }
 const TILE_PAD = 24;
+const LOW = 72; // pixels below the picture that raised ground could reach up from
+
+// Height in yards of the tile drawn at (col, row).
+function tileHeight(view, c, r) {
+  const a = view.heights;
+  if (a && r >= a.r0 && r < a.r0 + a.rows && c >= a.c0 && c < a.c0 + a.cols) return a.h[(r - a.r0) * a.cols + c - a.c0];
+  return (view.baseGround ?? view.ground)(view.grid.toWorld(c, r));
+}
 
 // The generator fills everything outside the rough with trees. For drawing, keep
 // a ragged band of woods along the hole and open grass beyond it (still trees for play).
@@ -129,7 +156,11 @@ function thinTrees(area, cell) {
   return { c0, r0, rows, cols, tiles: out };
 }
 
-// The surface under every screen pixel, plus its tile, for texturing.
+// The surface under every screen pixel, plus its tile and how much light it
+// catches, for texturing. Tiles are drawn back to front, each raised to its
+// height, with a bank of earth below it down to the tiles in front.
+const LIT = 100;          // shade[] value for ground in full light
+const SIDE = [70, 82];    // banks facing left and right
 function sampleGround(view, W, H) {
   const names = [];
   const ids = new Map();
@@ -137,23 +168,68 @@ function sampleGround(view, W, H) {
     if (!ids.has(s)) { ids.set(s, names.length); names.push(s); }
     return ids.get(s);
   };
-  const surf = new Uint8Array(W * H);
+  const surf = new Uint8Array(W * H).fill(id('land'));
   const tc = new Int16Array(W * H), tr = new Int16Array(W * H);
-  for (let y = 0; y < H; y++) {
-    for (let x = 0; x < W; x++) {
-      const t = view.screenToTile(x + 0.5, y + 0.5);
-      const c = Math.round(t.col), r = Math.round(t.row);
-      const k = y * W + x;
-      surf[k] = id(lookAt(view.look, c, r));
-      tc[k] = c; tr[k] = r;
+  const shade = new Uint8Array(W * H).fill(LIT);
+  const { grid } = view;
+  // The pixels of one tile, from its centre, and how far down each column reaches.
+  const mask = [], bottom = new Map();
+  const o = view.tileToScreen(0, 0);
+  for (let dy = -3; dy <= 3; dy++) {
+    for (let dx = -5; dx <= 5; dx++) {
+      const t = view.screenToTile(o.x + dx + 0.5, o.y + dy + 0.5);
+      if (Math.round(t.col) !== 0 || Math.round(t.row) !== 0) continue;
+      mask.push([dx, dy]);
+      bottom.set(dx, Math.max(bottom.get(dx) ?? -9, dy));
     }
   }
-  return { names, surf, tc, tr };
+  // Every tile that could show, back to front.
+  const corners = [[0, 0], [W, 0], [0, H + LOW], [W, H + LOW]].map(([x, y]) => view.screenToTile(x, y));
+  const c0 = Math.floor(Math.min(...corners.map((t) => t.col))) - 1, c1 = Math.ceil(Math.max(...corners.map((t) => t.col))) + 1;
+  const r0 = Math.floor(Math.min(...corners.map((t) => t.row))) - 1, r1 = Math.ceil(Math.max(...corners.map((t) => t.row))) + 1;
+  const lift = (c, r) => Math.round(liftPx(tileHeight(view, c, r), grid.cell));
+  for (let d = c0 - r1; d <= c1 - r0; d++) {
+    for (let c = Math.max(c0, d + r0); c <= Math.min(c1, d + r1); c++) {
+      const r = c - d;
+      const s = lookAt(view.look, c, r), sid = id(s);
+      const p = view.tileToScreen(c, r);
+      const lp = lift(c, r);
+      if (p.y - lp > H + 4 || p.x < -6 || p.x > W + 6) continue;
+      // Light from the top left of the screen, which is the -x side of the hole.
+      let light = LIT;
+      if (s !== 'water' && s !== 'sea') {
+        const gx = (tileHeight(view, c + 1, r) - tileHeight(view, c - 1, r)) / (2 * grid.cell);
+        const gy = (tileHeight(view, c, r + 1) - tileHeight(view, c, r - 1)) / (2 * grid.cell);
+        const k = s === 'green' ? 7 : 3.5; // greens tilt gently, so show them more strongly
+        const lit = Math.max(-0.3, Math.min(0.22, k * gx - 0.4 * k * gy));
+        light = LIT + Math.round(lit / 0.05) * 5;
+      }
+      for (const [dx, dy] of mask) {
+        const x = p.x + dx, y = p.y + dy - lp;
+        if (x < 0 || x >= W || y < 0 || y >= H) continue;
+        const k = y * W + x;
+        surf[k] = sid; tc[k] = c; tr[k] = r; shade[k] = light;
+      }
+      // Banks down to the tiles in front, on the left and on the right.
+      const dropL = lp - lift(c, r - 1), dropR = lp - lift(c + 1, r);
+      for (const [dx, b] of bottom) {
+        const drop = dx < 0 ? dropL : dropR;
+        const x = p.x + dx;
+        if (drop <= 0 || x < 0 || x >= W) continue;
+        for (let y = p.y + b - lp + 1; y <= p.y + b - lp + drop; y++) {
+          if (y < 0 || y >= H) continue;
+          const k = y * W + x;
+          surf[k] = sid; tc[k] = c; tr[k] = r; shade[k] = SIDE[dx < 0 ? 0 : 1];
+        }
+      }
+    }
+  }
+  return { names, surf, tc, tr, shade };
 }
 
 function paintGround(buf, W, H, style, g) {
   const pal = groundPalette(style);
-  const { names, surf, tc, tr } = g;
+  const { names, surf, tc, tr, shade } = g;
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const k = y * W + x;
@@ -171,6 +247,10 @@ function paintGround(buf, W, H, style, g) {
       // Lips on the far side of bunkers and water, banks on the near side of greens and tees.
       if (SUNKEN.has(s) && y > 0 && surf[k - W] !== surf[k] && !SUNKEN.has(names[surf[k - W]])) c = edge;
       if (RAISED.has(s) && y < H - 1 && names[surf[k + W]] !== s) c = edge;
+      if (shade[k] !== LIT) {
+        const f = shade[k] / LIT;
+        c = (c & 0xff000000) | (Math.min(255, ((c >>> 16) & 255) * f) << 16) | (Math.min(255, ((c >>> 8) & 255) * f) << 8) | Math.min(255, (c & 255) * f);
+      }
       buf[k] = c;
     }
   }
@@ -180,7 +260,7 @@ function paintGround(buf, W, H, style, g) {
 function paintScenery(buf, W, H, view, style) {
   const art = STYLE_ART[style] ?? STYLE_ART.parkland;
   // Range of tiles that can show on screen, with room for tall sprites below the edge.
-  const corners = [[0, 0], [W, 0], [0, H + 16], [W, H + 16]].map(([x, y]) => view.screenToTile(x, y));
+  const corners = [[0, 0], [W, 0], [0, H + LOW], [W, H + LOW]].map(([x, y]) => view.screenToTile(x, y));
   const c0 = Math.floor(Math.min(...corners.map((t) => t.col))), c1 = Math.ceil(Math.max(...corners.map((t) => t.col)));
   const r0 = Math.floor(Math.min(...corners.map((t) => t.row))), r1 = Math.ceil(Math.max(...corners.map((t) => t.row)));
 
@@ -191,6 +271,7 @@ function paintScenery(buf, W, H, view, style) {
       const density = s === 'trees' ? art.density : s === 'copse' ? 0.85 : s === 'land' ? landDensity(art, c, r) : 0;
       if (!density || hash(c, r, 11) >= density) continue;
       const p = view.tileToScreen(c, r);
+      p.y -= Math.round(liftPx(tileHeight(view, c, r), view.grid.cell));
       const kind = art.trees[Math.floor(hash(c, r, 12) * art.trees.length)];
       const x = p.x + Math.round((hash(c, r, 13) - 0.5) * 4), y = p.y + Math.round((hash(c, r, 14) - 0.5) * 2);
       if (x < -10 || x > W + 10 || y < -2 || y > H + 16) continue;
