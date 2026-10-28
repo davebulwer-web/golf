@@ -19,8 +19,16 @@ for (const [name, url] of Object.entries({ ...DINKY_PNGS, ...GOLFER_PNGS, ...POP
 
 const ready = (name) => images[name]?.complete && images[name].naturalWidth > 0;
 
-// A sprite as a canvas, with the golfer's blue shirt recoloured to `shirt`
-// (a '#rrggbb' colour, or null to keep it), and its anchor: the middle of its
+// How to find each look's shirt in its frames (its colour as drawn on the
+// sheet), and how light each shirt pixel is, to keep the shading when it's
+// recoloured.
+const SHIRTS = {
+  club: { is: (r, g, b) => b >= r + 25 && b >= g + 15, light: (r, g, b) => (r + g + b) / 3 / 120 }, // blue
+  heavy: { is: (r, g, b) => r >= g + 90 && Math.abs(g - b) < 35, light: (r) => r / 190 },          // red
+};
+
+// A sprite as a canvas, with a golfer's shirt recoloured to `shirt` (a
+// '#rrggbb' colour, or null to keep it), and its anchor: the middle of its
 // feet (or the foot of the flag pole).
 const preparedCache = new Map();
 function prepared(name, shirt = null) {
@@ -34,12 +42,13 @@ function prepared(name, shirt = null) {
   g.drawImage(img, 0, 0);
   const data = g.getImageData(0, 0, c.width, c.height);
   const px = data.data;
-  if (shirt) {
+  const look = SHIRTS[name.split('/')[0]];
+  if (shirt && look) {
     const n = parseInt(shirt.slice(1), 16), sr = n >> 16, sg = (n >> 8) & 255, sb = n & 255;
     for (let i = 0; i < px.length; i += 4) {
       const [r, gg, b] = [px[i], px[i + 1], px[i + 2]];
-      if (px[i + 3] === 0 || b < r + 60 || b < gg + 30) continue; // only the strong blues of the shirt
-      const light = (r + gg + b) / 3 / 120; // keep its shading
+      if (px[i + 3] === 0 || !look.is(r, gg, b)) continue;
+      const light = look.light(r, gg, b);
       px[i] = Math.min(255, sr * light); px[i + 1] = Math.min(255, sg * light); px[i + 2] = Math.min(255, sb * light);
     }
     g.putImageData(data, 0, 0);
