@@ -62,6 +62,17 @@ SHEETS = {
         ],
         'blank': [(20, 670, 385, 706), (690, 670, 1070, 706), (1315, 670, 1500, 738)],
     },
+    'casual': {
+        'shrink': 6.3,
+        'rows': [
+            ((50, 295), SWING),
+            ((415, 605), PUTT + IDLE),
+            ((672, 945), HAPPY + CROSS + ['shade-eyes']),
+        ],
+        'blank': [(20, 670, 380, 704), (690, 670, 1065, 704), (1315, 670, 1500, 738)],
+        # Median cut blends her lilac shirt into her pink cap; this keeps them apart.
+        'quantize': Image.Quantize.MAXCOVERAGE,
+    },
 }
 
 def components(mask):
@@ -176,7 +187,7 @@ def cut(look, spec):
             dark = np.array(Image.fromarray((flat * 255).astype('uint8')).resize((w, h), Image.BOX)) / 255
             px = colour / np.maximum(al, 1e-3)[..., None]
             keep = al > 0.45
-            q = Image.fromarray(px.clip(0, 255).astype('uint8'), 'RGB').quantize(colors=14, method=Image.Quantize.MEDIANCUT).convert('RGB')
+            q = Image.fromarray(px.clip(0, 255).astype('uint8'), 'RGB').quantize(colors=14, method=spec.get('quantize', Image.Quantize.MEDIANCUT)).convert('RGB')
             out = np.zeros((h, w, 4), 'uint8')
             out[keep, :3] = np.array(q)[keep]
             out[keep, 3] = 255
