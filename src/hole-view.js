@@ -593,6 +593,12 @@ function paintScenery(buf, W, H, view, hole) {
 function propView(view, q) {
   if (!q.face || SPRITES[q.name]) return q.name;
   const d = view.worldDirToScreen(q.face.x, q.face.y);
+  // Tournament buildings are drawn on the game's diagonals instead: facing
+  // down-right (se), down-left (sw), up-right (ne) or up-left (nw).
+  const diag = (d.y > 0 ? 's' : 'n') + (d.x > 0 ? 'e' : 'w');
+  const order = { se: ['se', 'sw', 'ne', 'nw'], sw: ['sw', 'se', 'nw', 'ne'], ne: ['ne', 'nw', 'se', 'sw'], nw: ['nw', 'ne', 'sw', 'se'] }[diag];
+  const drawn = order.map((v) => `${q.name}-${v}`).find((name) => SPRITES[name]);
+  if (drawn) return drawn;
   const side = Math.abs(d.x) > 2 * Math.abs(d.y) ? (d.x < 0 ? 'right' : 'left') : d.y > 0 ? 'front' : 'back';
   // Some are only drawn from some sides: then the nearest one drawn.
   const near = { front: ['front', 'right', 'left', 'back'], back: ['back', 'left', 'right', 'front'], right: ['right', 'front', 'back', 'left'], left: ['left', 'front', 'back', 'right'] }[side];

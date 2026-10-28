@@ -83,6 +83,40 @@ EVENTS_3 = {
     'toilet-front': ((1248, 884, 1320, 988), CREW), 'toilet-right': ((1340, 888, 1412, 988), CREW),
 }
 
+# The sheets are drawn nearer front-on than the game's 2:1 isometric, so the
+# buildings, boards and fences are sheared (columns slid up or down, keeping
+# uprights upright) until their front edge runs at the game's slope, 1 down for
+# 2 across, whichever way it tips. Then a front makes two of the game's four
+# diagonal views, facing down-left (-sw) and, mirrored, down-right (-se); and a
+# back the other two (-ne, -nw). Their side views are no longer needed.
+SHEARED = {'stand-small', 'stand-medium', 'stand-large', 'covered-stand', 'long-stand', 'tv-tower', 'tent',
+           'stage', 'truss', 'scoreboard', 'marquee', 'arch', 'leaderboard', 'trophy-board', 'rope', 'picket',
+           'camera-platform', 'commentary', 'interview', 'broadcast-tent',
+           *[f'banner-{n}' for n in ['championship', 'golfer', 'freedom', 'golf', 'healthier']],
+           *[f'barrier-{n}' for n in ['blue', 'white', 'green']]}
+
+
+def front_slope(a):
+    """How steeply the bottom edge of a sprite runs down to the right, over its middle half."""
+    xs, ys = [], []
+    for x in range(a.shape[1] // 4, a.shape[1] * 3 // 4):
+        c = np.nonzero(a[:, x, 3])[0]
+        if len(c):
+            xs.append(x)
+            ys.append(c.max())
+    return np.polyfit(xs, ys, 1)[0] if len(xs) > 2 else 0
+
+
+def shear(a, k):
+    """Slide each column down by k pixels per pixel across."""
+    h, w = a.shape[:2]
+    off = [round(k * x) for x in range(w)]
+    lo = min(off)
+    out = np.zeros((h + max(off) - lo, w, 4), 'uint8')
+    for x in range(w):
+        out[off[x] - lo:off[x] - lo + h, x] = a[:, x]
+    return out
+
 
 def components(mask):
     """Label 8-connected areas of a mask: (labels, sizes)."""
@@ -127,5 +161,17 @@ for k, (name, ((x0, y0, x1, y1), shrink)) in [*[(0, e) for e in EVENTS.items()],
     out[keep, 3] = 255
     ys, xs = np.nonzero(out[:, :, 3])
     out = out[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
-    Image.fromarray(out, 'RGBA').save(f'assets/events/{name}.png')
-    print(name, out.shape[1], out.shape[0])
+    thing, view = name.rsplit('-', 1)
+    if thing not in SHEARED:
+        Image.fromarray(out, 'RGBA').save(f'assets/events/{name}.png')
+        print(name, out.shape[1], out.shape[0])
+    elif view in ('front', 'back'):
+        # Tipped the nearer way: a front edge running down to the right
+        # faces down-left, one running down to the left faces down-right.
+        down_right = front_slope(out) >= 0
+        out = shear(out, (0.5 if down_right else -0.5) - front_slope(out))
+        a = {('front', True): 'sw', ('front', False): 'se', ('back', True): 'ne', ('back', False): 'nw'}[view, down_right]
+        b = {'sw': 'se', 'se': 'sw', 'ne': 'nw', 'nw': 'ne'}[a]
+        Image.fromarray(out, 'RGBA').save(f'assets/events/{thing}-{a}.png')
+        Image.fromarray(out[:, ::-1].copy(), 'RGBA').save(f'assets/events/{thing}-{b}.png')
+        print(thing, a, b, out.shape[1], out.shape[0])
