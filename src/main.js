@@ -8,7 +8,7 @@ import { makeRng, dist, surfaceAt, pointAt, STYLES } from './course-generator.js
 import { buildCourse } from './course.js';
 import { layoutHole, shiftView, addSurroundings, drawHole, isOutOfBounds, courseHoles, courseView, piecePad, tournamentSites } from './hole-view.js';
 import { drawSprite } from './art.js';
-import { drawHud, drawShotBar, drawPuttBar, drawBanner, drawScorecard, shotButtons, actionButtons, viewButtons, drawViewButtons, drawHoleNumber, BAR_TOP } from './hud.js';
+import { drawHud, drawShotBar, drawPuttBar, drawBanner, drawFormNote, drawScorecard, shotButtons, actionButtons, viewButtons, drawViewButtons, drawHoleNumber, BAR_TOP } from './hud.js';
 import { roundWeather, holeWind } from './weather.js';
 import { SHOT_TYPES, shotType, maxCarry, chooseClub, shotSpread, flightPoint, clampToReach, playsAs } from './shots.js';
 import { PLAYER, RIVAL } from './golfers.js';
@@ -17,7 +17,8 @@ import { planShot } from './ai.js';
 import { feet, puttRange, puttRise, readPutt, strike } from './putting.js';
 import { makeGreenView, drawGreenView } from './green-view.js';
 import { drawDinky, dinkySize, golferFrame, ballFrame, flagFrame, GOLFER_LOOKS, LIE_BANNERS, WATER_BANNER, OB_BANNER, scoreBanner } from './dinky.js';
-import { LOOKS, SHIRT_COLOURS, newCareer, clubCourses, careerGolfer, clubOpponent, memberGolfer, MEMBERS, STAKES, finishRound, saveCareer, loadCareer } from './career.js';
+import { LOOKS, SHIRT_COLOURS, SKILL_NAMES, newCareer, clubCourses, careerGolfer, clubOpponent, memberGolfer, MEMBERS, STAKES, finishRound, saveCareer, loadCareer } from './career.js';
+import { newForm, judgeShot, judgePutt, tally, applyForm } from './form.js';
 import { titleLayout, drawTitle, newCareerLayout, drawNewCareer, hubLayout, drawHub, coursesLayout, drawCourses, membersLayout, drawMembers } from './menus.js';
 
 const STYLE_KEYS = Object.keys(STYLES);
@@ -189,7 +190,7 @@ function loadHole() {
   // Scores carry on from hole to hole on the same course.
   const key = `${settings.style}:${settings.seed}:${settings.par}:${settings.length}:${settings.tour}:${settings.career}`;
   if (round?.key !== key) round = newRound(course, key, golfers);
-  Object.assign(ui, { dragging: false, aim: null, phase: 'aim', anim: null, banner: null, card: false, cardAt: 0, pop: null, moods: [], putt: null });
+  Object.assign(ui, { dragging: false, aim: null, phase: 'aim', anim: null, banner: null, card: false, cardAt: 0, pop: null, moods: [], putt: null, formNote: null });
   greenZoom(false);
   cam.manual = false;
   buildWorld();
@@ -349,9 +350,10 @@ function update(now) {
   if (!a) return;
   if (ui.phase === 'flight' && now - a.start >= a.flight) ui.phase = 'roll';
   if (ui.phase === 'roll' && now - a.start >= a.flight + a.roll) {
+    const me = current(game.play), lie = me.lie;
     settle(game.play, a.shot);
     ui.anim = null;
-    const me = current(game.play);
+    if (form && !me.golfer.ai) noteForm(judgeShot(a.shot, lie, game.hole, me.golfer), now);
     let note = a.shot.note;
     const pic = note?.startsWith('OUT OF BOUNDS') ? OB_BANNER : note?.startsWith('IN THE WATER') ? WATER_BANNER : !me.holed && LIE_BANNERS[me.lie];
     if (pic) {
@@ -376,6 +378,16 @@ function updateComputer(now) {
   }
   ui.aiPlanned = false;
   shoot();
+}
+
+// Your form this career round (null outside one): good and bad shots by skill.
+let form = null;
+
+// Count a judged shot and say so for a moment, e.g. 'GREAT ESCAPE: RECOVERY +'.
+function noteForm(v, now) {
+  if (!v) return;
+  tally(form, v);
+  ui.formNote = { text: `${v.words}: ${SKILL_NAMES[v.skill]} ${v.good ? '+' : '-'}`, good: v.good, until: now + 2400 };
 }
 
 const who = (golfer) => golfer.name.toUpperCase();
@@ -502,8 +514,9 @@ function updatePutting(now) {
   if (pt.stage !== 'roll' || !puttBall(now).done) return;
   // A moment to watch it drop, or to see where it finished.
   if (now - pt.rollAt < pt.roll.path.length * 1000 / 60 + 600) return;
-  const roll = pt.roll;
+  const roll = pt.roll, from = me.at, nth = me.putts + 1;
   settlePutt(game.play, roll);
+  if (form && !me.golfer.ai) noteForm(judgePutt(dist(from, game.hole.pin), me.holed, nth), now);
   ui.putt = null;
   if (me.holed) return afterStroke(now, null);
   const left = `${feet(dist(me.at, game.hole.pin))} FT LEFT`;
@@ -540,7 +553,7 @@ function holeFinished() {
   ui.banner = { text: result, sub: settings.match ? `${standings()}. ${sub}` : sub, until: Infinity };
   // A career round is saved hole by hole, so it can be picked up again later.
   if (settings.career) {
-    app.career.round = { course: playing, match: settings.match, vs: golfers[1].name, hole: last ? settings.holes + 1 : game.hole.number + 1, scores: round.players.map((p) => p.scores.slice()), putts: round.players.map((p) => p.putts.slice()) };
+    app.career.round = { course: playing, match: settings.match, form, vs: golfers[1].name, hole: last ? settings.holes + 1 : game.hole.number + 1, scores: round.players.map((p) => p.scores.slice()), putts: round.players.map((p) => p.putts.slice()) };
     saveCareer(app.career);
   }
 }
@@ -728,6 +741,7 @@ function render(now) {
   });
   drawViewButtons(hud, W, display.map, settings.event, !settings.career);
   if (ui.banner && now < ui.banner.until) drawBanner(hud, W, ui.banner.text, ui.banner.sub);
+  if (ui.formNote && now < ui.formNote.until) drawFormNote(hud, W, ui.formNote.text, ui.formNote.good, ui.banner && now < ui.banner.until && ui.banner.sub ? 88 : 78);
   if (ui.pop && now < ui.pop.until) drawPop(hud, W, H, now);
   if (ui.cardAt && now >= ui.cardAt) { ui.card = true; ui.cardAt = 0; }
   if (ui.card) {
@@ -853,6 +867,7 @@ let playing = null;
 // Show a course behind the menus (or play it): settings for the course, hole and round.
 function useCourse(course, hole, career, match = null) {
   playing = course;
+  form = null;
   settings.match = match;
   Object.assign(settings, { style: course.style, seed: course.seed, name: course.name ?? null, par: course.par ?? 72, length: course.length ?? 'standard', tour: course.tour ?? null, holes: course.holes ?? 18, hole, career, event: false });
   golfers = !career ? [PLAYER, RIVAL] : [careerGolfer(app.career), match ? memberGolfer(app.career, match.member) : clubOpponent()];
@@ -878,6 +893,7 @@ function playCareerRound(course, match = null) {
   app.mode = 'play';
   round = null;
   useCourse(c.round?.course ?? course, c.round?.hole ?? 1, true, c.round ? c.round.match ?? null : match);
+  form = c.round?.form ?? newForm();
   if (c.round) round.players.forEach((p, i) => { p.scores = c.round.scores[i].slice(); p.putts = c.round.putts[i].slice(); });
 }
 
@@ -887,6 +903,8 @@ function endCareerRound() {
   const course = saved.course, holes = course.holes, total = (a) => a.slice(0, holes).reduce((t, v) => t + (v ?? 0), 0);
   const pars = round?.key?.endsWith(':true') ? round.pars : buildCourse({ ...course }, { layout: false }).holes.map((h) => h.par);
   const match = saved.match && { ...saved.match, lead: matchPlay({ players: saved.scores.map((scores) => ({ scores })) }, holes).lead };
+  const good = Object.values(saved.form ?? {}).reduce((t, [g]) => t + g, 0), bad = Object.values(saved.form ?? {}).reduce((t, [, b]) => t + b, 0);
+  c.report = { change: applyForm(c.skills, saved.form ?? newForm()), good, bad };
   finishRound(c, { course: course.name, holes, score: total(saved.scores[0]), par: total(pars), vs: (saved.vs ?? clubOpponent().name).toUpperCase(), vsScore: total(saved.scores[1]), match });
   saveCareer(c);
   goHub();

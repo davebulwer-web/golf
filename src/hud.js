@@ -227,6 +227,14 @@ export function drawBanner(ctx, W, text, sub) {
   if (sub) drawText(ctx, sub, Math.round((W - textWidth(sub)) / 2), 74);
 }
 
+// A small note under the banner on how a shot went for your form, green for
+// good and red for bad.
+export function drawFormNote(ctx, W, text, good, y) {
+  const w = textWidth(text) + 12, x = Math.round((W - w) / 2);
+  panel(ctx, x, y, w, 13);
+  drawText(ctx, text, x + 6, y + 4, good ? '#7ee07e' : '#f08a8a', 1, null);
+}
+
 // ---------- Scorecard ----------
 
 const sum = (a) => a.reduce((t, v) => t + (v ?? 0), 0);
