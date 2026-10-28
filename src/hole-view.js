@@ -640,9 +640,92 @@ function put(buf, W, H, x, y, c) {
 export function drawHole(buf, W, H, hole, view, actors = [], origin = { x: 0, y: 0 }) {
   const ground = sampleGround(view, W, H);
   paintGround(buf, W, H, hole.style, ground, origin);
+  if (!view.sparse) paintBridges(buf, W, H, view, hole);
   paintScenery(buf, W, H, view, hole);
   if (view.others.length) shadeOutOfBounds(buf, W, H, view, ground);
   if (!view.sparse) paintMarkers(buf, W, H, view, hole, actors);
+}
+
+// Footbridges out to island greens, this hole's and its neighbours': a run of
+// tiles straight along the grid (so on the screen's diagonals) from the green
+// across the water to the nearest bank, planked across with a rail each side.
+// They're only drawn: a ball landing on one is still in the water.
+const DRY = (s) => s !== 'water' && s !== 'sea';
+function paintBridges(buf, W, H, view, hole) {
+  const { grid } = view;
+  const islands = [{ hole, toHere: (p) => p, toThere: (p) => p }, ...(view.others ?? [])].filter((o) => o.hole.water?.some((w) => w.island));
+  for (const o of islands) {
+    // Worked out on the island's own hole, not from what this picture shows, so
+    // every piece of a picture drawn in pieces agrees on it.
+    const at = (c, r) => o.toThere(grid.toWorld(c, r));
+    const look = (c, r) => surfaceAt(o.hole, at(c, r));
+    const height = (c, r) => heightAt(o.hole, at(c, r));
+    const g = grid.toTile(o.toHere(o.hole.green));
+    const toward = o.hole.bridge && o.toHere(o.hole.bridge.to), mid = o.toHere(o.hole.green);
+    let best = null;
+    for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      // Out from the middle of the green to the water's edge, then across it.
+      let k = 0;
+      while (k < 40 && DRY(look(g.col + dc * k, g.row + dr * k))) k++;
+      const start = k;
+      while (k < start + 60 && !DRY(look(g.col + dc * k, g.row + dr * k))) k++;
+      const across = k - start;
+      if (!across || k >= start + 60) continue;
+      // Shortest crossing, landing in the open rather than the woods, and of
+      // two alike, the one heading the way the hole's bridge does.
+      const far = toward && Math.hypot(toward.x - mid.x, toward.y - mid.y);
+      const lean = far ? Math.hypot(dc - (toward.x - mid.x) / far, dr - (toward.y - mid.y) / far) : 0;
+      const score = across + lean * 1.5 + (look(g.col + dc * k, g.row + dr * k) === 'trees' ? 25 : 0);
+      if (!best || score < best.score) best = { score, dc, dr, from: start - 1, to: k };
+    }
+    if (best) drawBridge(buf, W, H, view, g, best, height);
+  }
+}
+
+const PLANK = [hex('#a4743e'), hex('#8c6030')], RAIL = hex('#5a3a1c'), UNDER = hex('#3c2814');
+function drawBridge(buf, W, H, view, g, { dc, dr, from, to }, height) {
+  const tile = (k) => ({ col: g.col + dc * k, row: g.row + dr * k });
+  const at = (k) => { const t = tile(k); return view.tileToScreen(t.col, t.row); };
+  const lift = (k) => { const t = tile(k); return liftPx(height(t.col, t.row), view.grid.cell); };
+  // Level from bank to bank, a pixel above the higher end.
+  const l0 = lift(from), l1 = lift(to);
+  const o = at(from), a = at(from + 1), side = view.tileToScreen(tile(from).col + dr, tile(from).row + dc);
+  const along = { x: a.x - o.x, y: a.y - o.y }, across = { x: side.x - o.x, y: side.y - o.y };
+  const det = along.x * across.y - along.y * across.x;
+  const n = to - from, HALF = 0.5;
+  const yAt = (t) => o.y - (l0 + (l1 - l0) * t / n) - 1;
+  const xs = [0, n].flatMap((t) => [-HALF, HALF].map((w) => o.x + along.x * t + across.x * w));
+  const ys = [0, n].flatMap((t) => [-HALF, HALF].map((w) => yAt(t) - o.y + o.y + along.y * t + across.y * w));
+  const x0 = Math.max(0, Math.floor(Math.min(...xs)) - 1), x1 = Math.min(W - 1, Math.ceil(Math.max(...xs)) + 1);
+  const y0 = Math.max(0, Math.floor(Math.min(...ys)) - 4), y1 = Math.min(H - 1, Math.ceil(Math.max(...ys)) + 2);
+  for (let y = y0; y <= y1; y++) {
+    for (let x = x0; x <= x1; x++) {
+      // Back from the pixel to how far along the bridge it is (t) and how far across (w).
+      const solve = (yy) => {
+        const dx = x + 0.5 - o.x, dy = yy - o.y;
+        return { t: (dx * across.y - dy * across.x) / det, w: (along.x * dy - along.y * dx) / det };
+      };
+      let { t, w } = solve(y + 0.5 + (o.y - yAt(0)));
+      ({ t, w } = solve(y + 0.5 + (o.y - yAt(Math.max(0, Math.min(n, t))))));
+      if (t < 0 || t > n) continue;
+      const k = y * W + x;
+      if (Math.abs(w) <= HALF) buf[k] = Math.abs(w) > HALF - 0.12 ? RAIL : PLANK[Math.floor(t * 3) & 1];
+      else if (Math.abs(w) <= HALF + 0.08 && w > 0 === (across.y > 0)) buf[k] = UNDER;
+    }
+  }
+  // Posts and a top rail along both sides.
+  for (const w of [-HALF + 0.06, HALF - 0.06]) {
+    for (let s = 0; s <= n * 2; s++) {
+      const t = s / 2;
+      const px = Math.round(o.x + along.x * t + across.x * w), py = Math.round(yAt(t) + along.y * t + across.y * w);
+      for (let h = 1; h <= 3; h++) put(buf, W, H, px, py - h, RAIL);
+    }
+    const steps = Math.ceil(Math.hypot(along.x, along.y) * n);
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps * n;
+      put(buf, W, H, o.x + along.x * t + across.x * w, yAt(t) + along.y * t + across.y * w - 3, PLANK[0]);
+    }
+  }
 }
 
 // Darken everything out of bounds a little, so the hole being played stands out
