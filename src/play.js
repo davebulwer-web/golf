@@ -81,6 +81,29 @@ export function standing(round, i) {
   return { toPar: done.reduce((t, d) => t + d, 0), holes: done.length };
 }
 
+// Match play between the first two golfers over a round of `holes`: each hole
+// goes to the lower score. `lead` is holes up for the first golfer (negative if
+// down); the match is over once one side is up by more than there are holes left.
+export function matchPlay(round, holes) {
+  const [a, b] = round.players;
+  let lead = 0, played = 0;
+  for (let h = 0; h < holes; h++) {
+    if (a.scores[h] == null || b.scores[h] == null) continue;
+    played += 1;
+    lead += Math.sign(b.scores[h] - a.scores[h]);
+  }
+  const left = holes - played;
+  return { lead, played, left, over: left === 0 || Math.abs(lead) > left };
+}
+
+// How the match stands in words, e.g. 'DAVE 2 UP', 'ALL SQUARE', 'VINCE WINS 3&2'.
+export function matchWords(m, names) {
+  const leader = names[m.lead > 0 ? 0 : 1], up = Math.abs(m.lead);
+  if (m.over) return m.lead === 0 ? 'MATCH HALVED' : `${leader} WINS ${m.left ? `${up}&${m.left}` : `${up} UP`}`;
+  if (m.lead === 0) return 'ALL SQUARE';
+  return `${leader} ${up} UP${up === m.left ? ', DORMIE' : ''}`;
+}
+
 // Golf's order of play: whoever is furthest from the hole goes next. On the tee,
 // everyone is level, so the order the golfers were listed in decides.
 export function nextTurn(state) {

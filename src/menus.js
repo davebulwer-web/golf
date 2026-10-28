@@ -7,7 +7,7 @@ import { drawText, textWidth } from './art.js';
 import { panel, GOLD } from './hud.js';
 import { drawDinky, golferFrame } from './dinky.js';
 import { STYLES } from './course-generator.js';
-import { LOOKS, SHIRT_COLOURS, SKILL_NAMES, WEEKS, startingSkills, courseStars } from './career.js';
+import { LOOKS, SHIRT_COLOURS, SKILL_NAMES, WEEKS, MEMBERS, STAKES, startingSkills, courseStars, memberGolfer, record } from './career.js';
 
 const DIM = '#c8c0e8', QUIET = '#8a80b0';
 const mid = (W, w) => Math.round((W - w) / 2);
@@ -135,12 +135,13 @@ export function drawNewCareer(ctx, W, H, L, { draft, hover, now, replaces }) {
 // ---------- Clubhouse ----------
 
 export function hubLayout(W, H, career) {
-  const pw = 340, ph = 232, px = mid(W, pw), py = mid(H, ph);
-  const play = career.round ? `CONTINUE ROUND, HOLE ${career.round.hole}` : 'PLAY A ROUND';
+  const pw = 380, ph = 232, px = mid(W, pw), py = mid(H, ph);
+  const play = career.round ? `CONTINUE ${career.round.match ? 'MATCH' : 'ROUND'}, HOLE ${career.round.hole}` : 'PRACTICE ROUND';
   return {
     panel: { x: px, y: py, w: pw, h: ph },
-    play: { key: 'play', label: play, x: px + pw - 196, y: py + ph - 30, w: 180, h: 18 },
-    menu: { key: 'menu', label: 'MAIN MENU', x: px + 16, y: py + ph - 30, w: 90, h: 18 },
+    play: { key: 'play', label: play, x: px + pw - 156, y: py + ph - 30, w: 140, h: 18 },
+    match: { key: 'match', label: 'MONEY MATCH', x: px + pw - 282, y: py + ph - 30, w: 118, h: 18 },
+    menu: { key: 'menu', label: 'MENU', x: px + 16, y: py + ph - 30, w: 64, h: 18 },
   };
 }
 
@@ -165,13 +166,21 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
   drawText(ctx, 'RECENT ROUNDS', sx, ry, DIM, 1, null);
   if (!c.history.length) drawText(ctx, 'NONE YET. PLAY NINE HOLES AT YOUR CLUB.', sx, ry + 11, QUIET, 1, null);
   c.history.slice(0, 5).forEach((r, i) => {
+    if (r.match) {
+      const m = r.match, money = m.money > 0 ? `+£${m.money}` : m.money < 0 ? `-£${-m.money}` : '£0';
+      const how = m.lead > 0 ? `BEAT ${r.vs}` : m.lead < 0 ? `LOST TO ${r.vs}` : `HALVED WITH ${r.vs}`;
+      drawText(ctx, `WK ${r.week}  MATCH: ${how}  ${money}`, sx, ry + 11 + i * 9, m.money > 0 ? GOLD : m.money < 0 ? '#f08a8a' : '#ffffff', 1, null);
+      return;
+    }
     const vs = r.vsScore == null ? '' : r.score < r.vsScore ? `  BEAT ${r.vs} ${r.vsScore}` : r.score > r.vsScore ? `  LOST TO ${r.vs} ${r.vsScore}` : `  TIED ${r.vs}`;
     drawText(ctx, `WK ${r.week}  ${r.score} (${toPar(r.score - r.par)})${vs}`, sx, ry + 11 + i * 9, '#ffffff', 1, null);
   });
-  if (c.round) drawText(ctx, `ROUND IN PROGRESS AT ${c.round.course.name}: ${c.round.hole - 1} PLAYED`, p.x + 16, p.y + p.h - 44, GOLD, 1, null);
+  if (c.round?.match) drawText(ctx, `MATCH IN PROGRESS: ${c.round.vs.toUpperCase()} FOR £${c.round.match.stake}`, p.x + 16, p.y + p.h - 44, GOLD, 1, null);
+  else if (c.round) drawText(ctx, `ROUND IN PROGRESS AT ${c.round.course.name}: ${c.round.hole - 1} PLAYED`, p.x + 16, p.y + p.h - 44, GOLD, 1, null);
 
   menuButton(ctx, L.menu, hover === 'menu');
   menuButton(ctx, L.play, hover === 'play');
+  if (!c.round) menuButton(ctx, L.match, hover === 'match');
 }
 
 // ---------- Where to play ----------
@@ -216,4 +225,60 @@ export function drawCourses(ctx, W, H, L, { courses, hover }) {
     stars(ctx, b.x + 8 + textWidth('DIFFICULTY') + 6, b.y + 29, courseStars(c.rating));
   });
   menuButton(ctx, L.back, hover === 'back');
+}
+
+// ---------- Money matches ----------
+
+// The members down the left; the one picked, the stake and the challenge on the right.
+export function membersLayout(W, H) {
+  const pw = 400, ph = 252, px = mid(W, pw), py = mid(H, ph);
+  const rx = px + 196;
+  return {
+    panel: { x: px, y: py, w: pw, h: ph },
+    members: MEMBERS.map((m, i) => ({ key: `member-${i}`, x: px + 12, y: py + 40 + i * 30, w: 172, h: 27 })),
+    right: { x: rx, y: py + 40 },
+    stakes: STAKES.map((v, i) => ({ key: `stake-${i}`, label: `£${v}`, x: rx + i * 46, y: py + ph - 56, w: 42, h: 16 })),
+    challenge: { key: 'challenge', label: 'PLAY MATCH', x: px + pw - 126, y: py + ph - 30, w: 114, h: 18 },
+    back: { key: 'back', label: 'BACK', x: px + 12, y: py + ph - 30, w: 70, h: 18 },
+  };
+}
+
+const NERVE = (n) => (n >= 0.7 ? 'BOLD' : n <= 0.3 ? 'CAUTIOUS' : 'STEADY');
+
+export function drawMembers(ctx, W, H, L, { career: c, pick, hover, now }) {
+  const p = L.panel;
+  panel(ctx, p.x, p.y, p.w, p.h);
+  drawText(ctx, 'MONEY MATCH', p.x + 12, p.y + 12, GOLD, 2);
+  drawText(ctx, `NINE HOLES MATCH PLAY AT ${c.home.name}`, p.x + 12, p.y + 28, DIM, 1, null);
+
+  L.members.forEach((b, i) => {
+    const m = MEMBERS[i], on = pick.member === m.id, hot = hover === b.key;
+    ctx.fillStyle = on ? '#4a3a8a' : hot ? '#3a2c6a' : '#2c2050';
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    if (on) { ctx.fillStyle = GOLD; ctx.fillRect(b.x, b.y, 2, b.h); }
+    const r = record(c, m.id);
+    drawText(ctx, m.name.toUpperCase(), b.x + 8, b.y + 5, on ? GOLD : '#ffffff', 1, null);
+    if (m.rival) drawText(ctx, 'RIVAL', b.x + b.w - 6 - textWidth('RIVAL'), b.y + 5, '#f08a8a', 1, null);
+    const played = r.won + r.lost + r.halved;
+    drawText(ctx, played ? `WON ${r.won}  LOST ${r.lost}  HALVED ${r.halved}` : 'NOT PLAYED YET', b.x + 8, b.y + 16, QUIET, 1, null);
+  });
+
+  // The member picked: their golfer, their game and how bold they play.
+  const m = MEMBERS.find((x) => x.id === pick.member), g = memberGolfer(c, m.id);
+  const { x, y } = L.right;
+  golferAt(ctx, g.look, g.shirt, x + 22, y + 62, now);
+  drawText(ctx, m.name.toUpperCase(), x + 54, y + 2, GOLD, 1, null);
+  drawText(ctx, m.about, x + 54, y + 12, DIM, 1, null);
+  Object.entries(SKILL_NAMES).forEach(([k, name], i) => skillBar(ctx, x + 54, y + 26 + i * 10, name, g.skills[k]));
+  drawText(ctx, `PLAYS ${NERVE(m.nerve)}`, x + 54, y + 78, QUIET, 1, null);
+
+  drawText(ctx, 'STAKE', L.stakes[0].x, L.stakes[0].y - 10, DIM, 1, null);
+  L.stakes.forEach((b, i) => {
+    const v = STAKES[i], ok = v <= c.money;
+    menuButton(ctx, b, hover === b.key || pick.stake === v, ok);
+  });
+  if (!pick.stake) drawText(ctx, 'NOT ENOUGH MONEY. PLAY PRACTICE ROUNDS FOR NOW.', p.x + 12, p.y + p.h - 44, '#f08a8a', 1, null);
+  else drawText(ctx, `WIN £${pick.stake} OR LOSE IT. YOU HAVE £${c.money}.`, L.stakes[0].x + 32, L.stakes[0].y - 10, QUIET, 1, null);
+  menuButton(ctx, L.back, hover === 'back');
+  menuButton(ctx, L.challenge, hover === 'challenge', !!pick.stake);
 }

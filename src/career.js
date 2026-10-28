@@ -62,11 +62,50 @@ export const clubCourses = (c) => [c.home, ...(c.away ?? [])];
 // Your golfer for a round, from the career.
 export const careerGolfer = (c) => ({ name: c.name, look: c.look, shirt: c.shirt, skills: { ...c.skills } });
 
-// Who you play at the club, for now: Bertie, at club level.
+// Who you play a practice round with: Bertie, at club level.
 export const clubOpponent = () => ({ ...RIVAL, skills: { power: 50, accuracy: 46, shortGame: 47, recovery: 45, putting: 46 } });
 
-// Record a finished round and move the week on.
+// ---------- The club's members ----------
+// The same faces every season. `nerve` is how much risk they take (0 to 1);
+// `rival` keeps pace with you, a couple of points ahead in every skill.
+export const MEMBERS = [
+  { id: 'bertie', name: 'Bertie', look: 'heavy', shirt: '#2f6fd6', nerve: 0.5, about: 'CLUB STALWART. NEVER MISSES A MONDAY.',
+    skills: { power: 50, accuracy: 46, shortGame: 47, recovery: 45, putting: 46 } },
+  { id: 'larry', name: 'Long Larry', look: 'tall', shirt: '#e0a020', nerve: 0.8, about: 'HITS IT A MILE. NOT ALWAYS STRAIGHT.',
+    skills: { power: 62, accuracy: 38, shortGame: 40, recovery: 46, putting: 42 } },
+  { id: 'major', name: 'The Major', look: 'veteran', shirt: null, nerve: 0.2, about: 'SHORT, STRAIGHT AND A DEADLY PUTTER.',
+    skills: { power: 36, accuracy: 54, shortGame: 50, recovery: 44, putting: 58 } },
+  { id: 'sal', name: 'Swift Sal', look: 'athletic', shirt: '#2f9a4a', nerve: 0.6, about: 'CLUB CHAMPION TWO YEARS RUNNING.',
+    skills: { power: 52, accuracy: 52, shortGame: 50, recovery: 50, putting: 48 } },
+  { id: 'chip', name: 'Chippy Pete', look: 'casual', shirt: '#e8e8f0', nerve: 0.4, about: 'MISSES GREENS, THEN CHIPS IN.',
+    skills: { power: 40, accuracy: 42, shortGame: 60, recovery: 52, putting: 50 } },
+  { id: 'vince', name: 'Vince Vallance', look: 'club', shirt: '#8a4ad0', nerve: 0.7, rival: true, about: 'YOUR RIVAL. ALWAYS ONE STEP AHEAD.',
+    skills: { power: 47, accuracy: 47, shortGame: 47, recovery: 44, putting: 47 } },
+];
+export const STAKES = [10, 25, 50];
+
+// A member as a golfer for a round. The rival matches your skills, plus two.
+export function memberGolfer(c, id) {
+  const m = MEMBERS.find((x) => x.id === id);
+  const skills = { ...m.skills };
+  if (m.rival) for (const k in skills) skills[k] = Math.max(skills[k], Math.round(c.skills[k]) + 2);
+  return { name: m.name, look: m.look, shirt: m.shirt ?? VETERAN_SHIRT, ai: true, nerve: m.nerve, skills };
+}
+
+// Your matches against each member: { won, lost, halved }.
+export const record = (c, id) => c.members?.[id] ?? { won: 0, lost: 0, halved: 0 };
+
+// Record a finished round and move the week on. A money match (`result.match`,
+// with `lead` from your side) pays out its stake and goes on your record.
 export function finishRound(c, result) {
+  const m = result.match;
+  if (m) {
+    const r = { ...record(c, m.member) };
+    r[m.lead > 0 ? 'won' : m.lead < 0 ? 'lost' : 'halved'] += 1;
+    c.members = { ...c.members, [m.member]: r };
+    m.money = Math.sign(m.lead) * m.stake;
+    c.money += m.money;
+  }
   c.history.unshift({ season: c.season, week: c.week, ...result });
   c.history = c.history.slice(0, 40);
   c.round = null;
