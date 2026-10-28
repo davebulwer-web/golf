@@ -25,7 +25,10 @@ const ready = (name) => images[name]?.complete && images[name].naturalWidth > 0;
 const SHIRTS = {
   club: { is: (r, g, b) => b >= r + 25 && b >= g + 15, light: (r, g, b) => (r + g + b) / 3 / 120 }, // blue
   heavy: { is: (r, g, b) => r >= g + 90 && Math.abs(g - b) < 35, light: (r) => r / 190 },          // red
+  athletic: { is: (r, g, b) => r >= g + 70 && b >= g + 30, light: (r) => r / 190 },                // pink
 };
+// Every golfer look there are sprites for.
+export const GOLFER_LOOKS = Object.keys(SHIRTS);
 
 // A sprite as a canvas, with a golfer's shirt recoloured to `shirt` (a
 // '#rrggbb' colour, or null to keep it), and its anchor: the middle of its

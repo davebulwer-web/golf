@@ -13,7 +13,7 @@ import { PLAYER, RIVAL } from './golfers.js';
 import { startHole, current, toPin, hit, settle, nextPutt, settlePutt, newRound, standing, nextTurn, allHoled, pickUp, PICK_UP } from './play.js';
 import { planShot } from './ai.js';
 import { feet } from './putting.js';
-import { drawDinky, dinkySize, golferFrame, ballFrame, flagFrame, LIE_BANNERS, WATER_BANNER, OB_BANNER, scoreBanner } from './dinky.js';
+import { drawDinky, dinkySize, golferFrame, ballFrame, flagFrame, GOLFER_LOOKS, LIE_BANNERS, WATER_BANNER, OB_BANNER, scoreBanner } from './dinky.js';
 
 const STYLE_KEYS = Object.keys(STYLES);
 const TEE = 'white';
@@ -135,6 +135,11 @@ function setZoom(z) {
   if (z === display.zoom) return;
   display.zoom = z;
   rescale();
+}
+
+// Play as the next golfer look (until there's a proper character picker).
+function changeGolfer() {
+  PLAYER.look = GOLFER_LOOKS[(GOLFER_LOOKS.indexOf(PLAYER.look) + 1) % GOLFER_LOOKS.length];
 }
 
 // Turn the view a quarter turn round the hole: -1 one way, +1 the other.
@@ -492,6 +497,7 @@ canvas.addEventListener('mousedown', (e) => {
   const turn = viewButtons(display.W);
   if (inside(p, turn.left)) return turnView(-1);
   if (inside(p, turn.right)) return turnView(1);
+  if (inside(p, turn.golfer)) return changeGolfer();
   if (p.y >= BAR_TOP(display.H)) {
     const b = shotButtons(display.H, SHOT_TYPES.length).findIndex((r) => inside(p, r));
     if (b >= 0) pickShot(SHOT_TYPES[b].key);
@@ -534,6 +540,7 @@ addEventListener('keydown', (e) => {
   if (k === 'c') { cam.manual = false; return; }
   if (k === 'q') return turnView(-1);
   if (k === 'e') return turnView(1);
+  if (k === 'g') return changeGolfer();
   if (k === 'tab') { e.preventDefault(); ui.card = !ui.card; ui.cardAt = 0; return; }
   if (k === 'enter' && ui.phase === 'done') {
     // On to the next hole, or a fresh round after the 18th.
@@ -556,7 +563,7 @@ addEventListener('resize', () => {
 });
 
 // Lets the test tools play shots without a mouse.
-window.golf = { get game() { return game; }, get world() { return world; }, get round() { return round; }, ui, cam, display, shoot, clampAim, setZoom, turnView };
+window.golf = { get game() { return game; }, get world() { return world; }, get round() { return round; }, ui, cam, display, shoot, clampAim, setZoom, turnView, changeGolfer };
 
 measure();
 loadHole();
