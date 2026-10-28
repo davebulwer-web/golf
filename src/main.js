@@ -3,11 +3,11 @@
 // game of its own, seen from above: aim, then stop the power bar.
 // The URL can pick the course: ?style=tropical&seed=1989&hole=1
 
-import { makeRng, dist, surfaceAt, STYLES } from './course-generator.js';
+import { makeRng, dist, surfaceAt, pointAt, STYLES } from './course-generator.js';
 import { buildCourse } from './course.js';
-import { layoutHole, shiftView, addSurroundings, drawHole, isOutOfBounds } from './hole-view.js';
+import { layoutHole, shiftView, addSurroundings, drawHole, isOutOfBounds, courseHoles, courseView, piecePad } from './hole-view.js';
 import { drawSprite } from './art.js';
-import { drawHud, drawShotBar, drawPuttBar, drawBanner, drawScorecard, shotButtons, actionButtons, viewButtons, drawViewButtons, BAR_TOP } from './hud.js';
+import { drawHud, drawShotBar, drawPuttBar, drawBanner, drawScorecard, shotButtons, actionButtons, viewButtons, drawViewButtons, drawHoleNumber, BAR_TOP } from './hud.js';
 import { roundWeather, holeWind } from './weather.js';
 import { SHOT_TYPES, shotType, maxCarry, chooseClub, shotSpread, flightPoint, clampToReach, playsAs } from './shots.js';
 import { PLAYER, RIVAL } from './golfers.js';
@@ -20,8 +20,11 @@ import { drawDinky, dinkySize, golferFrame, ballFrame, flagFrame, GOLFER_LOOKS, 
 const STYLE_KEYS = Object.keys(STYLES);
 const TEE = 'white';
 const GOLFERS = [PLAYER, RIVAL];
-// Spare picture round the whole-hole view, so there's somewhere to pan when zoomed in.
+// Where the whole-hole view sits in the picture of the course.
 const MARGIN = 200;
+// The course is drawn in square pieces this many pixels across, as they come into view.
+const PIECE = 384;
+const COURSE_EDGE = 60; // pixels of woods shown past the outermost holes
 const MAX_ZOOM = 2;
 
 // Two canvases fill the window: the hole, scaled up by `fitScale + zoom`, and the
@@ -42,8 +45,9 @@ const settings = {
 // fitScale: screen pixels per game pixel when the whole hole is shown. W x H: the
 // game's size in pixels at that scale (the panels are laid out on this).
 // zoom is the player's choice; onGreen zooms right in while putting. turn is
-// how many quarter turns the view has been turned round the hole.
-const display = { fitScale: 1, W: 0, H: 0, zoom: 0, onGreen: false, turn: 0 };
+// how many quarter turns the view has been turned round the hole. map shows
+// the whole course instead.
+const display = { fitScale: 1, W: 0, H: 0, zoom: 0, onGreen: false, turn: 0, map: false };
 const cam = { x: MARGIN, y: MARGIN, manual: false };
 let game, world, round;
 // phase: 'aim' (waiting for a shot), 'flight', 'roll', 'putting' (on the green,
@@ -62,7 +66,7 @@ const SWING = 750; // ms for the swing before the ball leaves
 const POWER_SWEEP = 1100; // ms for the power bar to fill
 
 const zoomNow = () => (display.onGreen ? MAX_ZOOM : display.zoom);
-const scale = () => display.fitScale + zoomNow();
+const scale = () => display.fitScale + (display.map ? 0 : zoomNow());
 
 function sizeCanvas(c, k) {
   c.width = Math.ceil(innerWidth / k);
@@ -81,20 +85,79 @@ function measure() {
   display.H = hudCanvas.height;
 }
 
-// Draw the hole once into a picture big enough for the whole-hole view plus a margin.
+// Lay the hole out for the whole-hole view. The picture of the course round it
+// is drawn a piece at a time as it comes into view (see `piece`), out to the
+// edge of the course.
 function buildWorld() {
   const { W, H } = display;
+  const index = game.hole.number - 1;
   const fit = layoutHole(game.hole, { x: 8, y: 54, w: W - 16, h: BAR_TOP(H) - 60 }, display.turn);
   const view = shiftView(fit, MARGIN, MARGIN);
-  const w = W + 2 * MARGIN, h = H + 2 * MARGIN;
-  addSurroundings(view, game.course, game.hole.number - 1, w, h);
-  const img = new ImageData(w, h);
-  drawHole(new Uint32Array(img.data.buffer), w, h, game.hole, view);
-  const c = document.createElement('canvas');
-  c.width = w; c.height = h;
-  c.getContext('2d').putImageData(img, 0, 0);
-  world = { canvas: c, view, w, h };
+  // For play: the ground and what's out of bounds round this hole.
+  addSurroundings(view, game.course, index, W + 2 * MARGIN, H + 2 * MARGIN);
+  const { all, corners } = courseHoles(game.course, index);
+  const pts = corners.map((p) => view.worldToScreen(p, 0));
+  const xs = pts.map((q) => q.x), ys = pts.map((q) => q.y);
+  const bounds = {
+    x0: Math.min(MARGIN, Math.min(...xs) - COURSE_EDGE), x1: Math.max(MARGIN + W, Math.max(...xs) + COURSE_EDGE),
+    y0: Math.min(MARGIN, Math.min(...ys) - COURSE_EDGE - 30), y1: Math.max(MARGIN + H, Math.max(...ys) + COURSE_EDGE),
+  };
+  world = { view, bounds, holes: all, pieces: new Map(), map: null, fresh: true };
   aimCamera(true);
+}
+
+// One piece of the picture of the course, drawn the first time it's needed.
+function piece(i, j) {
+  const key = `${i},${j}`;
+  let c = world.pieces.get(key);
+  if (c) return c;
+  const v = shiftView(world.view, -i * PIECE, -j * PIECE);
+  addSurroundings(v, game.course, game.hole.number - 1, PIECE, PIECE, 1e6, piecePad(v.grid.cell));
+  const img = new ImageData(PIECE, PIECE);
+  drawHole(new Uint32Array(img.data.buffer), PIECE, PIECE, game.hole, v, [], { x: i * PIECE, y: j * PIECE });
+  c = document.createElement('canvas');
+  c.width = PIECE; c.height = PIECE;
+  c.getContext('2d').putImageData(img, 0, 0);
+  world.pieces.set(key, c);
+  return c;
+}
+
+// Draw the pieces of the course in view. Missing ones are drawn a couple a
+// frame while scrolling, so it never stalls for long; all at once for a new view.
+function drawCourse() {
+  let budget = world.fresh ? Infinity : 2;
+  world.fresh = false;
+  const x0 = Math.floor(cam.x / PIECE), x1 = Math.floor((cam.x + canvas.width) / PIECE);
+  const y0 = Math.floor(cam.y / PIECE), y1 = Math.floor((cam.y + canvas.height) / PIECE);
+  for (let j = y0; j <= y1; j++) {
+    for (let i = x0; i <= x1; i++) {
+      if (!world.pieces.has(`${i},${j}`)) {
+        if (budget <= 0) { ctx.fillStyle = '#1e4a22'; ctx.fillRect(i * PIECE, j * PIECE, PIECE, PIECE); continue; }
+        budget--;
+      }
+      ctx.drawImage(piece(i, j), i * PIECE, j * PIECE);
+    }
+  }
+}
+
+// The whole course on one screen, drawn the first time it's asked for.
+function courseMapPicture() {
+  if (world.map) return world.map;
+  const { W, H } = display;
+  const view = courseView(game.course, game.hole.number - 1, { x: 8, y: 54, w: W - 16, h: BAR_TOP(H) - 60 }, W, H, display.turn);
+  const img = new ImageData(W, H);
+  drawHole(new Uint32Array(img.data.buffer), W, H, game.hole, view);
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  c.getContext('2d').putImageData(img, 0, 0);
+  world.map = { canvas: c, view };
+  return world.map;
+}
+
+function showMap(on) {
+  if (on === display.map || (on && ui.phase === 'putting')) return;
+  display.map = on;
+  rescale();
 }
 
 function loadHole() {
@@ -116,10 +179,12 @@ function loadHole() {
 
 // ---------- Camera ----------
 
-// Whole hole: fixed. Zoomed in: follow the ball (unless the player has panned).
+// Whole hole: fixed. Zoomed in: follow the ball. Either way the player can
+// scroll off round the course, until the next shot.
 function aimCamera(snap) {
-  if (zoomNow() === 0) { cam.x = MARGIN; cam.y = MARGIN; cam.manual = false; return; }
-  if (cam.manual) return;
+  if (display.map) return;
+  if (cam.manual) return clampCamera();
+  if (zoomNow() === 0) { cam.x = MARGIN; cam.y = MARGIN; return; }
   // While aiming, keep both the ball and the aim in view.
   const ball = ballNow(performance.now());
   const focus = ui.aim && ui.phase === 'aim' ? { x: (ball.x + ui.aim.x) / 2, y: (ball.y + ui.aim.y) / 2 } : ball;
@@ -130,13 +195,19 @@ function aimCamera(snap) {
   clampCamera();
 }
 
+// Keep the view on the course: a course smaller than the screen stays centred.
 function clampCamera() {
-  cam.x = Math.max(0, Math.min(world.w - canvas.width, cam.x));
-  cam.y = Math.max(0, Math.min(world.h - canvas.height, cam.y));
+  const b = world.bounds;
+  const keep = (v, lo, hi, size) => (hi - lo <= size ? (lo + hi - size) / 2 : Math.max(lo, Math.min(hi - size, v)));
+  cam.x = keep(cam.x, b.x0, b.x1, canvas.width);
+  cam.y = keep(cam.y, b.y0, b.y1, canvas.height);
 }
 
+// Zooming out past the whole hole shows the whole course; zooming in comes back.
 function setZoom(z) {
-  z = Math.max(0, Math.min(MAX_ZOOM, z));
+  if (display.map) { if (z > display.zoom) showMap(false); return; }
+  if (z < 0) { showMap(true); return; }
+  z = Math.min(MAX_ZOOM, z);
   if (z === display.zoom) return;
   display.zoom = z;
   rescale();
@@ -303,6 +374,7 @@ function startTurn(now, note) {
   const turn = me.onGreen ? (me.golfer.ai ? `${who(me.golfer)} TO PUTT` : 'YOUR PUTT') : yourTurn(me.golfer);
   ui.banner = note ? { text: note, sub: turn, until: now + 2200 } : { text: turn, until: now + 1200 };
   if (me.onGreen) {
+    showMap(false);
     ui.phase = 'putting';
     ui.putt = newPutt(me, me.golfer.ai ? now + (note ? 2000 : 1100) : now);
     greenZoom(true);
@@ -479,11 +551,11 @@ function drawAim() {
   for (const [dx, dy] of [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]]) dot(c.x + dx, c.y + dy, col);
 }
 
-function render(now) {
+// The course round the hole being played, with the golfers, balls and flags.
+function drawPlay(now) {
   const v = world.view;
-  const me = current(game.play);
   ctx.setTransform(1, 0, 0, 1, -Math.round(cam.x), -Math.round(cam.y));
-  ctx.drawImage(world.canvas, 0, 0);
+  drawCourse();
 
   if (ui.phase === 'aim' && ui.aim) drawAim();
 
@@ -494,7 +566,7 @@ function render(now) {
   const items = [];
   // The other holes' flags have no bright ring round the hole: that marks the
   // one being played.
-  const pins = [game.hole.pin, ...v.others.map((o) => o.toHere(o.hole.pin))];
+  const pins = world.holes.map((o) => o.toHere(o.hole.pin));
   pins.forEach((pin, i) => {
     const at = v.worldToScreen(pin);
     items.push({ y: at.y, draw: () => drawSprite(ctx, flagFrame(now, i > 0), at.x, at.y) });
@@ -533,7 +605,44 @@ function render(now) {
   });
   items.sort((a, b) => a.y - b.y);
   for (const it of items) it.draw();
+  drawHoleNumbers(v, 0);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+
+// Every hole's number, over its flag and by its back tee.
+function drawHoleNumbers(v, flagHeight) {
+  for (const [i, o] of world.holes.entries()) {
+    const pin = v.worldToScreen(o.toHere(o.hole.pin));
+    const tee = v.worldToScreen(o.toHere(pointAt(o.hole.line, o.hole.tees.black)));
+    drawHoleNumber(ctx, pin.x + 1, pin.y - 32 + flagHeight, o.number, i === 0);
+    drawHoleNumber(ctx, tee.x, tee.y + 4, o.number, i === 0);
+  }
+}
+
+// The whole course on one screen: every hole's flag and number, and where the balls are.
+function drawMap(now) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  const { canvas: pic, view: v } = courseMapPicture();
+  ctx.drawImage(pic, 0, 0);
+  for (const [i, o] of world.holes.entries()) {
+    const at = v.worldToScreen(o.toHere(o.hole.pin));
+    drawSprite(ctx, flagFrame(now, i > 0), at.x, at.y);
+  }
+  game.play.players.forEach((p) => {
+    if (p.holed) return;
+    const s = v.worldToScreen(p.at);
+    ctx.fillStyle = '#1a1a2a';
+    ctx.fillRect(Math.round(s.x) - 2, Math.round(s.y) - 2, 4, 4);
+    ctx.fillStyle = p.golfer.shirt;
+    ctx.fillRect(Math.round(s.x) - 1, Math.round(s.y) - 1, 2, 2);
+  });
+  drawHoleNumbers(v, 0);
+}
+
+function render(now) {
+  const me = current(game.play);
+  if (display.map) drawMap(now);
+  else drawPlay(now);
 
   const { W, H } = display;
   hud.clearRect(0, 0, W, H);
@@ -547,7 +656,7 @@ function render(now) {
       others, dropped: rolling?.done && pt.roll.holed,
     });
   }
-  drawHud(hud, W, H, { course: game.course, hole: game.hole, tee: TEE, weather: game.weather, wind: game.wind, windScreen: v.worldDirToScreen(game.wind.across, game.wind.along), standing: standings() });
+  drawHud(hud, W, H, { course: game.course, hole: game.hole, tee: TEE, weather: game.weather, wind: game.wind, windScreen: world.view.worldDirToScreen(game.wind.across, game.wind.along), standing: standings() });
   if (pt) {
     const d = dist(me.at, game.hole.pin);
     const human = humanTurn();
@@ -566,9 +675,9 @@ function render(now) {
     types: SHOT_TYPES, selected: ui.shot, max, aim: aimYds, slope, canHit,
     club: chooseClub(me.golfer, type, aimYds + slope || max, me.lie).toUpperCase(),
     lie: LIE_NAMES[me.lie] ?? me.lie.toUpperCase(), toPin: Math.round(toPin(game.play)), stroke: me.holed ? me.strokes : me.strokes + 1,
-    hint: !humanTurn() && ui.phase !== 'done' ? `${who(me.golfer)} IS PLAYING` : ui.phase !== 'aim' ? '' : !ui.aim ? 'DRAG ON THE COURSE TO AIM' : ui.dragging ? 'LET GO TO SET THE AIM' : 'CHANGE SHOT OR DRAG AGAIN',
+    hint: display.map ? 'CLICK THE MAP OR PRESS M TO GO BACK' : !humanTurn() && ui.phase !== 'done' ? `${who(me.golfer)} IS PLAYING` : ui.phase !== 'aim' ? '' : !ui.aim ? 'DRAG ON THE COURSE TO AIM' : ui.dragging ? 'LET GO TO SET THE AIM' : 'CHANGE SHOT OR DRAG AGAIN',
   });
-  drawViewButtons(hud, W);
+  drawViewButtons(hud, W, display.map);
   if (ui.banner && now < ui.banner.until) drawBanner(hud, W, ui.banner.text, ui.banner.sub);
   if (ui.pop && now < ui.pop.until) drawPop(hud, W, H, now);
   if (ui.cardAt && now >= ui.cardAt) { ui.card = true; ui.cardAt = 0; }
@@ -592,15 +701,26 @@ const toHud = (e) => ({ x: e.clientX / display.fitScale, y: e.clientY / display.
 const toYards = (e) => world.view.screenToWorld(e.clientX / scale() + Math.round(cam.x), e.clientY / scale() + Math.round(cam.y));
 const inside = (p, b) => p.x >= b.x && p.x < b.x + b.w && p.y >= b.y && p.y < b.y + b.h;
 
+// Dragging with the right (or middle) button scrolls round the course; a right
+// click that doesn't move cancels the aim.
+let scroll = null;
+
 canvas.addEventListener('mousedown', (e) => {
-  if (e.button === 2) { cancelAim(); cancelPower(); return; }
+  if (e.button === 2 || e.button === 1) {
+    e.preventDefault();
+    scroll = { x: e.clientX, y: e.clientY, camX: cam.x, camY: cam.y, moved: false, button: e.button };
+    return;
+  }
   if (e.button !== 0) return;
   const p = toHud(e);
   const turn = viewButtons(display.W);
   if (inside(p, turn.left)) return turnView(-1);
   if (inside(p, turn.right)) return turnView(1);
   if (inside(p, turn.golfer)) return changeGolfer();
+  if (inside(p, turn.map)) return showMap(!display.map);
   if (ui.phase === 'putting') return puttClick(p);
+  // A click on the map goes back to the hole.
+  if (display.map && p.y < BAR_TOP(display.H)) return showMap(false);
   if (p.y >= BAR_TOP(display.H)) {
     const b = shotButtons(display.H, SHOT_TYPES.length).findIndex((r) => inside(p, r));
     if (b >= 0) pickShot(SHOT_TYPES[b].key);
@@ -629,11 +749,26 @@ function puttClick(p) {
 }
 
 addEventListener('mousemove', (e) => {
+  if (scroll && !display.map && ui.phase !== 'putting') {
+    const dx = e.clientX - scroll.x, dy = e.clientY - scroll.y;
+    if (Math.abs(dx) + Math.abs(dy) > 4) scroll.moved = true;
+    if (scroll.moved) {
+      cam.manual = true;
+      cam.x = scroll.camX - dx / scale();
+      cam.y = scroll.camY - dy / scale();
+      clampCamera();
+    }
+  }
   if (!ui.dragging) return;
   if (ui.phase === 'putting') { if (ui.putt?.stage === 'aim') aimPutt(toHud(e)); return; }
   ui.aim = clampAim(toYards(e));
 });
 addEventListener('mouseup', (e) => {
+  if (scroll && e.button === scroll.button) {
+    if (!scroll.moved && e.button === 2) { cancelAim(); cancelPower(); }
+    scroll = null;
+    return;
+  }
   if (!ui.dragging || e.button !== 0) return;
   ui.dragging = false;
   if (ui.phase === 'putting') return;
@@ -657,13 +792,14 @@ addEventListener('keydown', (e) => {
   if (k === 'escape') { cancelPower(); return cancelAim(); }
   if (k === '+' || k === '=') return setZoom(display.zoom + 1);
   if (k === '-' || k === '_') return setZoom(display.zoom - 1);
-  if (PAN[k] && display.zoom > 0) {
+  if (PAN[k] && !display.map) {
     e.preventDefault();
     cam.manual = true;
     cam.x += PAN[k][0] * 24; cam.y += PAN[k][1] * 24;
     return clampCamera();
   }
   if (k === 'c') { cam.manual = false; return; }
+  if (k === 'm') return showMap(!display.map);
   if (k === 'q') return turnView(-1);
   if (k === 'e') return turnView(1);
   if (k === 'g') return changeGolfer();

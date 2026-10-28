@@ -41,6 +41,47 @@ export function shiftView(view, dx, dy) {
   return { ...makeView(view.grid, view.ox + dx, view.oy + dy, view.ground, view.turn), own: view.own, look: view.look, others: view.others, heights: view.heights };
 }
 
+// Every hole on the course in hole `index`'s yards: { hole, number, toHere }
+// for each (this one included), and the corners of the ground they cover.
+export function courseHoles(course, index) {
+  const all = [{ hole: course.holes[index], number: index + 1, toHere: (p) => p }, ...neighbours(course, index, 1e6)];
+  const corners = [];
+  for (const o of all) {
+    const b = holeBounds(o.hole, 0);
+    for (const [x, y] of [[b.minX, b.minY], [b.maxX, b.minY], [b.minX, b.maxY], [b.maxX, b.maxY]]) corners.push(o.toHere({ x, y }));
+  }
+  return { all, corners };
+}
+
+// Yards per tile tried for the whole-course map, most detailed first.
+const MAP_CELLS = [6, 8, 10, 12, 14, 16, 20, 24, 30, 36, 44];
+
+// A view of the whole course, seen round hole `index` turned `turn` quarter
+// turns, as big as fits in `box`. Returns the view, with addSurroundings done
+// for a W x H picture.
+export function courseView(course, index, box, W, H, turn = 0) {
+  const hole = course.holes[index];
+  const ground = (p) => heightAt(hole, p);
+  const { corners } = courseHoles(course, index);
+  let view, fit;
+  for (const cell of MAP_CELLS) {
+    view = makeView(holeToGrid(hole, { cell }), 0, 0, ground, turn);
+    const pts = corners.map((p) => view.worldToScreen(p, 0));
+    const xs = pts.map((q) => q.x), ys = pts.map((q) => q.y);
+    fit = { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+    if (fit.x1 - fit.x0 <= box.w && fit.y1 - fit.y0 <= box.h) break;
+  }
+  const ox = Math.round(box.x + box.w / 2 - (fit.x0 + fit.x1) / 2), oy = Math.round(box.y + box.h / 2 - (fit.y0 + fit.y1) / 2);
+  const out = makeView(view.grid, ox, oy, ground, turn);
+  const { rows, cols, tiles } = out.grid;
+  out.own = thinTrees({ c0: 0, r0: 0, rows, cols, tiles }, out.grid.cell);
+  out.look = out.own;
+  out.others = [];
+  addSurroundings(out, course, index, W, H, 1e6, piecePad(out.grid.cell));
+  out.sparse = true;
+  return out;
+}
+
 // What to draw at tile (col, row): a surface, or 'land' for open grass.
 const lookAt = (look, c, r) => look.tiles[r - look.r0]?.[c - look.c0] ?? 'land';
 
@@ -51,15 +92,18 @@ export function isOutOfBounds(view, p) {
 }
 
 // Fill in everything around the hole that shows in a W x H image: the other
-// holes of the course nearby (from the course map) and, on links, the open sea.
-export function addSurroundings(view, course, index, W, H) {
+// holes of the course within `reach` yards (from the course map) and, on links,
+// the open sea. `pad` is how many pixels past the edges to look: enough to see
+// how far a tree is from open ground, so pieces of a bigger picture drawn
+// one at a time thin their woods the same way and meet without a seam.
+export function addSurroundings(view, course, index, W, H, reach = 400, pad = TILE_PAD) {
   const { grid } = view;
   const hole = course.holes[index];
-  const others = neighbours(course, index);
+  const others = neighbours(course, index, reach);
   const { places, coast } = courseMap(course);
   const ownBounds = holeBounds(hole, 0);
   // Raised ground further down can still show, so look past the bottom edge.
-  const corners = [[0, 0], [W, 0], [0, H + LOW], [W, H + LOW]].map(([x, y]) => view.screenToTile(x, y));
+  const corners = [[-pad, -pad], [W + pad, -pad], [-pad, H + LOW + pad], [W + pad, H + LOW + pad]].map(([x, y]) => view.screenToTile(x, y));
   const c0 = Math.floor(Math.min(...corners.map((t) => t.col))) - 1, c1 = Math.ceil(Math.max(...corners.map((t) => t.col))) + 1;
   const r0 = Math.floor(Math.min(...corners.map((t) => t.row))) - 1, r1 = Math.ceil(Math.max(...corners.map((t) => t.row))) + 1;
   const tiles = [];
@@ -73,7 +117,7 @@ export function addSurroundings(view, course, index, W, H) {
       const p = grid.toWorld(c, r);
       let z = null; // height, if it isn't this hole's own ground
       const shore = coastAt(coast, toMap(places[index], p)), seaward = shore === 'sea';
-      if (s.x < -TILE_PAD || s.x > W + TILE_PAD || s.y < -TILE_PAD || s.y > H + LOW + TILE_PAD) t = 'land';
+      if (s.x < -pad || s.x > W + pad || s.y < -pad || s.y > H + LOW + pad) t = 'land';
       else {
         const mine = grid.tiles[r]?.[c];
         if (mine && mine !== 'trees') t = mine;
@@ -124,6 +168,8 @@ export function addSurroundings(view, course, index, W, H) {
   Object.assign(view, makeView(grid, view.ox, view.oy, ground, view.turn));
 }
 const TILE_PAD = 24;
+// Enough padding for addSurroundings to thin the woods the same way in every piece.
+export const piecePad = (cell) => TILE_PAD + Math.ceil(WOODS_YARDS * 1.4 / cell + 2) * 8;
 const LOW = 72; // pixels below the picture that raised ground could reach up from
 
 // Height in yards of the tile drawn at (col, row).
@@ -242,7 +288,7 @@ function sampleGround(view, W, H) {
 // Mowing stripes across the hole, as how much darker the alternate stripes are.
 const MOWN = { fairway: [1, 0.93], green: [0, 0.95] };
 
-function paintGround(buf, W, H, style, g) {
+function paintGround(buf, W, H, style, g, origin) {
   const pal = groundPalette(style);
   const tex = groundTextures(style);
   const { names, surf, tr, shade } = g;
@@ -253,7 +299,8 @@ function paintGround(buf, W, H, style, g) {
       const edge = (pal[s] ?? pal.land)[2];
       // Each surface's texture repeats across the picture.
       const t = tex[s] ?? tex.land;
-      let c = t.px[(y % t.h) * t.w + (x % t.w)];
+      const tx = (((x + origin.x) % t.w) + t.w) % t.w, ty = (((y + origin.y) % t.h) + t.h) % t.h;
+      let c = t.px[ty * t.w + tx];
       const mown = MOWN[s];
       if (mown && (tr[k] >> mown[0]) & 1) c = dimmed(c, mown[1]);
       // Lips on the far side of bunkers and water, banks on the near side of greens and tees.
@@ -313,10 +360,14 @@ function holeProps(hole) {
 // Trees, bushes and cacti, and the hole's furniture, sorted back to front.
 function paintScenery(buf, W, H, view, hole) {
   const art = STYLE_ART[hole.style] ?? STYLE_ART.parkland;
-  const props = holeProps(hole);
+  // On the whole-course map the woods are thinned and the furniture left out,
+  // so the holes show up.
+  const props = view.sparse ? [] : holeProps(hole);
+  const thin = view.sparse ? 0.4 : 1;
   const clear = (p) => props.some((q) => Math.hypot(p.x - q.at.x, p.y - q.at.y) < q.clear);
-  // Range of tiles that can show on screen, with room for tall sprites below the edge.
-  const corners = [[0, 0], [W, 0], [0, H + LOW], [W, H + LOW]].map(([x, y]) => view.screenToTile(x, y));
+  // Range of tiles that can show on screen, with room for wide sprites past the
+  // sides and tall ones below the edge.
+  const corners = [[-40, 0], [W + 40, 0], [-40, H + LOW + 20], [W + 40, H + LOW + 20]].map(([x, y]) => view.screenToTile(x, y));
   const c0 = Math.floor(Math.min(...corners.map((t) => t.col))), c1 = Math.ceil(Math.max(...corners.map((t) => t.col)));
   const r0 = Math.floor(Math.min(...corners.map((t) => t.row))), r1 = Math.ceil(Math.max(...corners.map((t) => t.row)));
 
@@ -324,19 +375,19 @@ function paintScenery(buf, W, H, view, hole) {
   for (let r = r0; r <= r1; r++) {
     for (let c = c0; c <= c1; c++) {
       const s = lookAt(view.look, c, r);
-      const density = s === 'trees' ? art.density : s === 'copse' ? 0.35 : s === 'land' ? landDensity(art, c, r) : 0;
+      const density = thin * (s === 'trees' ? art.density : s === 'copse' ? 0.35 : s === 'land' ? landDensity(art, c, r) : 0);
       if (!density || hash(c, r, 11) >= density || clear(view.grid.toWorld(c, r))) continue;
       const p = view.tileToScreen(c, r);
       p.y -= Math.round(liftPx(tileHeight(view, c, r), view.grid.cell));
       const kind = art.trees[Math.floor(hash(c, r, 12) * art.trees.length)];
       const x = p.x + Math.round((hash(c, r, 13) - 0.5) * 4), y = p.y + Math.round((hash(c, r, 14) - 0.5) * 2);
-      if (x < -10 || x > W + 10 || y < -2 || y > H + 16) continue;
+      if (x < -40 || x > W + 40 || y < -2 || y > H + 90) continue;
       items.push({ sprite: SPRITES[kind], x, y });
     }
   }
   for (const q of props) {
     const p = view.worldToScreen(q.at);
-    if (p.x > -60 && p.x < W + 60 && p.y > -2 && p.y < H + 40) items.push({ sprite: SPRITES[propView(view, q)], x: Math.round(p.x), y: Math.round(p.y) });
+    if (p.x > -90 && p.x < W + 90 && p.y > -2 && p.y < H + 120) items.push({ sprite: SPRITES[propView(view, q)], x: Math.round(p.x), y: Math.round(p.y) });
   }
   items.sort((a, b) => a.y - b.y || a.x - b.x);
   for (const it of items) blit(buf, W, H, it.sprite, it.x, it.y);
@@ -382,12 +433,14 @@ function put(buf, W, H, x, y, c) {
 
 // Draw the hole into ImageData-sized buffer `buf` (Uint32Array of W x H).
 // `actors` are things on the hole: { at: {x, y} in yards, golfer, ball, shirt }.
-export function drawHole(buf, W, H, hole, view, actors = []) {
+// `origin` is where this picture sits in a bigger one drawn in pieces, so the
+// ground textures line up across them.
+export function drawHole(buf, W, H, hole, view, actors = [], origin = { x: 0, y: 0 }) {
   const ground = sampleGround(view, W, H);
-  paintGround(buf, W, H, hole.style, ground);
+  paintGround(buf, W, H, hole.style, ground, origin);
   paintScenery(buf, W, H, view, hole);
   if (view.others.length) shadeOutOfBounds(buf, W, H, view, ground);
-  paintMarkers(buf, W, H, view, hole, actors);
+  if (!view.sparse) paintMarkers(buf, W, H, view, hole, actors);
 }
 
 // Darken everything out of bounds a little, so the hole being played stands out

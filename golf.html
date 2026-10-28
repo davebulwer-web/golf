@@ -1915,6 +1915,47 @@ function shiftView(view, dx, dy) {
   return { ...makeView(view.grid, view.ox + dx, view.oy + dy, view.ground, view.turn), own: view.own, look: view.look, others: view.others, heights: view.heights };
 }
 
+// Every hole on the course in hole `index`'s yards: { hole, number, toHere }
+// for each (this one included), and the corners of the ground they cover.
+function courseHoles(course, index) {
+  const all = [{ hole: course.holes[index], number: index + 1, toHere: (p) => p }, ...neighbours(course, index, 1e6)];
+  const corners = [];
+  for (const o of all) {
+    const b = holeBounds(o.hole, 0);
+    for (const [x, y] of [[b.minX, b.minY], [b.maxX, b.minY], [b.minX, b.maxY], [b.maxX, b.maxY]]) corners.push(o.toHere({ x, y }));
+  }
+  return { all, corners };
+}
+
+// Yards per tile tried for the whole-course map, most detailed first.
+const MAP_CELLS = [6, 8, 10, 12, 14, 16, 20, 24, 30, 36, 44];
+
+// A view of the whole course, seen round hole `index` turned `turn` quarter
+// turns, as big as fits in `box`. Returns the view, with addSurroundings done
+// for a W x H picture.
+function courseView(course, index, box, W, H, turn = 0) {
+  const hole = course.holes[index];
+  const ground = (p) => heightAt(hole, p);
+  const { corners } = courseHoles(course, index);
+  let view, fit;
+  for (const cell of MAP_CELLS) {
+    view = makeView(holeToGrid(hole, { cell }), 0, 0, ground, turn);
+    const pts = corners.map((p) => view.worldToScreen(p, 0));
+    const xs = pts.map((q) => q.x), ys = pts.map((q) => q.y);
+    fit = { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+    if (fit.x1 - fit.x0 <= box.w && fit.y1 - fit.y0 <= box.h) break;
+  }
+  const ox = Math.round(box.x + box.w / 2 - (fit.x0 + fit.x1) / 2), oy = Math.round(box.y + box.h / 2 - (fit.y0 + fit.y1) / 2);
+  const out = makeView(view.grid, ox, oy, ground, turn);
+  const { rows, cols, tiles } = out.grid;
+  out.own = thinTrees({ c0: 0, r0: 0, rows, cols, tiles }, out.grid.cell);
+  out.look = out.own;
+  out.others = [];
+  addSurroundings(out, course, index, W, H, 1e6, piecePad(out.grid.cell));
+  out.sparse = true;
+  return out;
+}
+
 // What to draw at tile (col, row): a surface, or 'land' for open grass.
 const lookAt = (look, c, r) => look.tiles[r - look.r0]?.[c - look.c0] ?? 'land';
 
@@ -1925,15 +1966,18 @@ function isOutOfBounds(view, p) {
 }
 
 // Fill in everything around the hole that shows in a W x H image: the other
-// holes of the course nearby (from the course map) and, on links, the open sea.
-function addSurroundings(view, course, index, W, H) {
+// holes of the course within `reach` yards (from the course map) and, on links,
+// the open sea. `pad` is how many pixels past the edges to look: enough to see
+// how far a tree is from open ground, so pieces of a bigger picture drawn
+// one at a time thin their woods the same way and meet without a seam.
+function addSurroundings(view, course, index, W, H, reach = 400, pad = TILE_PAD) {
   const { grid } = view;
   const hole = course.holes[index];
-  const others = neighbours(course, index);
+  const others = neighbours(course, index, reach);
   const { places, coast } = courseMap(course);
   const ownBounds = holeBounds(hole, 0);
   // Raised ground further down can still show, so look past the bottom edge.
-  const corners = [[0, 0], [W, 0], [0, H + LOW], [W, H + LOW]].map(([x, y]) => view.screenToTile(x, y));
+  const corners = [[-pad, -pad], [W + pad, -pad], [-pad, H + LOW + pad], [W + pad, H + LOW + pad]].map(([x, y]) => view.screenToTile(x, y));
   const c0 = Math.floor(Math.min(...corners.map((t) => t.col))) - 1, c1 = Math.ceil(Math.max(...corners.map((t) => t.col))) + 1;
   const r0 = Math.floor(Math.min(...corners.map((t) => t.row))) - 1, r1 = Math.ceil(Math.max(...corners.map((t) => t.row))) + 1;
   const tiles = [];
@@ -1947,7 +1991,7 @@ function addSurroundings(view, course, index, W, H) {
       const p = grid.toWorld(c, r);
       let z = null; // height, if it isn't this hole's own ground
       const shore = coastAt(coast, toMap(places[index], p)), seaward = shore === 'sea';
-      if (s.x < -TILE_PAD || s.x > W + TILE_PAD || s.y < -TILE_PAD || s.y > H + LOW + TILE_PAD) t = 'land';
+      if (s.x < -pad || s.x > W + pad || s.y < -pad || s.y > H + LOW + pad) t = 'land';
       else {
         const mine = grid.tiles[r]?.[c];
         if (mine && mine !== 'trees') t = mine;
@@ -1998,6 +2042,8 @@ function addSurroundings(view, course, index, W, H) {
   Object.assign(view, makeView(grid, view.ox, view.oy, ground, view.turn));
 }
 const TILE_PAD = 24;
+// Enough padding for addSurroundings to thin the woods the same way in every piece.
+const piecePad = (cell) => TILE_PAD + Math.ceil(WOODS_YARDS * 1.4 / cell + 2) * 8;
 const LOW = 72; // pixels below the picture that raised ground could reach up from
 
 // Height in yards of the tile drawn at (col, row).
@@ -2116,7 +2162,7 @@ function sampleGround(view, W, H) {
 // Mowing stripes across the hole, as how much darker the alternate stripes are.
 const MOWN = { fairway: [1, 0.93], green: [0, 0.95] };
 
-function paintGround(buf, W, H, style, g) {
+function paintGround(buf, W, H, style, g, origin) {
   const pal = groundPalette(style);
   const tex = groundTextures(style);
   const { names, surf, tr, shade } = g;
@@ -2127,7 +2173,8 @@ function paintGround(buf, W, H, style, g) {
       const edge = (pal[s] ?? pal.land)[2];
       // Each surface's texture repeats across the picture.
       const t = tex[s] ?? tex.land;
-      let c = t.px[(y % t.h) * t.w + (x % t.w)];
+      const tx = (((x + origin.x) % t.w) + t.w) % t.w, ty = (((y + origin.y) % t.h) + t.h) % t.h;
+      let c = t.px[ty * t.w + tx];
       const mown = MOWN[s];
       if (mown && (tr[k] >> mown[0]) & 1) c = dimmed(c, mown[1]);
       // Lips on the far side of bunkers and water, banks on the near side of greens and tees.
@@ -2187,10 +2234,14 @@ function holeProps(hole) {
 // Trees, bushes and cacti, and the hole's furniture, sorted back to front.
 function paintScenery(buf, W, H, view, hole) {
   const art = STYLE_ART[hole.style] ?? STYLE_ART.parkland;
-  const props = holeProps(hole);
+  // On the whole-course map the woods are thinned and the furniture left out,
+  // so the holes show up.
+  const props = view.sparse ? [] : holeProps(hole);
+  const thin = view.sparse ? 0.4 : 1;
   const clear = (p) => props.some((q) => Math.hypot(p.x - q.at.x, p.y - q.at.y) < q.clear);
-  // Range of tiles that can show on screen, with room for tall sprites below the edge.
-  const corners = [[0, 0], [W, 0], [0, H + LOW], [W, H + LOW]].map(([x, y]) => view.screenToTile(x, y));
+  // Range of tiles that can show on screen, with room for wide sprites past the
+  // sides and tall ones below the edge.
+  const corners = [[-40, 0], [W + 40, 0], [-40, H + LOW + 20], [W + 40, H + LOW + 20]].map(([x, y]) => view.screenToTile(x, y));
   const c0 = Math.floor(Math.min(...corners.map((t) => t.col))), c1 = Math.ceil(Math.max(...corners.map((t) => t.col)));
   const r0 = Math.floor(Math.min(...corners.map((t) => t.row))), r1 = Math.ceil(Math.max(...corners.map((t) => t.row)));
 
@@ -2198,19 +2249,19 @@ function paintScenery(buf, W, H, view, hole) {
   for (let r = r0; r <= r1; r++) {
     for (let c = c0; c <= c1; c++) {
       const s = lookAt(view.look, c, r);
-      const density = s === 'trees' ? art.density : s === 'copse' ? 0.35 : s === 'land' ? landDensity(art, c, r) : 0;
+      const density = thin * (s === 'trees' ? art.density : s === 'copse' ? 0.35 : s === 'land' ? landDensity(art, c, r) : 0);
       if (!density || hash(c, r, 11) >= density || clear(view.grid.toWorld(c, r))) continue;
       const p = view.tileToScreen(c, r);
       p.y -= Math.round(liftPx(tileHeight(view, c, r), view.grid.cell));
       const kind = art.trees[Math.floor(hash(c, r, 12) * art.trees.length)];
       const x = p.x + Math.round((hash(c, r, 13) - 0.5) * 4), y = p.y + Math.round((hash(c, r, 14) - 0.5) * 2);
-      if (x < -10 || x > W + 10 || y < -2 || y > H + 16) continue;
+      if (x < -40 || x > W + 40 || y < -2 || y > H + 90) continue;
       items.push({ sprite: SPRITES[kind], x, y });
     }
   }
   for (const q of props) {
     const p = view.worldToScreen(q.at);
-    if (p.x > -60 && p.x < W + 60 && p.y > -2 && p.y < H + 40) items.push({ sprite: SPRITES[propView(view, q)], x: Math.round(p.x), y: Math.round(p.y) });
+    if (p.x > -90 && p.x < W + 90 && p.y > -2 && p.y < H + 120) items.push({ sprite: SPRITES[propView(view, q)], x: Math.round(p.x), y: Math.round(p.y) });
   }
   items.sort((a, b) => a.y - b.y || a.x - b.x);
   for (const it of items) blit(buf, W, H, it.sprite, it.x, it.y);
@@ -2256,12 +2307,14 @@ function put(buf, W, H, x, y, c) {
 
 // Draw the hole into ImageData-sized buffer `buf` (Uint32Array of W x H).
 // `actors` are things on the hole: { at: {x, y} in yards, golfer, ball, shirt }.
-function drawHole(buf, W, H, hole, view, actors = []) {
+// `origin` is where this picture sits in a bigger one drawn in pieces, so the
+// ground textures line up across them.
+function drawHole(buf, W, H, hole, view, actors = [], origin = { x: 0, y: 0 }) {
   const ground = sampleGround(view, W, H);
-  paintGround(buf, W, H, hole.style, ground);
+  paintGround(buf, W, H, hole.style, ground, origin);
   paintScenery(buf, W, H, view, hole);
   if (view.others.length) shadeOutOfBounds(buf, W, H, view, ground);
-  paintMarkers(buf, W, H, view, hole, actors);
+  if (!view.sparse) paintMarkers(buf, W, H, view, hole, actors);
 }
 
 // Darken everything out of bounds a little, so the hole being played stands out
@@ -2297,7 +2350,7 @@ function drawHud(ctx, W, H, { course, hole, tee, weather, wind, windScreen, stan
   const title = `HOLE ${hole.number}`;
   const line2 = `PAR ${hole.par}  ${teeYards(hole, tee)} YDS`;
   const line3 = `${course.name}  ${STYLES[course.style].name}`;
-  const keys = 'N/P HOLE  R COURSE  S STYLE  +/- ZOOM  Q/E TURN  G GOLFER';
+  const keys = 'N/P HOLE  R COURSE  S STYLE  +/- ZOOM  Q/E TURN  M MAP  RIGHT-DRAG SCROLLS';
   const w = Math.max(textWidth(title, 2) + (standing ? textWidth(standing) + 8 : 0), textWidth(line2), textWidth(line3), textWidth(keys)) + 12;
   panel(ctx, 6, 6, w, 42);
   drawText(ctx, title, 12, 11, GOLD, 2);
@@ -2324,10 +2377,11 @@ function drawHud(ctx, W, H, { course, hole, tee, weather, wind, windScreen, stan
 const viewButtons = (W) => ({
   left: { x: W - 62, y: 44, w: 27, h: 22 }, right: { x: W - 33, y: 44, w: 27, h: 22 },
   golfer: { x: W - 62, y: 69, w: 56, h: 13 }, // changes which golfer you play as
+  map: { x: W - 62, y: 85, w: 56, h: 13 },    // the whole course, and back
 });
 
-function drawViewButtons(ctx, W) {
-  const { left, right, golfer } = viewButtons(W);
+function drawViewButtons(ctx, W, onMap = false) {
+  const { left, right, golfer, map } = viewButtons(W);
   for (const [b, dir, key] of [[left, -1, 'Q'], [right, 1, 'E']]) {
     panel(ctx, b.x, b.y, b.w, b.h);
     // A curved arrow round the top of a circle, pointing the way the view turns.
@@ -2341,6 +2395,20 @@ function drawViewButtons(ctx, W) {
   panel(ctx, golfer.x, golfer.y, golfer.w, golfer.h);
   const label = 'GOLFER  G';
   drawText(ctx, label, golfer.x + Math.round((golfer.w - textWidth(label)) / 2), golfer.y + 4, '#f4f4f4', 1, null);
+  panel(ctx, map.x, map.y, map.w, map.h);
+  const mapLabel = onMap ? 'BACK  M' : 'MAP  M';
+  drawText(ctx, mapLabel, map.x + Math.round((map.w - textWidth(mapLabel)) / 2), map.y + 4, onMap ? GOLD : '#f4f4f4', 1, null);
+}
+
+// A hole number on a little plate, centred at (x, y): gold for the hole being played.
+function drawHoleNumber(ctx, x, y, n, current) {
+  const s = String(n), w = textWidth(s) + 5;
+  x = Math.round(x - w / 2); y = Math.round(y);
+  ctx.fillStyle = current ? GOLD : 'rgba(40, 28, 70, 0.88)';
+  ctx.fillRect(x, y, w, 9);
+  ctx.fillStyle = current ? '#ffffff' : EDGE;
+  ctx.fillRect(x, y, w, 1); ctx.fillRect(x, y + 8, w, 1); ctx.fillRect(x, y, 1, 9); ctx.fillRect(x + w - 1, y, 1, 9);
+  drawText(ctx, s, x + 3, y + 2, current ? '#1a1a2a' : '#ffffff', 1, null);
 }
 
 // A pixel arrow from (x, y) along screen direction `d`, `len` pixels long.
@@ -3248,8 +3316,11 @@ function planShot(golfer, ball, hole, weather, wind, outOfBounds, seed, tries = 
 const STYLE_KEYS = Object.keys(STYLES);
 const TEE = 'white';
 const GOLFERS = [PLAYER, RIVAL];
-// Spare picture round the whole-hole view, so there's somewhere to pan when zoomed in.
+// Where the whole-hole view sits in the picture of the course.
 const MARGIN = 200;
+// The course is drawn in square pieces this many pixels across, as they come into view.
+const PIECE = 384;
+const COURSE_EDGE = 60; // pixels of woods shown past the outermost holes
 const MAX_ZOOM = 2;
 
 // Two canvases fill the window: the hole, scaled up by `fitScale + zoom`, and the
@@ -3270,8 +3341,9 @@ const settings = {
 // fitScale: screen pixels per game pixel when the whole hole is shown. W x H: the
 // game's size in pixels at that scale (the panels are laid out on this).
 // zoom is the player's choice; onGreen zooms right in while putting. turn is
-// how many quarter turns the view has been turned round the hole.
-const display = { fitScale: 1, W: 0, H: 0, zoom: 0, onGreen: false, turn: 0 };
+// how many quarter turns the view has been turned round the hole. map shows
+// the whole course instead.
+const display = { fitScale: 1, W: 0, H: 0, zoom: 0, onGreen: false, turn: 0, map: false };
 const cam = { x: MARGIN, y: MARGIN, manual: false };
 let game, world, round;
 // phase: 'aim' (waiting for a shot), 'flight', 'roll', 'putting' (on the green,
@@ -3290,7 +3362,7 @@ const SWING = 750; // ms for the swing before the ball leaves
 const POWER_SWEEP = 1100; // ms for the power bar to fill
 
 const zoomNow = () => (display.onGreen ? MAX_ZOOM : display.zoom);
-const scale = () => display.fitScale + zoomNow();
+const scale = () => display.fitScale + (display.map ? 0 : zoomNow());
 
 function sizeCanvas(c, k) {
   c.width = Math.ceil(innerWidth / k);
@@ -3309,20 +3381,79 @@ function measure() {
   display.H = hudCanvas.height;
 }
 
-// Draw the hole once into a picture big enough for the whole-hole view plus a margin.
+// Lay the hole out for the whole-hole view. The picture of the course round it
+// is drawn a piece at a time as it comes into view (see `piece`), out to the
+// edge of the course.
 function buildWorld() {
   const { W, H } = display;
+  const index = game.hole.number - 1;
   const fit = layoutHole(game.hole, { x: 8, y: 54, w: W - 16, h: BAR_TOP(H) - 60 }, display.turn);
   const view = shiftView(fit, MARGIN, MARGIN);
-  const w = W + 2 * MARGIN, h = H + 2 * MARGIN;
-  addSurroundings(view, game.course, game.hole.number - 1, w, h);
-  const img = new ImageData(w, h);
-  drawHole(new Uint32Array(img.data.buffer), w, h, game.hole, view);
-  const c = document.createElement('canvas');
-  c.width = w; c.height = h;
-  c.getContext('2d').putImageData(img, 0, 0);
-  world = { canvas: c, view, w, h };
+  // For play: the ground and what's out of bounds round this hole.
+  addSurroundings(view, game.course, index, W + 2 * MARGIN, H + 2 * MARGIN);
+  const { all, corners } = courseHoles(game.course, index);
+  const pts = corners.map((p) => view.worldToScreen(p, 0));
+  const xs = pts.map((q) => q.x), ys = pts.map((q) => q.y);
+  const bounds = {
+    x0: Math.min(MARGIN, Math.min(...xs) - COURSE_EDGE), x1: Math.max(MARGIN + W, Math.max(...xs) + COURSE_EDGE),
+    y0: Math.min(MARGIN, Math.min(...ys) - COURSE_EDGE - 30), y1: Math.max(MARGIN + H, Math.max(...ys) + COURSE_EDGE),
+  };
+  world = { view, bounds, holes: all, pieces: new Map(), map: null, fresh: true };
   aimCamera(true);
+}
+
+// One piece of the picture of the course, drawn the first time it's needed.
+function piece(i, j) {
+  const key = `${i},${j}`;
+  let c = world.pieces.get(key);
+  if (c) return c;
+  const v = shiftView(world.view, -i * PIECE, -j * PIECE);
+  addSurroundings(v, game.course, game.hole.number - 1, PIECE, PIECE, 1e6, piecePad(v.grid.cell));
+  const img = new ImageData(PIECE, PIECE);
+  drawHole(new Uint32Array(img.data.buffer), PIECE, PIECE, game.hole, v, [], { x: i * PIECE, y: j * PIECE });
+  c = document.createElement('canvas');
+  c.width = PIECE; c.height = PIECE;
+  c.getContext('2d').putImageData(img, 0, 0);
+  world.pieces.set(key, c);
+  return c;
+}
+
+// Draw the pieces of the course in view. Missing ones are drawn a couple a
+// frame while scrolling, so it never stalls for long; all at once for a new view.
+function drawCourse() {
+  let budget = world.fresh ? Infinity : 2;
+  world.fresh = false;
+  const x0 = Math.floor(cam.x / PIECE), x1 = Math.floor((cam.x + canvas.width) / PIECE);
+  const y0 = Math.floor(cam.y / PIECE), y1 = Math.floor((cam.y + canvas.height) / PIECE);
+  for (let j = y0; j <= y1; j++) {
+    for (let i = x0; i <= x1; i++) {
+      if (!world.pieces.has(`${i},${j}`)) {
+        if (budget <= 0) { ctx.fillStyle = '#1e4a22'; ctx.fillRect(i * PIECE, j * PIECE, PIECE, PIECE); continue; }
+        budget--;
+      }
+      ctx.drawImage(piece(i, j), i * PIECE, j * PIECE);
+    }
+  }
+}
+
+// The whole course on one screen, drawn the first time it's asked for.
+function courseMapPicture() {
+  if (world.map) return world.map;
+  const { W, H } = display;
+  const view = courseView(game.course, game.hole.number - 1, { x: 8, y: 54, w: W - 16, h: BAR_TOP(H) - 60 }, W, H, display.turn);
+  const img = new ImageData(W, H);
+  drawHole(new Uint32Array(img.data.buffer), W, H, game.hole, view);
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  c.getContext('2d').putImageData(img, 0, 0);
+  world.map = { canvas: c, view };
+  return world.map;
+}
+
+function showMap(on) {
+  if (on === display.map || (on && ui.phase === 'putting')) return;
+  display.map = on;
+  rescale();
 }
 
 function loadHole() {
@@ -3344,10 +3475,12 @@ function loadHole() {
 
 // ---------- Camera ----------
 
-// Whole hole: fixed. Zoomed in: follow the ball (unless the player has panned).
+// Whole hole: fixed. Zoomed in: follow the ball. Either way the player can
+// scroll off round the course, until the next shot.
 function aimCamera(snap) {
-  if (zoomNow() === 0) { cam.x = MARGIN; cam.y = MARGIN; cam.manual = false; return; }
-  if (cam.manual) return;
+  if (display.map) return;
+  if (cam.manual) return clampCamera();
+  if (zoomNow() === 0) { cam.x = MARGIN; cam.y = MARGIN; return; }
   // While aiming, keep both the ball and the aim in view.
   const ball = ballNow(performance.now());
   const focus = ui.aim && ui.phase === 'aim' ? { x: (ball.x + ui.aim.x) / 2, y: (ball.y + ui.aim.y) / 2 } : ball;
@@ -3358,13 +3491,19 @@ function aimCamera(snap) {
   clampCamera();
 }
 
+// Keep the view on the course: a course smaller than the screen stays centred.
 function clampCamera() {
-  cam.x = Math.max(0, Math.min(world.w - canvas.width, cam.x));
-  cam.y = Math.max(0, Math.min(world.h - canvas.height, cam.y));
+  const b = world.bounds;
+  const keep = (v, lo, hi, size) => (hi - lo <= size ? (lo + hi - size) / 2 : Math.max(lo, Math.min(hi - size, v)));
+  cam.x = keep(cam.x, b.x0, b.x1, canvas.width);
+  cam.y = keep(cam.y, b.y0, b.y1, canvas.height);
 }
 
+// Zooming out past the whole hole shows the whole course; zooming in comes back.
 function setZoom(z) {
-  z = Math.max(0, Math.min(MAX_ZOOM, z));
+  if (display.map) { if (z > display.zoom) showMap(false); return; }
+  if (z < 0) { showMap(true); return; }
+  z = Math.min(MAX_ZOOM, z);
   if (z === display.zoom) return;
   display.zoom = z;
   rescale();
@@ -3531,6 +3670,7 @@ function startTurn(now, note) {
   const turn = me.onGreen ? (me.golfer.ai ? `${who(me.golfer)} TO PUTT` : 'YOUR PUTT') : yourTurn(me.golfer);
   ui.banner = note ? { text: note, sub: turn, until: now + 2200 } : { text: turn, until: now + 1200 };
   if (me.onGreen) {
+    showMap(false);
     ui.phase = 'putting';
     ui.putt = newPutt(me, me.golfer.ai ? now + (note ? 2000 : 1100) : now);
     greenZoom(true);
@@ -3707,11 +3847,11 @@ function drawAim() {
   for (const [dx, dy] of [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]]) dot(c.x + dx, c.y + dy, col);
 }
 
-function render(now) {
+// The course round the hole being played, with the golfers, balls and flags.
+function drawPlay(now) {
   const v = world.view;
-  const me = current(game.play);
   ctx.setTransform(1, 0, 0, 1, -Math.round(cam.x), -Math.round(cam.y));
-  ctx.drawImage(world.canvas, 0, 0);
+  drawCourse();
 
   if (ui.phase === 'aim' && ui.aim) drawAim();
 
@@ -3722,7 +3862,7 @@ function render(now) {
   const items = [];
   // The other holes' flags have no bright ring round the hole: that marks the
   // one being played.
-  const pins = [game.hole.pin, ...v.others.map((o) => o.toHere(o.hole.pin))];
+  const pins = world.holes.map((o) => o.toHere(o.hole.pin));
   pins.forEach((pin, i) => {
     const at = v.worldToScreen(pin);
     items.push({ y: at.y, draw: () => drawSprite(ctx, flagFrame(now, i > 0), at.x, at.y) });
@@ -3761,7 +3901,44 @@ function render(now) {
   });
   items.sort((a, b) => a.y - b.y);
   for (const it of items) it.draw();
+  drawHoleNumbers(v, 0);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+
+// Every hole's number, over its flag and by its back tee.
+function drawHoleNumbers(v, flagHeight) {
+  for (const [i, o] of world.holes.entries()) {
+    const pin = v.worldToScreen(o.toHere(o.hole.pin));
+    const tee = v.worldToScreen(o.toHere(pointAt(o.hole.line, o.hole.tees.black)));
+    drawHoleNumber(ctx, pin.x + 1, pin.y - 32 + flagHeight, o.number, i === 0);
+    drawHoleNumber(ctx, tee.x, tee.y + 4, o.number, i === 0);
+  }
+}
+
+// The whole course on one screen: every hole's flag and number, and where the balls are.
+function drawMap(now) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  const { canvas: pic, view: v } = courseMapPicture();
+  ctx.drawImage(pic, 0, 0);
+  for (const [i, o] of world.holes.entries()) {
+    const at = v.worldToScreen(o.toHere(o.hole.pin));
+    drawSprite(ctx, flagFrame(now, i > 0), at.x, at.y);
+  }
+  game.play.players.forEach((p) => {
+    if (p.holed) return;
+    const s = v.worldToScreen(p.at);
+    ctx.fillStyle = '#1a1a2a';
+    ctx.fillRect(Math.round(s.x) - 2, Math.round(s.y) - 2, 4, 4);
+    ctx.fillStyle = p.golfer.shirt;
+    ctx.fillRect(Math.round(s.x) - 1, Math.round(s.y) - 1, 2, 2);
+  });
+  drawHoleNumbers(v, 0);
+}
+
+function render(now) {
+  const me = current(game.play);
+  if (display.map) drawMap(now);
+  else drawPlay(now);
 
   const { W, H } = display;
   hud.clearRect(0, 0, W, H);
@@ -3775,7 +3952,7 @@ function render(now) {
       others, dropped: rolling?.done && pt.roll.holed,
     });
   }
-  drawHud(hud, W, H, { course: game.course, hole: game.hole, tee: TEE, weather: game.weather, wind: game.wind, windScreen: v.worldDirToScreen(game.wind.across, game.wind.along), standing: standings() });
+  drawHud(hud, W, H, { course: game.course, hole: game.hole, tee: TEE, weather: game.weather, wind: game.wind, windScreen: world.view.worldDirToScreen(game.wind.across, game.wind.along), standing: standings() });
   if (pt) {
     const d = dist(me.at, game.hole.pin);
     const human = humanTurn();
@@ -3794,9 +3971,9 @@ function render(now) {
     types: SHOT_TYPES, selected: ui.shot, max, aim: aimYds, slope, canHit,
     club: chooseClub(me.golfer, type, aimYds + slope || max, me.lie).toUpperCase(),
     lie: LIE_NAMES[me.lie] ?? me.lie.toUpperCase(), toPin: Math.round(toPin(game.play)), stroke: me.holed ? me.strokes : me.strokes + 1,
-    hint: !humanTurn() && ui.phase !== 'done' ? `${who(me.golfer)} IS PLAYING` : ui.phase !== 'aim' ? '' : !ui.aim ? 'DRAG ON THE COURSE TO AIM' : ui.dragging ? 'LET GO TO SET THE AIM' : 'CHANGE SHOT OR DRAG AGAIN',
+    hint: display.map ? 'CLICK THE MAP OR PRESS M TO GO BACK' : !humanTurn() && ui.phase !== 'done' ? `${who(me.golfer)} IS PLAYING` : ui.phase !== 'aim' ? '' : !ui.aim ? 'DRAG ON THE COURSE TO AIM' : ui.dragging ? 'LET GO TO SET THE AIM' : 'CHANGE SHOT OR DRAG AGAIN',
   });
-  drawViewButtons(hud, W);
+  drawViewButtons(hud, W, display.map);
   if (ui.banner && now < ui.banner.until) drawBanner(hud, W, ui.banner.text, ui.banner.sub);
   if (ui.pop && now < ui.pop.until) drawPop(hud, W, H, now);
   if (ui.cardAt && now >= ui.cardAt) { ui.card = true; ui.cardAt = 0; }
@@ -3820,15 +3997,26 @@ const toHud = (e) => ({ x: e.clientX / display.fitScale, y: e.clientY / display.
 const toYards = (e) => world.view.screenToWorld(e.clientX / scale() + Math.round(cam.x), e.clientY / scale() + Math.round(cam.y));
 const inside = (p, b) => p.x >= b.x && p.x < b.x + b.w && p.y >= b.y && p.y < b.y + b.h;
 
+// Dragging with the right (or middle) button scrolls round the course; a right
+// click that doesn't move cancels the aim.
+let scroll = null;
+
 canvas.addEventListener('mousedown', (e) => {
-  if (e.button === 2) { cancelAim(); cancelPower(); return; }
+  if (e.button === 2 || e.button === 1) {
+    e.preventDefault();
+    scroll = { x: e.clientX, y: e.clientY, camX: cam.x, camY: cam.y, moved: false, button: e.button };
+    return;
+  }
   if (e.button !== 0) return;
   const p = toHud(e);
   const turn = viewButtons(display.W);
   if (inside(p, turn.left)) return turnView(-1);
   if (inside(p, turn.right)) return turnView(1);
   if (inside(p, turn.golfer)) return changeGolfer();
+  if (inside(p, turn.map)) return showMap(!display.map);
   if (ui.phase === 'putting') return puttClick(p);
+  // A click on the map goes back to the hole.
+  if (display.map && p.y < BAR_TOP(display.H)) return showMap(false);
   if (p.y >= BAR_TOP(display.H)) {
     const b = shotButtons(display.H, SHOT_TYPES.length).findIndex((r) => inside(p, r));
     if (b >= 0) pickShot(SHOT_TYPES[b].key);
@@ -3857,11 +4045,26 @@ function puttClick(p) {
 }
 
 addEventListener('mousemove', (e) => {
+  if (scroll && !display.map && ui.phase !== 'putting') {
+    const dx = e.clientX - scroll.x, dy = e.clientY - scroll.y;
+    if (Math.abs(dx) + Math.abs(dy) > 4) scroll.moved = true;
+    if (scroll.moved) {
+      cam.manual = true;
+      cam.x = scroll.camX - dx / scale();
+      cam.y = scroll.camY - dy / scale();
+      clampCamera();
+    }
+  }
   if (!ui.dragging) return;
   if (ui.phase === 'putting') { if (ui.putt?.stage === 'aim') aimPutt(toHud(e)); return; }
   ui.aim = clampAim(toYards(e));
 });
 addEventListener('mouseup', (e) => {
+  if (scroll && e.button === scroll.button) {
+    if (!scroll.moved && e.button === 2) { cancelAim(); cancelPower(); }
+    scroll = null;
+    return;
+  }
   if (!ui.dragging || e.button !== 0) return;
   ui.dragging = false;
   if (ui.phase === 'putting') return;
@@ -3885,13 +4088,14 @@ addEventListener('keydown', (e) => {
   if (k === 'escape') { cancelPower(); return cancelAim(); }
   if (k === '+' || k === '=') return setZoom(display.zoom + 1);
   if (k === '-' || k === '_') return setZoom(display.zoom - 1);
-  if (PAN[k] && display.zoom > 0) {
+  if (PAN[k] && !display.map) {
     e.preventDefault();
     cam.manual = true;
     cam.x += PAN[k][0] * 24; cam.y += PAN[k][1] * 24;
     return clampCamera();
   }
   if (k === 'c') { cam.manual = false; return; }
+  if (k === 'm') return showMap(!display.map);
   if (k === 'q') return turnView(-1);
   if (k === 'e') return turnView(1);
   if (k === 'g') return changeGolfer();
