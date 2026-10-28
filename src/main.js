@@ -13,7 +13,7 @@ import { PLAYER, RIVAL } from './golfers.js';
 import { startHole, current, toPin, hit, settle, nextPutt, settlePutt, newRound, standing, nextTurn, allHoled, pickUp, PICK_UP } from './play.js';
 import { planShot } from './ai.js';
 import { feet } from './putting.js';
-import { drawDinky, dinkySize, golferFrame, ballFrame, flagFrame, LIE_BANNERS, scoreBanner } from './dinky.js';
+import { drawDinky, dinkySize, golferFrame, ballFrame, flagFrame, LIE_BANNERS, WATER_BANNER, OB_BANNER, scoreBanner } from './dinky.js';
 
 const STYLE_KEYS = Object.keys(STYLES);
 const TEE = 'white';
@@ -237,7 +237,7 @@ function update(now) {
     ui.anim = null;
     const me = current(game.play);
     let note = a.shot.note;
-    const pic = note?.startsWith('OUT OF BOUNDS') ? 'txt-ob' : !me.holed && !note?.startsWith('IN THE WATER') && LIE_BANNERS[me.lie];
+    const pic = note?.startsWith('OUT OF BOUNDS') ? OB_BANNER : note?.startsWith('IN THE WATER') ? WATER_BANNER : !me.holed && LIE_BANNERS[me.lie];
     if (pic) {
       showPop([pic], now);
       if (note === 'ON THE GREEN') note = null; // the picture says it
