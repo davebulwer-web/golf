@@ -21,7 +21,7 @@ export function drawHud(ctx, W, H, { course, hole, tee, weather, wind, windScree
   const title = `HOLE ${hole.number}`;
   const line2 = `PAR ${hole.par}  ${teeYards(hole, tee)} YDS`;
   const line3 = `${course.name}  ${STYLES[course.style].name}`;
-  const keys = 'N/P HOLE  R COURSE  S STYLE  +/- ZOOM  Q/E TURN  G GOLFER';
+  const keys = 'N/P HOLE  R COURSE  S STYLE  +/- ZOOM  Q/E TURN  M MAP  RIGHT-DRAG SCROLLS';
   const w = Math.max(textWidth(title, 2) + (standing ? textWidth(standing) + 8 : 0), textWidth(line2), textWidth(line3), textWidth(keys)) + 12;
   panel(ctx, 6, 6, w, 42);
   drawText(ctx, title, 12, 11, GOLD, 2);
@@ -48,10 +48,11 @@ export function drawHud(ctx, W, H, { course, hole, tee, weather, wind, windScree
 export const viewButtons = (W) => ({
   left: { x: W - 62, y: 44, w: 27, h: 22 }, right: { x: W - 33, y: 44, w: 27, h: 22 },
   golfer: { x: W - 62, y: 69, w: 56, h: 13 }, // changes which golfer you play as
+  map: { x: W - 62, y: 85, w: 56, h: 13 },    // the whole course, and back
 });
 
-export function drawViewButtons(ctx, W) {
-  const { left, right, golfer } = viewButtons(W);
+export function drawViewButtons(ctx, W, onMap = false) {
+  const { left, right, golfer, map } = viewButtons(W);
   for (const [b, dir, key] of [[left, -1, 'Q'], [right, 1, 'E']]) {
     panel(ctx, b.x, b.y, b.w, b.h);
     // A curved arrow round the top of a circle, pointing the way the view turns.
@@ -65,6 +66,20 @@ export function drawViewButtons(ctx, W) {
   panel(ctx, golfer.x, golfer.y, golfer.w, golfer.h);
   const label = 'GOLFER  G';
   drawText(ctx, label, golfer.x + Math.round((golfer.w - textWidth(label)) / 2), golfer.y + 4, '#f4f4f4', 1, null);
+  panel(ctx, map.x, map.y, map.w, map.h);
+  const mapLabel = onMap ? 'BACK  M' : 'MAP  M';
+  drawText(ctx, mapLabel, map.x + Math.round((map.w - textWidth(mapLabel)) / 2), map.y + 4, onMap ? GOLD : '#f4f4f4', 1, null);
+}
+
+// A hole number on a little plate, centred at (x, y): gold for the hole being played.
+export function drawHoleNumber(ctx, x, y, n, current) {
+  const s = String(n), w = textWidth(s) + 5;
+  x = Math.round(x - w / 2); y = Math.round(y);
+  ctx.fillStyle = current ? GOLD : 'rgba(40, 28, 70, 0.88)';
+  ctx.fillRect(x, y, w, 9);
+  ctx.fillStyle = current ? '#ffffff' : EDGE;
+  ctx.fillRect(x, y, w, 1); ctx.fillRect(x, y + 8, w, 1); ctx.fillRect(x, y, 1, 9); ctx.fillRect(x + w - 1, y, 1, 9);
+  drawText(ctx, s, x + 3, y + 2, current ? '#1a1a2a' : '#ffffff', 1, null);
 }
 
 // A pixel arrow from (x, y) along screen direction `d`, `len` pixels long.
