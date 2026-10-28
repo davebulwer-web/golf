@@ -366,6 +366,8 @@ const EVENT_SIZE = {
   'stand-small': 10, 'stand-medium': 11, 'stand-large': 13, 'covered-stand': 13, 'long-stand': 15,
   'tv-tower': 7, tent: 9, scoreboard: 9, stage: 14, truss: 4, marquee: 18, arch: 7,
   leaderboard: 6, 'trophy-board': 6, banner: 4, rope: 4, barrier: 4, picket: 4, signpost: 3, flag: 2, feather: 2,
+  cameraman: 2, 'camera-platform': 6, crane: 7, commentary: 6, interview: 7, 'broadcast-tent': 8, 'ob-van': 7,
+  dish: 4, generator: 4, cases: 3, toilet: 3,
 };
 const eventSize = (name) => EVENT_SIZE[name] ?? EVENT_SIZE[name.split('-')[0]];
 const OPEN_GROUND = new Set(['trees', 'rough']);
@@ -373,16 +375,21 @@ const OPEN_GROUND = new Set(['trees', 'rough']);
 // The odds and ends a tournament spreads over the course, and how many holes
 // get each on 18 holes: so a hole has a thing or two, not all of them. The 9th
 // and 18th get some of their own besides (see eventPlan).
-const EXTRAS = [['tv-tower', 2], ['tent', 2], ['leaderboard', 2], ['barrier', 4], ['banner', 8], ['flags', 4], ['feathers', 4]];
+const EXTRAS = [
+  ['tv-tower', 2], ['compound', 1], ['commentary', 2], ['camera-platform', 2], ['tent', 2], ['leaderboard', 2],
+  ['cameraman', 4], ['toilets', 3], ['barrier', 4], ['banner', 8], ['flags', 4], ['feathers', 4],
+];
 
 // Which extras each hole of a course gets: { [number]: Set }. Each kind goes to
 // the holes with least on them so far, the course's own shuffle breaking ties.
+// The 9th and 18th are left out (they have plenty) and so is the 1st, bar the
+// TV crews and toilets, which go anywhere.
 function eventExtras(course) {
   const seed = (course.seed >>> 0) % 9973;
   const load = new Map(course.holes.map((h) => [h.number, new Set()]));
   const scale = course.holes.length / 18;
   EXTRAS.forEach(([kind, count], k) => {
-    const order = course.holes.map((h) => h.number).filter((n) => n !== 1 && n % 9 !== 0)
+    const order = course.holes.map((h) => h.number).filter((n) => (n !== 1 || kind === 'cameraman' || kind === 'toilets') && n % 9 !== 0)
       .sort((a, b) => load.get(a).size - load.get(b).size || hash(a, seed, 60 + k) - hash(b, seed, 60 + k));
     for (const n of order.slice(0, Math.round(count * scale))) load.get(n).add(kind);
   });
@@ -391,7 +398,8 @@ function eventExtras(course) {
 
 // Where a tournament puts its stands and buildings on a hole: a list of
 // { name, spots, face } with the places to try, best first, and which way
-// it should face from a spot. Stands are the main thing: behind or beside most
+// it should face from a spot, and for a set that stands together, its `group`:
+// those all use the place the first of them used. Stands are the main thing: behind or beside most
 // greens and always the 9th and 18th, and beside the tee on the par 3s and the
 // 1st and 10th. The 9th and 18th have a TV tower and a leaderboard (a scoreboard
 // on the 18th) and the 18th the presentation stage; the clubhouse by the 1st tee
@@ -448,6 +456,26 @@ function eventPlan(hole, extras, seed = 0) {
     const s = hash(n, seed + 12 + name.length, 51) < 0.5 ? 1 : -1;
     for (let k = 0; k < 3; k++) add(look, [byTee(2 + k * gap, s, 14), byTee(2 + k * gap, -s, 14)], toTeeMid);
   }
+  // The TV coverage: a camera operator by the green, a camera platform or a
+  // commentary box looking on to it, the crane behind the 18th, and the
+  // broadcast compound (vans, a dish, a generator and a tent) off to one side.
+  if (n === 18 || extras.has('cameraman')) add('cameraman', [byGreen(-r - 4, r + 6), byGreen(-r - 4, -r - 6), byGreen(0, r + 7), byGreen(0, -r - 7)], toGreen);
+  if (extras.has('camera-platform')) add('camera-platform', [byGreen(-r - 10, r + 16), byGreen(-r - 10, -r - 16), byGreen(r + 10, r + 14)], toGreen);
+  if (extras.has('commentary')) add('commentary', [byGreen(-r - 18, r + 14), byGreen(-r - 18, -r - 14), byGreen(r + 14, -r - 6)], toGreen);
+  if (n === 18) add('crane', [byGreen(r + 26, r + 10), byGreen(r + 26, -r - 10), byGreen(-r - 14, r + 16)], toGreen);
+  if (extras.has('compound')) {
+    // Each piece tries the same places round its yard, so they keep together.
+    const s = hash(n, seed + 15, 51) < 0.5 ? 1 : -1;
+    const yards = [[-r - 50, s * (r + 42)], [-r - 50, -s * (r + 42)], [r + 40, s * 30], [-r - 90, s * (r + 30)]];
+    const piece = (name, along, side) => {
+      add(name, yards.map(([a, b]) => byGreen(a + along, b + side)), toGreen);
+      plan[plan.length - 1].group = 'compound';
+    };
+    piece('ob-van', 0, 0); piece('ob-van', 12, 0); piece('dish', 6, 9); piece('generator', -8, 4);
+    piece('broadcast-tent', 4, -12); piece('cases', -6, -6);
+  }
+  // Portable toilets back behind a tee.
+  if (extras.has('toilets')) add('toilet', [byTee(14, 1, 18), byTee(14, -1, 18), byTee(20, 1, 12)], toTeeMid);
   if (n === 1 || n === 10) for (const s of [1, -1]) add('rope', [byTee(0, s, 13), byTee(3, s, 16), byTee(-3, s, 16)], toTeeMid);
   if (n === 1) {
     const club = pointAt(hole.line, tee - 38, 0);
@@ -458,6 +486,7 @@ function eventPlan(hole, extras, seed = 0) {
     add('trophy-board', [pointAt(hole.line, tee - 24, -22), pointAt(hole.line, tee - 24, 22), pointAt(hole.line, tee - 30, -30)], toTeeMid);
     add('signpost-first-tee', [pointAt(hole.line, tee - 10, 9), pointAt(hole.line, tee - 10, -9)], toTeeMid);
     add('signpost-clubhouse', [pointAt(hole.line, tee - 22, 10), pointAt(hole.line, tee - 22, -10)], toTeeMid);
+    add('interview', [pointAt(hole.line, tee - 30, 26), pointAt(hole.line, tee - 30, -26), pointAt(hole.line, tee - 60, 30)], toClub);
     add(pick(14, ['signpost-range', 'signpost-practice', 'signpost-parking']), [pointAt(hole.line, tee - 50, 14), pointAt(hole.line, tee - 50, -14)], toClub);
   }
   return plan;
@@ -487,15 +516,18 @@ export function tournamentSites(course) {
   course.holes.forEach((h, i) => { for (const q of holeProps(h)) taken.push({ m: toMap(places[i], q.at), size: q.clear }); });
   const extras = eventExtras(course), seed = (course.seed >>> 0) % 9973;
   const out = course.holes.map((h, i) => {
-    const sites = [];
+    const sites = [], groups = {};
     for (const want of eventPlan(h, extras.get(h.number), seed)) {
       const size = eventSize(want.name);
-      for (const at of want.spots) {
+      const tried = want.group && want.group in groups ? [groups[want.group]] : want.spots.keys();
+      for (const j of tried) {
+        const at = want.spots[j];
         const m = toMap(places[i], at);
         if (taken.some((t) => Math.hypot(t.m.x - m.x, t.m.y - m.y) < (t.size + size) * 0.6)) continue;
         const ring = [[0, 0]];
         for (let k = 0; k < 8; k++) for (const f of [0.45, 0.85]) ring.push([Math.cos(k * Math.PI / 4) * size * f, Math.sin(k * Math.PI / 4) * size * f]);
         if (!ring.every(([dx, dy]) => open({ x: m.x + dx, y: m.y + dy }))) continue;
+        if (want.group) groups[want.group] = j;
         taken.push({ m, size });
         sites.push({ at, name: want.name, clear: size, face: want.face(at) });
         break;

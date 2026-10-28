@@ -1,5 +1,6 @@
 # Cuts the tournament stands and buildings out of assets/events/source-sheet.png,
-# and the boards, signs, banners, barriers and flags out of source-sheet-2.png
+# the boards, signs, banners, barriers and flags out of source-sheet-2.png, and
+# the TV crews, commentary desks, vans, dishes and toilets out of source-sheet-3.png
 # (Dave's sheets, on see-through backgrounds), and shrinks them to game size,
 # into assets/events/<name>.png. Each is drawn from up to four sides, named
 # <thing>-front, -right, -back and -left like the props (see tools/cut-props.py);
@@ -18,6 +19,8 @@ BOARD = 6.2   # leaderboards
 SIGN = 7.0    # signposts and banners
 FENCE = 8.0   # ropes, barriers and fences
 FLAG = 5.2    # flags and feather flags
+CREW = 8.0    # the third sheet's TV crews, vans, dishes and toilets
+KIT = 7.0     # and its camera platforms, desks, crane and tents
 EVENTS = {
     'stand-small-front': ((43, 54, 206, 230), STAND), 'stand-small-back': ((206, 54, 392, 230), STAND),
     'stand-medium-front': ((395, 54, 592, 230), STAND), 'stand-medium-back': ((585, 78, 770, 230), STAND),
@@ -65,6 +68,21 @@ EVENTS_2 = {
     'feather-clubs-front': ((1180, 855, 1243, 1003), FLAG), 'feather-clubs-back': ((1250, 855, 1309, 996), FLAG),
 }
 
+# The third sheet, the TV coverage and site services: (box, shrink) as above.
+EVENTS_3 = {
+    'cameraman-front': ((908, 60, 988, 196), CREW), 'cameraman-back': ((1012, 60, 1080, 200), CREW),
+    'camera-platform-front': ((1144, 20, 1320, 288), KIT), 'camera-platform-back': ((1348, 20, 1500, 300), KIT),
+    'crane-front': ((36, 204, 288, 360), KIT),
+    'commentary-front': ((16, 380, 224, 504), KIT), 'commentary-back': ((1332, 380, 1512, 500), KIT),
+    'interview-front': ((268, 520, 500, 660), KIT),
+    'broadcast-tent-front': ((1156, 520, 1356, 688), KIT), 'broadcast-tent-back': ((1356, 532, 1512, 688), KIT),
+    'ob-van-front': ((12, 808, 212, 996), CREW), 'ob-van-right': ((224, 814, 424, 1000), CREW),
+    'ob-van-back': ((432, 864, 536, 996), CREW),
+    'dish-front': ((1308, 720, 1388, 868), CREW), 'generator-front': ((736, 704, 876, 816), CREW),
+    'cases-front': ((460, 696, 580, 828), CREW),
+    'toilet-front': ((1248, 884, 1320, 988), CREW), 'toilet-right': ((1340, 888, 1412, 988), CREW),
+}
+
 
 def components(mask):
     """Label 8-connected areas of a mask: (labels, sizes)."""
@@ -89,8 +107,8 @@ def components(mask):
     return lab, sizes
 
 
-sheets = [np.array(Image.open(f).convert('RGBA')).astype(int) for f in ['assets/events/source-sheet.png', 'assets/events/source-sheet-2.png']]
-for k, (name, ((x0, y0, x1, y1), shrink)) in [*[(0, e) for e in EVENTS.items()], *[(1, e) for e in EVENTS_2.items()]]:
+sheets = [np.array(Image.open(f).convert('RGBA')).astype(int) for f in ['assets/events/source-sheet.png', 'assets/events/source-sheet-2.png', 'assets/events/source-sheet-3.png']]
+for k, (name, ((x0, y0, x1, y1), shrink)) in [*[(0, e) for e in EVENTS.items()], *[(1, e) for e in EVENTS_2.items()], *[(2, e) for e in EVENTS_3.items()]]:
     c = sheets[k][y0:y1, x0:x1]
     solid = c[:, :, 3] > 100
     # Just this thing: its biggest piece and any big ones beside it (flags,
