@@ -50,10 +50,11 @@ const ui = {
   shot: 'straight', humanShot: 'straight', dragging: false, aim: null, phase: 'aim', anim: null, banner: null,
   card: false, nextPuttAt: 0, aiAt: 0, aiPlanned: false,
   pop: null,  // a picture banner, e.g. BIRDIE: { names, start, until }
-  moods: [],  // golfers celebrating or sulking after holing out: { kind, until } by player
+  moods: [],  // golfers celebrating or sulking after holing out: { kind, at, until } by player
 };
 
-const SWING = 450; // ms for the swing before the ball leaves
+const SWING = 750; // ms for the swing before the ball leaves
+const PUTT_SWING = 600; // ms for a putting stroke
 
 const zoomNow = () => (display.onGreen ? MAX_ZOOM : display.zoom);
 const scale = () => display.fitScale + zoomNow();
@@ -279,7 +280,7 @@ function afterStroke(now, note) {
     if (me.strokes < PICK_UP) note = `${who(me.golfer)}: ${name}! ${me.strokes} SHOTS`;
     const pics = scoreBanner(me.strokes, game.hole.par);
     if (pics.length) showPop(pics, now);
-    ui.moods[game.play.turn] = { kind: me.strokes <= game.hole.par ? 'joy' : 'cry', until: now + 2800 };
+    ui.moods[game.play.turn] = { kind: me.strokes <= game.hole.par ? 'joy' : 'cry', at: now, until: now + 2800 };
   }
   if (allHoled(game.play)) return holeFinished();
   startTurn(now, note);
@@ -311,7 +312,7 @@ function updatePutting(now) {
     if (now < ui.nextPuttAt) return;
     const me = current(game.play);
     const p = nextPutt(game.play, rng);
-    ui.anim = { putt: p, shot: { from: me.at, landing: me.at, rest: p.rest, path: p.path }, start: now, flight: 0, roll: Math.min(2500, 500 + p.feet * 30) };
+    ui.anim = { putt: p, shot: { from: me.at, landing: me.at, rest: p.rest, path: p.path }, swingAt: now, start: now + PUTT_SWING, flight: 0, roll: Math.min(2500, 500 + p.feet * 30) };
     ui.banner = { text: `PUTT FROM ${p.feet} FT`, until: Infinity };
     return;
   }
@@ -418,10 +419,20 @@ function render(now) {
     const from = a ? a.shot.from : p.at;
     const stand = v.worldToScreen(from);
     const ball = playing ? ballNow(now) : onGround(p.at);
-    const pose = mood ? mood.kind : a?.swingAt ? 'swing' : 'stand';
-    const frame = golferFrame(pose, a?.swingAt ? (now - a.swingAt) / SWING : 0, now);
-    const x = stand.x + (mood ? 9 : playing ? -5 : 6); // after holing, stand clear of the flag
-    items.push({ y: stand.y, draw: () => drawDinky(ctx, frame, x, stand.y + 1, p.golfer.shirt) || drawSprite(ctx, 'golfer', x, stand.y, { c: p.golfer.shirt }) });
+    const onGreen = ui.phase === 'putting' || a?.putt;
+    const pose = mood ? mood.kind : a?.swingAt ? (a.putt ? 'putt' : 'swing') : playing ? (onGreen ? 'putt' : 'address') : 'stand';
+    const t = a?.swingAt ? (now - a.swingAt) / (a.putt ? PUTT_SWING : SWING) : 0;
+    const frame = golferFrame(pose, t, mood ? now - mood.at : now + i * 900);
+    // The golfer stands side on to where the ball's going, with the ball just
+    // in front of them; the sprite faces right, so mirror it to face left.
+    const target = a ? (a.putt ? game.hole.pin : a.shot.landing) : (playing && ui.aim) || game.hole.pin;
+    // After holing, they stand clear of the flag, on the side away from anyone still
+    // playing. Whoever's waiting stands back behind their ball.
+    const side = (q) => (v.worldToScreen(q).x < stand.x ? -1 : 1);
+    const still = game.play.players.find((o) => !o.holed);
+    const dir = mood ? (still ? -side(still.at) : 1) : side(target);
+    const x = stand.x + (mood ? 10 : playing ? (onGreen ? -2 : -5) : -18) * dir;
+    items.push({ y: stand.y, draw: () => drawDinky(ctx, frame, x, stand.y, p.golfer.shirt, false, dir < 0) || drawSprite(ctx, 'golfer', x, stand.y, { c: p.golfer.shirt }) });
     if (p.holed) return;
     const s = v.worldToScreen(ball), up = v.worldToScreen(ball, ball.z);
     items.push({ y: s.y + 0.5, draw: () => {
