@@ -72,6 +72,7 @@ export function addSurroundings(view, course, index, W, H) {
       let t = 'trees';
       const p = grid.toWorld(c, r);
       let z = null; // height, if it isn't this hole's own ground
+      const shore = coastAt(coast, toMap(places[index], p)), seaward = shore === 'sea';
       if (s.x < -TILE_PAD || s.x > W + TILE_PAD || s.y < -TILE_PAD || s.y > H + LOW + TILE_PAD) t = 'land';
       else {
         const mine = grid.tiles[r]?.[c];
@@ -93,10 +94,14 @@ export function addSurroundings(view, course, index, W, H) {
           }
         }
         if (t === 'trees') {
-          t = coastAt(coast, toMap(places[index], p)) ?? 'trees';
+          t = shore ?? 'trees';
           if (t === 'sea') z = 0;
           if (t === 'beach') z = 0.6;
         }
+        // A hole's own beach runs along its own idea of the shore, which can
+        // stick out across the course's coastline as a thin sand bar: out
+        // there it's open sea.
+        if (t === 'beach' && seaward) { t = 'sea'; z = 0; }
         // Other holes and the open sea are out of bounds.
         if (t !== 'trees' && (!mine || mine === 'trees') && own.tiles[r - own.r0]?.[c - own.c0]) own.tiles[r - own.r0][c - own.c0] = 'land';
       }
@@ -267,7 +272,7 @@ const dimmed = (c, f) => (c & 0xff000000) | (Math.min(255, ((c >>> 16) & 255) * 
 // of trees), face (the way it faces, for props drawn from four sides) }: a
 // sign, bench, ball washer and bin by the back tees, behind the white tees
 // played from so they don't crowd the golfers, all facing the tee; yardage
-// posts at the edge of the fairway, a rake by each bunker, and the clubhouse
+// posts at the edge of the fairway, a rake by some bunkers, and the clubhouse
 // behind the 1st tee, facing down the hole.
 function holeProps(hole) {
   const tee = Math.min(hole.tees.black + 4, hole.tees.white - 45);
@@ -284,10 +289,19 @@ function holeProps(hole) {
     const s = hole.line.length - d;
     if (s > hole.tees.white + 60) out.push({ ...side(s, -(hole.fwHalf + 4), `post-${d}`, 2), face: null });
   }
-  // A rake beside each bunker.
+  // A rake by about one bunker in three, lying in the rough just outside it,
+  // never on the green or fairway.
   for (const b of hole.bunkers) {
-    const a = Math.floor(hash(Math.round(b.x), Math.round(b.y), 41) * 4) * Math.PI / 2;
-    out.push({ at: { x: b.x + b.r * 1.1, y: b.y + b.r * 0.3 }, name: 'rake', clear: 2, face: { x: Math.cos(a), y: Math.sin(a) } });
+    const bx = Math.round(b.x), by = Math.round(b.y);
+    if (hash(bx, by, 40) > 0.35) continue;
+    const a = Math.floor(hash(bx, by, 41) * 4) * Math.PI / 2;
+    for (let k = 0; k < 8; k++) {
+      const turn = hash(bx, by, 42) * Math.PI * 2 + (k * Math.PI) / 4;
+      const at = { x: b.x + Math.cos(turn) * b.r * 1.2, y: b.y + Math.sin(turn) * b.r * 1.2 };
+      if (surfaceAt(hole, at) !== 'rough') continue;
+      out.push({ at, name: 'rake', clear: 2, face: { x: Math.cos(a), y: Math.sin(a) } });
+      break;
+    }
   }
   if (hole.number === 1) {
     const at = pointAt(hole.line, hole.tees.black - 38, 0), ahead = pointAt(hole.line, hole.tees.black, 0);
