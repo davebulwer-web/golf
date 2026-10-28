@@ -1,7 +1,7 @@
 // Draws a whole hole as isometric pixel art into a packed pixel buffer.
 
 import { holeToGrid, holeBounds, pointAt, surfaceAt, TEE_SETS } from './course-generator.js';
-import { neighbours, courseMap, coastAt, toMap } from './course-map.js';
+import { neighbours, courseMap, coastAt, toMap, fromMap } from './course-map.js';
 import { fitView, makeView, liftPx } from './iso.js';
 import { heightAt } from './terrain.js';
 import { groundPalette, groundTextures, STYLE_ART, SPRITES, blit, recolor, hex } from './art.js';
@@ -157,6 +157,7 @@ export function addSurroundings(view, course, index, W, H, reach = 400, pad = TI
   const area = { c0, r0, rows: tiles.length, cols: c1 - c0 + 1 };
   view.look = thinTrees({ ...area, tiles }, grid.cell);
   view.others = others;
+  view.events = course.tournament ? eventsFor(course, index, others) : [];
   view.own = own;
   view.heights = { ...area, h };
   // On this hole the ground is smooth; elsewhere it's the height of the tile drawn there.
@@ -357,12 +358,124 @@ function holeProps(hole) {
   return out.filter(dry);
 }
 
+// ---------- Tournaments ----------
+
+// How many yards round each tournament building are kept clear of trees, and
+// must be open ground (rough or woods, not a fairway, green, hazard or sea).
+const EVENT_SIZE = {
+  'stand-small': 10, 'stand-medium': 11, 'stand-large': 13, 'covered-stand': 13, 'long-stand': 15,
+  'tv-tower': 7, tent: 9, scoreboard: 9, stage: 14, truss: 4, marquee: 18, arch: 7,
+};
+const OPEN_GROUND = new Set(['trees', 'rough']);
+
+// Where a tournament puts its stands and buildings on a hole: a list of
+// { name, spots, face } with the places to try, best first, and which way
+// it should face from a spot. Stands go behind (or beside) some greens and
+// always the 9th and 18th, and beside the tee on the par 3s and the 1st and
+// 10th; TV towers by the closing greens; scoreboards by the 9th and 18th; a
+// hospitality tent by some greens; the presentation stage behind the 18th;
+// and round the clubhouse by the 1st tee, the entrance arch, a marquee and tents.
+function eventPlan(hole) {
+  const n = hole.number, g = hole.green, L = hole.line.length;
+  const back = pointAt(hole.line, L - 30, 0);
+  const d = Math.hypot(g.x - back.x, g.y - back.y) || 1;
+  const ux = (g.x - back.x) / d, uy = (g.y - back.y) / d; // the way the hole plays into the green
+  const r = g.r;
+  const byGreen = (along, side) => ({ x: g.x + ux * along - uy * side, y: g.y + uy * along + ux * side });
+  const toGreen = (p) => ({ x: g.x - p.x, y: g.y - p.y });
+  const toTee = () => ({ x: -ux, y: -uy });
+  const pick = (k, list) => list[Math.floor(hash(n, k, 51) * list.length)];
+  const plan = [];
+  const add = (name, spots, face) => plan.push({ name, spots, face });
+  if (n % 9 === 0 || hash(n, 1, 50) < 0.5) {
+    add(n % 9 === 0 ? pick(2, ['long-stand', 'covered-stand']) : pick(3, ['stand-small', 'stand-medium', 'stand-large', 'covered-stand']),
+      [byGreen(r + 17, 0), byGreen(r + 12, r + 12), byGreen(r + 12, -r - 12), byGreen(0, r + 22), byGreen(0, -r - 22)], toGreen);
+  }
+  if (hole.par === 3 || n === 1 || n === 10) {
+    const s = hole.tees.white + 8;
+    const mid = pointAt(hole.line, s, 0);
+    const toMid = (p) => ({ x: mid.x - p.x, y: mid.y - p.y });
+    add(pick(4, ['stand-small', 'stand-medium']), [pointAt(hole.line, s, hole.fwHalf + 18), pointAt(hole.line, s, -hole.fwHalf - 18), pointAt(hole.line, s + 20, hole.fwHalf + 20)], toMid);
+  }
+  if (n >= 15 || n === 9) add('tv-tower', [byGreen(-r - 8, r + 20), byGreen(-r - 8, -r - 20), byGreen(r + 6, r + 18)], toGreen);
+  if (n % 9 === 0) add('scoreboard', [byGreen(-r - 30, -r - 22), byGreen(-r - 30, r + 22), byGreen(-r - 45, r + 25)], toTee);
+  if (hash(n, 5, 50) < 0.35) add('tent', [byGreen(-r - 28, r + 24), byGreen(-r - 28, -r - 24)], toGreen);
+  if (n === 18) {
+    add('stage', [byGreen(r + 42, 0), byGreen(r + 30, r + 30), byGreen(r + 30, -r - 30)], toGreen);
+    add('truss', [byGreen(r + 40, 22), byGreen(r + 40, -22)], toGreen);
+  }
+  if (n === 1) {
+    const club = pointAt(hole.line, hole.tees.black - 38, 0);
+    const toClub = (p) => ({ x: club.x - p.x, y: club.y - p.y });
+    add('arch', [pointAt(hole.line, hole.tees.black - 16, 0), pointAt(hole.line, hole.tees.black - 14, 12)], toClub);
+    add('marquee', [pointAt(hole.line, hole.tees.black - 40, 50), pointAt(hole.line, hole.tees.black - 40, -50), pointAt(hole.line, hole.tees.black - 80, 30), pointAt(hole.line, hole.tees.black - 80, -30)], toClub);
+    add('tent', [pointAt(hole.line, hole.tees.black - 15, 34), pointAt(hole.line, hole.tees.black - 15, -34)], toClub);
+    add('tent', [pointAt(hole.line, hole.tees.black - 15, -34), pointAt(hole.line, hole.tees.black - 60, -40)], toClub);
+  }
+  return plan;
+}
+
+const eventCache = new Map();
+
+// The tournament stands and buildings for every hole of a course, each in its
+// own hole's yards like holeProps: { at, name, clear, face }. A building only
+// goes where all the ground it covers is open on every hole of the course, and
+// clear of the other buildings and each hole's own furniture.
+export function tournamentSites(course) {
+  const id = `${course.style}:${course.seed}:${course.par}:${course.length}`;
+  if (eventCache.has(id)) return eventCache.get(id);
+  const { places, coast } = courseMap(course);
+  const boxes = course.holes.map((h) => holeBounds(h, 0));
+  const open = (m) => {
+    if (coastAt(coast, m)) return false;
+    return course.holes.every((h, j) => {
+      const q = fromMap(places[j], m), b = boxes[j];
+      if (q.x < b.minX || q.x > b.maxX || q.y < b.minY || q.y > b.maxY) return true;
+      return OPEN_GROUND.has(surfaceAt(h, q));
+    });
+  };
+  // Everything already standing, on the map: { m, size }.
+  const taken = [];
+  course.holes.forEach((h, i) => { for (const q of holeProps(h)) taken.push({ m: toMap(places[i], q.at), size: q.clear }); });
+  const out = course.holes.map((h, i) => {
+    const sites = [];
+    for (const want of eventPlan(h)) {
+      const size = EVENT_SIZE[want.name];
+      for (const at of want.spots) {
+        const m = toMap(places[i], at);
+        if (taken.some((t) => Math.hypot(t.m.x - m.x, t.m.y - m.y) < (t.size + size) * 0.6)) continue;
+        const ring = [[0, 0]];
+        for (let k = 0; k < 8; k++) for (const f of [0.45, 0.85]) ring.push([Math.cos(k * Math.PI / 4) * size * f, Math.sin(k * Math.PI / 4) * size * f]);
+        if (!ring.every(([dx, dy]) => open({ x: m.x + dx, y: m.y + dy }))) continue;
+        taken.push({ m, size });
+        sites.push({ at, name: want.name, clear: size, face: want.face(at) });
+        break;
+      }
+    }
+    return sites;
+  });
+  eventCache.set(id, out);
+  return out;
+}
+
+// The tournament buildings that show on this view, in its hole's yards: its own
+// and its neighbours'.
+function eventsFor(course, index, others) {
+  const sites = tournamentSites(course);
+  const mine = sites[index];
+  const theirs = others.flatMap((o) => sites[o.number - 1].map((q) => {
+    const at = o.toHere(q.at), ahead = o.toHere({ x: q.at.x + q.face.x, y: q.at.y + q.face.y });
+    return { ...q, at, face: { x: ahead.x - at.x, y: ahead.y - at.y } };
+  }));
+  return [...mine, ...theirs];
+}
+
 // Trees, bushes and cacti, and the hole's furniture, sorted back to front.
 function paintScenery(buf, W, H, view, hole) {
   const art = STYLE_ART[hole.style] ?? STYLE_ART.parkland;
-  // On the whole-course map the woods are thinned and the furniture left out,
-  // so the holes show up.
-  const props = view.sparse ? [] : holeProps(hole);
+  // On the whole-course map the woods are thinned and the furniture and
+  // tournament buildings left out (they'd be far too big), so the holes show up.
+  const props = view.sparse ? [] : [...holeProps(hole), ...(view.events ?? [])];
   const thin = view.sparse ? 0.4 : 1;
   const clear = (p) => props.some((q) => Math.hypot(p.x - q.at.x, p.y - q.at.y) < q.clear);
   // Range of tiles that can show on screen, with room for wide sprites past the
@@ -400,7 +513,9 @@ function propView(view, q) {
   if (!q.face) return q.name;
   const d = view.worldDirToScreen(q.face.x, q.face.y);
   const side = Math.abs(d.x) > 2 * Math.abs(d.y) ? (d.x < 0 ? 'right' : 'left') : d.y > 0 ? 'front' : 'back';
-  return `${q.name}-${side}`;
+  // Some are only drawn from some sides: then the nearest one drawn.
+  const near = { front: ['front', 'right', 'left', 'back'], back: ['back', 'left', 'right', 'front'], right: ['right', 'front', 'back', 'left'], left: ['left', 'front', 'back', 'right'] }[side];
+  return near.map((v) => `${q.name}-${v}`).find((name) => SPRITES[name]);
 }
 
 // Out on the open grass, trees grow in scattered clumps.

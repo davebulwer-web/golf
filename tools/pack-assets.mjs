@@ -83,4 +83,5 @@ ${lines.join('\n')}
 
 packPixels('assets/trees', 'tree-assets.js', 'TREE_PIXELS', 'tree');
 packPixels('assets/props', 'prop-assets.js', 'PROP_PIXELS', 'prop');
+packPixels('assets/events', 'event-assets.js', 'EVENT_PIXELS', 'tournament stand or building');
 packPixels('assets/ground', 'ground-assets.js', 'GROUND_PIXELS', 'ground texture');
