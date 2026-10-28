@@ -147,6 +147,52 @@ export function drawShotBar(ctx, W, H, info) {
   if (info.hint) drawText(ctx, info.hint, act.cancel.x - 10 - textWidth(info.hint), top + 35, '#c8c0e8');
 }
 
+// The putting bar: the putt's length and slope, the power bar, and PUTT.
+// `info`: { feet, rise, range, power (0 to 1, or null), target (0 to 1), stage, canPutt, canCancel, hint, stroke }
+export const powerBar = (W, H) => ({ x: Math.round(W / 2 - 120), y: BAR_TOP(H) + 18, w: 240, h: 12 });
+
+export function drawPuttBar(ctx, W, H, info) {
+  const top = BAR_TOP(H);
+  panel(ctx, 6, top, W - 12, BAR_H);
+  drawText(ctx, `PUTT: ${info.feet} FT`, 14, top + 8, GOLD);
+  const lie = info.rise === 0 ? 'LEVEL' : `${info.rise > 0 ? 'UPHILL' : 'DOWNHILL'} ${Math.abs(info.rise)} IN`;
+  drawText(ctx, lie, 14, top + 17);
+  drawText(ctx, `STROKE ${info.stroke}`, 14, top + 26);
+  drawText(ctx, 'ARROWS RUN DOWNHILL', 14, top + 35, '#c8c0e8');
+
+  // The bar: weak to strong, red through green to blue, like the old games.
+  const b = powerBar(W, H);
+  drawText(ctx, 'POWER', b.x, b.y - 9, GOLD);
+  drawText(ctx, `MAX ${info.range} FT`, b.x + b.w - textWidth(`MAX ${info.range} FT`), b.y - 9);
+  ctx.fillStyle = '#10101c';
+  ctx.fillRect(b.x - 1, b.y - 1, b.w + 2, b.h + 2);
+  for (let x = 0; x < b.w; x++) {
+    const t = x / (b.w - 1);
+    const lit = info.power != null && t <= info.power;
+    const [r, g, bl] = t < 0.5 ? [230 - 160 * t * 2, 60 + 150 * t * 2, 50] : [70 - 40 * (t - 0.5) * 2, 210 - 90 * (t - 0.5) * 2, 50 + 190 * (t - 0.5) * 2];
+    const k = lit ? 1 : 0.35;
+    ctx.fillStyle = `rgb(${Math.round(r * k)}, ${Math.round(g * k)}, ${Math.round(bl * k)})`;
+    ctx.fillRect(b.x + x, b.y + 1, 1, b.h - 2);
+  }
+  // Every 5 feet a notch.
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+  for (let f = 5; f < info.range; f += 5) ctx.fillRect(b.x + Math.round(f / info.range * (b.w - 1)), b.y + b.h - 4, 1, 3);
+  // A red marker over the hole's distance, on the flat.
+  const tx = b.x + Math.round(Math.min(1, info.target) * (b.w - 1));
+  ctx.fillStyle = '#ff4040';
+  for (let k = 0; k < 3; k++) ctx.fillRect(tx - 2 + k, b.y - 4 + k, 5 - 2 * k, 1);
+  if (info.power != null) {
+    const nx = b.x + Math.round(info.power * (b.w - 1));
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(nx, b.y - 1, 1, b.h + 2);
+  }
+
+  const act = actionButtons(W, H);
+  button(ctx, act.cancel, 'CANCEL', 'ESC', info.canCancel, '#7a3a4a');
+  button(ctx, act.hit, info.stage === 'power' ? 'STOP' : 'PUTT', 'SPACE', info.canPutt, '#3a8a3a');
+  if (info.hint) drawText(ctx, info.hint, b.x + Math.round((b.w - textWidth(info.hint)) / 2), b.y + b.h + 4, '#c8c0e8');
+}
+
 // A banner across the middle top, for things like "IN THE WATER".
 export function drawBanner(ctx, W, text, sub) {
   const w = Math.max(textWidth(text, 2), sub ? textWidth(sub) : 0) + 20;

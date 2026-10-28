@@ -1,6 +1,6 @@
-// Plays holes for you by aiming every shot at the pin while the computer golfer
-// plays its own shots (putts play themselves), printing each stroke and saving
-// screenshots of the aim, a ball in flight, putting and the scorecard.
+// Plays holes for you by aiming every shot at the pin (and putting as the
+// computer would) while the computer golfer plays its own shots, printing each
+// stroke and saving screenshots of the aim, a ball in flight, putting and the scorecard.
 // Run with: node tools/build.mjs && node tools/playtest.cjs [style:seed:hole] [holes]
 
 const { chromium } = require('playwright');
@@ -33,13 +33,17 @@ const holes = Number(process.argv[3] ?? 1);
       const s = await page.evaluate(() => {
         const { game, ui } = window.golf;
         const p = game.play.players[game.play.turn];
-        return { phase: ui.phase, ai: !!p.golfer.ai, aim: !!ui.aim,
+        return { phase: ui.phase, ai: !!p.golfer.ai, aim: !!ui.aim, putt: ui.putt?.stage,
           strokes: game.play.players.map((q) => `${q.golfer.name} ${q.strokes}${q.holed ? ' holed' : ` (${q.lie})`}`).join(', ') };
       });
       if (s.strokes !== lastStrokes) { console.log(`  ${s.strokes}`); lastStrokes = s.strokes; }
       if (s.phase === 'done') break;
       if (s.phase === 'aim' && s.ai && s.aim) await snap('ai-aim');
-      if (s.phase === 'putting') await snap('putting', 600);
+      if (s.phase === 'putting' && s.putt === 'power') await snap('putting');
+      if (s.phase === 'putting' && !s.ai && s.putt === 'aim') {
+        await snap('putt-aim', 300);
+        await page.evaluate(() => window.golf.autoPutt());
+      }
       if (s.phase === 'aim' && !s.ai) {
         await page.evaluate(() => {
           const g = window.golf;
