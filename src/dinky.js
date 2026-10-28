@@ -21,11 +21,12 @@ const ready = (name) => images[name]?.complete && images[name].naturalWidth > 0;
 
 // How to find each look's shirt in its frames (its colour as drawn on the
 // sheet), and how light each shirt pixel is, to keep the shading when it's
-// recoloured.
+// recoloured; null for a look whose shirt can't be recoloured.
 const SHIRTS = {
   club: { is: (r, g, b) => b >= r + 25 && b >= g + 15, light: (r, g, b) => (r + g + b) / 3 / 120 }, // blue
   heavy: { is: (r, g, b) => r >= g + 90 && Math.abs(g - b) < 35, light: (r) => r / 190 },          // red
   athletic: { is: (r, g, b) => r >= g + 70 && b >= g + 30, light: (r) => r / 190 },                // pink
+  veteran: null, // a beige jumper, too like the trousers and skin to pick out: keeps his own colours
 };
 // Every golfer look there are sprites for.
 export const GOLFER_LOOKS = Object.keys(SHIRTS);

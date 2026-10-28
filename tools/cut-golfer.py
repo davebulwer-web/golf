@@ -53,6 +53,15 @@ SHEETS = {
         ],
         'blank': [(20, 672, 385, 710), (655, 672, 1040, 710), (1315, 672, 1500, 742)],
     },
+    'veteran': {
+        'shrink': 6.3,
+        'rows': [
+            ((50, 295), SWING),
+            ((415, 605), PUTT + IDLE),
+            ((672, 940), HAPPY + CROSS + ['shade-eyes']),
+        ],
+        'blank': [(20, 670, 385, 706), (690, 670, 1070, 706), (1315, 670, 1500, 738)],
+    },
 }
 
 def components(mask):
@@ -114,7 +123,7 @@ def cut(look, spec):
         pieces.sort()
         shadows = []
         for p in pieces:
-            if shadows and p[0] - shadows[-1][1] < 4 * shrink:
+            if shadows and p[0] - shadows[-1][1] < 3 * shrink:
                 q = shadows[-1]
                 shadows[-1] = [q[0], max(q[1], p[1]), min(q[2], p[2]), max(q[3], p[3])]
             else:
@@ -125,24 +134,37 @@ def cut(look, spec):
         rows = np.zeros(lit.shape, bool)
         rows[y0:y1] = True
         sheet_p, body_p, shadow_p = pad(sheet), pad(body & rows), pad(shadow & rows)
-        for name, (cx, cy) in zip(names, feet):
+        # Label the golfers' pieces across the whole row, so a club reaching
+        # into the next frame's cell is still known to belong to its own frame.
+        row_lab, row_sizes = components(body_p)
+        # Each frame's golfer: whatever stands just above the middle of its shadow.
+        cells, mains = [], []
+        for cx, cy in feet:
             left, top = round(cx - feet_x) + pad_by, round(cy - feet_y) + pad_by
+            cells.append((left, top))
+            lab = row_lab[top:top + cell_h, left:left + cell_w]
+            above = lab[round(feet_y - 22 * shrink):round(feet_y), round(feet_x - 6 * shrink):round(feet_x + 6 * shrink)]
+            mains.append(int(np.argmax(np.bincount(above[above > 0], minlength=len(row_sizes)))))
+        bodies = [np.argwhere(row_lab == m)[::7] for m in mains]  # a sample of each golfer's pixels
+        for name, (left, top), main, body_at in zip(names, cells, mains, bodies):
             cell = (slice(top, top + cell_h), slice(left, left + cell_w))
             # Keep only the golfer, plus any big pieces near it up in the air (a
-            # club head drawn apart from its shaft). Small specks, like the
+            # club head drawn apart from its shaft) that lie wholly in the cell
+            # and are nearer this golfer than any other. Small specks, like the
             # ball, and neighbouring frames poking into the cell are dropped.
-            lab, sizes = components(body_p[cell])
-            # The golfer is whatever stands just above the middle of the shadow.
-            above = lab[round(feet_y - 22 * shrink):round(feet_y), round(feet_x - 6 * shrink):round(feet_x + 6 * shrink)]
-            main = int(np.argmax(np.bincount(above[above > 0], minlength=len(sizes))))
+            lab = row_lab[cell]
+            sizes = np.bincount(lab.ravel(), minlength=len(row_sizes))
             solid = lab == main
             mx = np.nonzero(solid)[1].mean()
             for n, s in enumerate(sizes):
-                if not n or n == main or s < 150 * big:
-                    continue
+                if not n or n == main or s < 150 * big or s < row_sizes[n]:
+                    continue  # too small, or part of something reaching in from outside the cell
                 ys, xs = np.nonzero(lab == n)
-                # Up in the air, not a neighbour's club head resting on the ground.
-                if abs(xs.mean() - mx) < 70 / 4.5 * shrink and ys.max() < feet_y - 8 * shrink:
+                piece = np.stack([ys + top, xs + left], 1)[::3]
+                gap = lambda at: np.sqrt(((piece[:, None, :] - at[None, :, :]) ** 2).sum(2)).min()
+                mine = gap(body_at) <= min(gap(b) for b in bodies)
+                # Up in the air, not a club head resting on the ground.
+                if mine and abs(xs.mean() - mx) < 70 / 4.5 * shrink and ys.max() < feet_y - 8 * shrink:
                     solid |= lab == n
             # The shadow round the feet, without any other frame's.
             slab, ssizes = components(shadow_p[cell])
