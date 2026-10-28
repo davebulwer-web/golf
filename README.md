@@ -8,7 +8,7 @@ Download `golf.html` and open it in a browser. It's a single self-contained file
 
 Pick a shot from the bar at the bottom (or press `1` to `5`): normal, fade, draw, lob or runner. Then press on the course and drag to where you want the ball to land, and let go to set the aim. The dotted line shows the shot's flight and the oval shows where it's likely to land: it grows and turns red as you push for more distance. You can still change the shot type or drag again; press **HIT** (or space) to play it, or **CANCEL** (`Esc` or right-click) to clear it. Clubs are picked for you. Wind isn't in the preview, so aim off for it.
 
-The game fills the window and shows the whole hole. Zoom in with the mouse wheel or `+` / `-`; zoomed in, the view follows the ball and the arrow keys pan (`C` re-centres).
+The game fills the window and shows the whole hole. Zoom in with the mouse wheel or `+` / `-`; zoomed in, the view follows the ball and the arrow keys pan (`C` re-centres). The two buttons under the wind panel (or `Q` / `E`) turn the view a quarter turn round the hole, as in Sim Golf, so you can see past trees and hills from another side.
 
 The whole course is laid out on one map, as in Sim Golf: each tee is a short walk from the green before, and the neighbouring holes show around the one you're playing, a little darker. On links and tropical courses the seaside holes run along one coastline, with open sea beyond.
 

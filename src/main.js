@@ -6,7 +6,7 @@ import { makeRng, dist, STYLES } from './course-generator.js';
 import { buildCourse } from './course.js';
 import { layoutHole, shiftView, addSurroundings, drawHole, isOutOfBounds } from './hole-view.js';
 import { drawSprite } from './art.js';
-import { drawHud, drawShotBar, drawBanner, drawScorecard, shotButtons, actionButtons, BAR_TOP } from './hud.js';
+import { drawHud, drawShotBar, drawBanner, drawScorecard, shotButtons, actionButtons, viewButtons, drawViewButtons, BAR_TOP } from './hud.js';
 import { roundWeather, holeWind } from './weather.js';
 import { SHOT_TYPES, shotType, maxCarry, chooseClub, shotSpread, flightPoint, clampToReach, playsAs } from './shots.js';
 import { PLAYER, RIVAL } from './golfers.js';
@@ -39,8 +39,9 @@ const settings = {
 
 // fitScale: screen pixels per game pixel when the whole hole is shown. W x H: the
 // game's size in pixels at that scale (the panels are laid out on this).
-// zoom is the player's choice; onGreen zooms right in while putting.
-const display = { fitScale: 1, W: 0, H: 0, zoom: 0, onGreen: false };
+// zoom is the player's choice; onGreen zooms right in while putting. turn is
+// how many quarter turns the view has been turned round the hole.
+const display = { fitScale: 1, W: 0, H: 0, zoom: 0, onGreen: false, turn: 0 };
 const cam = { x: MARGIN, y: MARGIN, manual: false };
 let game, world, round;
 // phase: 'aim' (waiting for a shot), 'flight', 'roll', 'putting' (putts playing
@@ -77,7 +78,7 @@ function measure() {
 // Draw the hole once into a picture big enough for the whole-hole view plus a margin.
 function buildWorld() {
   const { W, H } = display;
-  const fit = layoutHole(game.hole, { x: 8, y: 54, w: W - 16, h: BAR_TOP(H) - 60 });
+  const fit = layoutHole(game.hole, { x: 8, y: 54, w: W - 16, h: BAR_TOP(H) - 60 }, display.turn);
   const view = shiftView(fit, MARGIN, MARGIN);
   const w = W + 2 * MARGIN, h = H + 2 * MARGIN;
   addSurroundings(view, game.course, game.hole.number - 1, w, h);
@@ -133,6 +134,13 @@ function setZoom(z) {
   if (z === display.zoom) return;
   display.zoom = z;
   rescale();
+}
+
+// Turn the view a quarter turn round the hole: -1 one way, +1 the other.
+function turnView(dir) {
+  display.turn = (display.turn + dir + 4) % 4;
+  cam.manual = false;
+  buildWorld();
 }
 
 function greenZoom(on) {
@@ -442,6 +450,7 @@ function render(now) {
     lie: LIE_NAMES[me.lie] ?? me.lie.toUpperCase(), toPin: Math.round(toPin(game.play)), stroke: me.holed ? me.strokes : me.strokes + 1,
     hint: !humanTurn() && ui.phase !== 'done' ? `${who(me.golfer)} IS PLAYING` : ui.phase === 'putting' ? 'PUTTING...' : ui.phase !== 'aim' ? '' : !ui.aim ? 'DRAG ON THE COURSE TO AIM' : ui.dragging ? 'LET GO TO SET THE AIM' : 'CHANGE SHOT OR DRAG AGAIN',
   });
+  drawViewButtons(hud, W);
   if (ui.banner && now < ui.banner.until) drawBanner(hud, W, ui.banner.text, ui.banner.sub);
   if (ui.pop && now < ui.pop.until) drawPop(hud, W, H, now);
   if (ui.cardAt && now >= ui.cardAt) { ui.card = true; ui.cardAt = 0; }
@@ -469,6 +478,9 @@ canvas.addEventListener('mousedown', (e) => {
   if (e.button === 2) { cancelAim(); return; }
   if (e.button !== 0) return;
   const p = toHud(e);
+  const turn = viewButtons(display.W);
+  if (inside(p, turn.left)) return turnView(-1);
+  if (inside(p, turn.right)) return turnView(1);
   if (p.y >= BAR_TOP(display.H)) {
     const b = shotButtons(display.H, SHOT_TYPES.length).findIndex((r) => inside(p, r));
     if (b >= 0) pickShot(SHOT_TYPES[b].key);
@@ -509,6 +521,8 @@ addEventListener('keydown', (e) => {
     return clampCamera();
   }
   if (k === 'c') { cam.manual = false; return; }
+  if (k === 'q') return turnView(-1);
+  if (k === 'e') return turnView(1);
   if (k === 'tab') { e.preventDefault(); ui.card = !ui.card; ui.cardAt = 0; return; }
   if (k === 'enter' && ui.phase === 'done') {
     // On to the next hole, or a fresh round after the 18th.
@@ -531,7 +545,7 @@ addEventListener('resize', () => {
 });
 
 // Lets the test tools play shots without a mouse.
-window.golf = { get game() { return game; }, get world() { return world; }, get round() { return round; }, ui, cam, display, shoot, clampAim, setZoom };
+window.golf = { get game() { return game; }, get world() { return world; }, get round() { return round; }, ui, cam, display, shoot, clampAim, setZoom, turnView };
 
 measure();
 loadHole();

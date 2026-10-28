@@ -21,11 +21,12 @@ export const hash = (a, b, k = 0) => {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 };
 
-// Pick the most detailed grid whose playable area fits in `box`.
-export function layoutHole(hole, box) {
+// Pick the most detailed grid whose playable area fits in `box`, seen from `turn`
+// quarter turns round.
+export function layoutHole(hole, box, turn = 0) {
   let best;
   for (const cell of CELLS) {
-    best = fitView(holeToGrid(hole, { cell }), box, (p) => heightAt(hole, p));
+    best = fitView(holeToGrid(hole, { cell }), box, (p) => heightAt(hole, p), turn);
     if (best.fits) break;
   }
   const { rows, cols, tiles } = best.view.grid;
@@ -37,7 +38,7 @@ export function layoutHole(hole, box) {
 
 // The same view moved by (dx, dy) pixels, e.g. to draw into a bigger image with a margin.
 export function shiftView(view, dx, dy) {
-  return { ...makeView(view.grid, view.ox + dx, view.oy + dy, view.ground), own: view.own, look: view.look, others: view.others, heights: view.heights };
+  return { ...makeView(view.grid, view.ox + dx, view.oy + dy, view.ground, view.turn), own: view.own, look: view.look, others: view.others, heights: view.heights };
 }
 
 // What to draw at tile (col, row): a surface, or 'land' for open grass.
@@ -115,7 +116,7 @@ export function addSurroundings(view, course, index, W, H) {
     return lookAt(own, tl.col, tl.row) === 'land' ? tileHeight(view, Math.floor((p.x - grid.originX) / grid.cell), Math.floor((p.y - grid.originY) / grid.cell)) : heightAt(hole, p);
   };
   view.baseGround = (p) => heightAt(hole, p);
-  Object.assign(view, makeView(grid, view.ox, view.oy, ground));
+  Object.assign(view, makeView(grid, view.ox, view.oy, ground, view.turn));
 }
 const TILE_PAD = 24;
 const LOW = 72; // pixels below the picture that raised ground could reach up from
@@ -183,25 +184,31 @@ function sampleGround(view, W, H) {
       bottom.set(dx, Math.max(bottom.get(dx) ?? -9, dy));
     }
   }
-  // Every tile that could show, back to front.
-  const corners = [[0, 0], [W, 0], [0, H + LOW], [W, H + LOW]].map(([x, y]) => view.screenToTile(x, y));
-  const c0 = Math.floor(Math.min(...corners.map((t) => t.col))) - 1, c1 = Math.ceil(Math.max(...corners.map((t) => t.col))) + 1;
-  const r0 = Math.floor(Math.min(...corners.map((t) => t.row))) - 1, r1 = Math.ceil(Math.max(...corners.map((t) => t.row))) + 1;
-  const lift = (c, r) => Math.round(liftPx(tileHeight(view, c, r), grid.cell));
-  for (let d = c0 - r1; d <= c1 - r0; d++) {
-    for (let c = Math.max(c0, d + r0); c <= Math.min(c1, d + r1); c++) {
-      const r = c - d;
+  // Every tile that could show, back to front: in rows of equal u + v down the
+  // screen, each tile at u - v across it.
+  const [ua, va] = view.screenToUV(0, 0), [ub, vb] = view.screenToUV(W, H + LOW);
+  const [uc, vc] = view.screenToUV(W, 0), [ud, vd] = view.screenToUV(0, H + LOW);
+  const d0 = Math.floor(ua + va) - 2, d1 = Math.ceil(ub + vb) + 2;
+  const e0 = Math.floor(ud - vd) - 2, e1 = Math.ceil(uc - vc) + 2;
+  const at = (u, v) => view.fromUV(u, v);
+  const heightUV = (u, v) => { const t = at(u, v); return tileHeight(view, t.col, t.row); };
+  const lift = (u, v) => Math.round(liftPx(heightUV(u, v), grid.cell));
+  for (let d = d0; d <= d1; d++) {
+    for (let e = e0 + ((e0 + d) & 1); e <= e1; e += 2) {
+      const u = (d + e) / 2, v = (d - e) / 2;
+      const { col: c, row: r } = at(u, v);
       const s = lookAt(view.look, c, r), sid = id(s);
-      const p = view.tileToScreen(c, r);
-      const lp = lift(c, r);
+      const p = view.uvToScreen(u, v);
+      const lp = lift(u, v);
       if (p.y - lp > H + 4 || p.x < -6 || p.x > W + 6) continue;
-      // Light from the top left of the screen, which is the -x side of the hole.
+      // Light from the top left of the screen: ground rising down to the right
+      // (along u) or down to the left (along v) faces it.
       let light = LIT;
       if (s !== 'water' && s !== 'sea') {
-        const gx = (tileHeight(view, c + 1, r) - tileHeight(view, c - 1, r)) / (2 * grid.cell);
-        const gy = (tileHeight(view, c, r + 1) - tileHeight(view, c, r - 1)) / (2 * grid.cell);
+        const gu = (heightUV(u + 1, v) - heightUV(u - 1, v)) / (2 * grid.cell);
+        const gv = (heightUV(u, v + 1) - heightUV(u, v - 1)) / (2 * grid.cell);
         const k = s === 'green' ? 7 : 3.5; // greens tilt gently, so show them more strongly
-        const lit = Math.max(-0.3, Math.min(0.22, k * gx - 0.4 * k * gy));
+        const lit = Math.max(-0.3, Math.min(0.22, k * gu + 0.4 * k * gv));
         light = LIT + Math.round(lit / 0.05) * 5;
       }
       for (const [dx, dy] of mask) {
@@ -211,7 +218,7 @@ function sampleGround(view, W, H) {
         surf[k] = sid; tc[k] = c; tr[k] = r; shade[k] = light;
       }
       // Banks down to the tiles in front, on the left and on the right.
-      const dropL = lp - lift(c, r - 1), dropR = lp - lift(c + 1, r);
+      const dropL = lp - lift(u, v + 1), dropR = lp - lift(u + 1, v);
       for (const [dx, b] of bottom) {
         const drop = dx < 0 ? dropL : dropR;
         const x = p.x + dx;
