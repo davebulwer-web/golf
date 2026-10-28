@@ -105,3 +105,33 @@ for name, ((x0, y0, x1, y1), shrink) in PROPS.items():
     out = out[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
     Image.fromarray(out, 'RGBA').save(f'assets/props/{name}.png')
     print(name, out.shape[1], out.shape[0])
+
+# The flag's frames are cut one by one, so their poles and holes don't quite
+# line up and the pole's dark edge comes and goes. Keep the first frame's pole
+# and hole for all four and take only the waving cloth from each frame, moved
+# so its pole lines up. Also make each frame without the bright green ring
+# round the hole, for the flags on the other holes.
+frames = [np.array(Image.open(f'assets/props/flag-{i}.png')) for i in range(1, 5)]
+pole_x = lambda f: min(np.nonzero(f[y, :, 3])[0][0] for y in range(12, 18))
+base = frames[0]
+bx = pole_x(base)
+CLOTH_ROWS = 12  # the cloth hangs in the top rows, beside the pole
+red = lambda p: p[0] > p[1] + 60  # the cloth itself, not its dark edge
+for i, f in enumerate(frames):
+    out = base.copy()
+    out[:CLOTH_ROWS, bx + 2:] = 0
+    dx = bx - pole_x(f)
+    for y in range(min(CLOTH_ROWS, f.shape[0])):
+        for x in range(f.shape[1]):
+            if f[y, x, 3] and bx + 2 + (0 if red(f[y, x]) else 1) <= x + dx < out.shape[1] and x > pole_x(f):
+                out[y, x + dx] = f[y, x]
+    Image.fromarray(out, 'RGBA').save(f'assets/props/flag-{i + 1}.png')
+    r, g, b, a = (out[:, :, k].astype(int) for k in range(4))
+    plain = out.copy()
+    plain[((g > r + 30) & (g > b + 30)) | ((a > 0) & (a < 255))] = 0
+    # Below the cloth, keep only the pole and the dark hole.
+    low = np.zeros(a.shape, bool)
+    low[CLOTH_ROWS:] = True
+    low[:, bx:bx + 2] = False
+    plain[low & (r + g + b >= 150)] = 0
+    Image.fromarray(plain, 'RGBA').save(f'assets/props/flag-plain-{i + 1}.png')

@@ -411,11 +411,13 @@ function render(now) {
   // Someone who's just holed out stays by the hole for a moment to celebrate or sulk.
   // Flags and golfers are drawn back to front.
   const items = [];
+  // The other holes' flags have no bright ring round the hole: that marks the
+  // one being played.
   const pins = [game.hole.pin, ...v.others.map((o) => o.toHere(o.hole.pin))];
-  for (const pin of pins) {
+  pins.forEach((pin, i) => {
     const at = v.worldToScreen(pin);
-    items.push({ y: at.y, draw: () => drawSprite(ctx, flagFrame(now), at.x, at.y) });
-  }
+    items.push({ y: at.y, draw: () => drawSprite(ctx, flagFrame(now, i > 0), at.x, at.y) });
+  });
   game.play.players.forEach((p, i) => {
     const playing = i === game.play.turn;
     const mood = ui.moods[i] && now < ui.moods[i].until ? ui.moods[i] : null;

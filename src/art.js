@@ -150,7 +150,7 @@ for (const [name, [w, h, b64]] of Object.entries({ ...TREE_PIXELS, ...PROP_PIXEL
   let ax = foot.length ? Math.round((foot[0] + foot[foot.length - 1]) / 2) : w >> 1;
   if (name.startsWith('flag-')) {
     ax = Math.min(...px.slice(0, h >> 1).map((row) => row.findIndex((c) => c)).filter((i) => i >= 0));
-    ay = Math.max(0, ay - 2);
+    ay = h - 3; // the hole: every flag frame is cut the same height
   }
   SPRITES[name] = { w, h, px, ax, ay };
 }
