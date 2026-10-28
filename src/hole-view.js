@@ -365,17 +365,39 @@ function holeProps(hole) {
 const EVENT_SIZE = {
   'stand-small': 10, 'stand-medium': 11, 'stand-large': 13, 'covered-stand': 13, 'long-stand': 15,
   'tv-tower': 7, tent: 9, scoreboard: 9, stage: 14, truss: 4, marquee: 18, arch: 7,
+  leaderboard: 6, 'trophy-board': 6, banner: 4, rope: 4, barrier: 4, picket: 4, signpost: 3, flag: 2, feather: 2,
 };
+const eventSize = (name) => EVENT_SIZE[name] ?? EVENT_SIZE[name.split('-')[0]];
 const OPEN_GROUND = new Set(['trees', 'rough']);
+
+// The odds and ends a tournament spreads over the course, and how many holes
+// get each on 18 holes: so a hole has a thing or two, not all of them. The 9th
+// and 18th get some of their own besides (see eventPlan).
+const EXTRAS = [['tv-tower', 2], ['tent', 2], ['leaderboard', 2], ['barrier', 4], ['banner', 8], ['flags', 4], ['feathers', 4]];
+
+// Which extras each hole of a course gets: { [number]: Set }. Each kind goes to
+// the holes with least on them so far, the course's own shuffle breaking ties.
+function eventExtras(course) {
+  const seed = (course.seed >>> 0) % 9973;
+  const load = new Map(course.holes.map((h) => [h.number, new Set()]));
+  const scale = course.holes.length / 18;
+  EXTRAS.forEach(([kind, count], k) => {
+    const order = course.holes.map((h) => h.number).filter((n) => n !== 1 && n % 9 !== 0)
+      .sort((a, b) => load.get(a).size - load.get(b).size || hash(a, seed, 60 + k) - hash(b, seed, 60 + k));
+    for (const n of order.slice(0, Math.round(count * scale))) load.get(n).add(kind);
+  });
+  return load;
+}
 
 // Where a tournament puts its stands and buildings on a hole: a list of
 // { name, spots, face } with the places to try, best first, and which way
-// it should face from a spot. Stands go behind (or beside) some greens and
-// always the 9th and 18th, and beside the tee on the par 3s and the 1st and
-// 10th; TV towers by the closing greens; scoreboards by the 9th and 18th; a
-// hospitality tent by some greens; the presentation stage behind the 18th;
-// and round the clubhouse by the 1st tee, the entrance arch, a marquee and tents.
-function eventPlan(hole) {
+// it should face from a spot. Stands are the main thing: behind or beside most
+// greens and always the 9th and 18th, and beside the tee on the par 3s and the
+// 1st and 10th. The 9th and 18th have a TV tower and a leaderboard (a scoreboard
+// on the 18th) and the 18th the presentation stage; the clubhouse by the 1st tee
+// has the entrance arch, a marquee, tents, a trophy board and signposts; and
+// `extras` says which of the odds and ends spread over the course go here.
+function eventPlan(hole, extras, seed = 0) {
   const n = hole.number, g = hole.green, L = hole.line.length;
   const back = pointAt(hole.line, L - 30, 0);
   const d = Math.hypot(g.x - back.x, g.y - back.y) || 1;
@@ -384,10 +406,14 @@ function eventPlan(hole) {
   const byGreen = (along, side) => ({ x: g.x + ux * along - uy * side, y: g.y + uy * along + ux * side });
   const toGreen = (p) => ({ x: g.x - p.x, y: g.y - p.y });
   const toTee = () => ({ x: -ux, y: -uy });
-  const pick = (k, list) => list[Math.floor(hash(n, k, 51) * list.length)];
+  const pick = (k, list) => list[Math.floor(hash(n, seed + k, 51) * list.length)];
   const plan = [];
   const add = (name, spots, face) => plan.push({ name, spots, face });
-  if (n % 9 === 0 || hash(n, 1, 50) < 0.5) {
+  // Beside the tee, `side` of the line (1 or -1), so many yards back from the front tee.
+  const tee = hole.tees.black, teeMid = pointAt(hole.line, (tee + hole.tees.white) / 2, 0);
+  const byTee = (back, side, out = 12) => pointAt(hole.line, tee - back, side * out);
+  const toTeeMid = (p) => ({ x: teeMid.x - p.x, y: teeMid.y - p.y });
+  if (n % 9 === 0 || hash(n, seed + 1, 50) < 0.75) {
     add(n % 9 === 0 ? pick(2, ['long-stand', 'covered-stand']) : pick(3, ['stand-small', 'stand-medium', 'stand-large', 'covered-stand']),
       [byGreen(r + 17, 0), byGreen(r + 12, r + 12), byGreen(r + 12, -r - 12), byGreen(0, r + 22), byGreen(0, -r - 22)], toGreen);
   }
@@ -397,20 +423,42 @@ function eventPlan(hole) {
     const toMid = (p) => ({ x: mid.x - p.x, y: mid.y - p.y });
     add(pick(4, ['stand-small', 'stand-medium']), [pointAt(hole.line, s, hole.fwHalf + 18), pointAt(hole.line, s, -hole.fwHalf - 18), pointAt(hole.line, s + 20, hole.fwHalf + 20)], toMid);
   }
-  if (n >= 15 || n === 9) add('tv-tower', [byGreen(-r - 8, r + 20), byGreen(-r - 8, -r - 20), byGreen(r + 6, r + 18)], toGreen);
-  if (n % 9 === 0) add('scoreboard', [byGreen(-r - 30, -r - 22), byGreen(-r - 30, r + 22), byGreen(-r - 45, r + 25)], toTee);
-  if (hash(n, 5, 50) < 0.35) add('tent', [byGreen(-r - 28, r + 24), byGreen(-r - 28, -r - 24)], toGreen);
-  if (n === 18) {
-    add('stage', [byGreen(r + 42, 0), byGreen(r + 30, r + 30), byGreen(r + 30, -r - 30)], toGreen);
-    add('truss', [byGreen(r + 40, 22), byGreen(r + 40, -22)], toGreen);
+  if (n % 9 === 0 || extras.has('tv-tower')) add('tv-tower', [byGreen(-r - 8, r + 20), byGreen(-r - 8, -r - 20), byGreen(r + 6, r + 18)], toGreen);
+  if (n === 18) add('scoreboard', [byGreen(-r - 30, -r - 22), byGreen(-r - 30, r + 22), byGreen(-r - 45, r + 25)], toTee);
+  if (n === 9 || extras.has('leaderboard')) add('leaderboard', [byGreen(-r - 24, -r - 16), byGreen(-r - 24, r + 16), byGreen(-r - 40, r + 18)], toTee);
+  if (extras.has('tent')) add('tent', [byGreen(-r - 28, r + 24), byGreen(-r - 28, -r - 24)], toGreen);
+  // A short line of crowd barriers along the back of the green.
+  if (n === 18 || extras.has('barrier')) {
+    const colour = pick(6, ['blue', 'white', 'green', 'picket']);
+    const name = colour === 'picket' ? 'picket' : `barrier-${colour}`;
+    for (const side of [-7, 7]) add(name, [byGreen(r + 6, side), byGreen(r + 9, side)], toGreen);
   }
+  // A sponsor's banner by the tee or the green.
+  if (extras.has('banner')) {
+    const name = `banner-${pick(7, ['championship', 'golfer', 'freedom', 'golf', 'healthier'])}`;
+    const s = hash(n, seed + 8, 51) < 0.5 ? 1 : -1;
+    add(name, hash(n, seed + 9, 51) < 0.5
+      ? [byTee(6, s), byTee(6, -s), byTee(14, s, 16)]
+      : [byGreen(-r - 6, s * (r + 8)), byGreen(-r - 6, -s * (r + 8)), byGreen(r + 8, s * 10)], hash(n, seed + 9, 51) < 0.5 ? toTeeMid : toGreen);
+  }
+  // A row of flags, or of feather flags, beside the tee.
+  for (const [kind, name, gap] of [['flags', 'flag', 6], ['feathers', 'feather', 5]]) {
+    if (!extras.has(kind)) continue;
+    const look = `${name}-${pick(10 + name.length, ['trophy', 'sponsor', 'clubs'])}`;
+    const s = hash(n, seed + 12 + name.length, 51) < 0.5 ? 1 : -1;
+    for (let k = 0; k < 3; k++) add(look, [byTee(2 + k * gap, s, 14), byTee(2 + k * gap, -s, 14)], toTeeMid);
+  }
+  if (n === 1 || n === 10) for (const s of [1, -1]) add('rope', [byTee(0, s, 13), byTee(3, s, 16), byTee(-3, s, 16)], toTeeMid);
   if (n === 1) {
-    const club = pointAt(hole.line, hole.tees.black - 38, 0);
+    const club = pointAt(hole.line, tee - 38, 0);
     const toClub = (p) => ({ x: club.x - p.x, y: club.y - p.y });
-    add('arch', [pointAt(hole.line, hole.tees.black - 16, 0), pointAt(hole.line, hole.tees.black - 14, 12)], toClub);
-    add('marquee', [pointAt(hole.line, hole.tees.black - 40, 50), pointAt(hole.line, hole.tees.black - 40, -50), pointAt(hole.line, hole.tees.black - 80, 30), pointAt(hole.line, hole.tees.black - 80, -30)], toClub);
-    add('tent', [pointAt(hole.line, hole.tees.black - 15, 34), pointAt(hole.line, hole.tees.black - 15, -34)], toClub);
-    add('tent', [pointAt(hole.line, hole.tees.black - 15, -34), pointAt(hole.line, hole.tees.black - 60, -40)], toClub);
+    add('arch', [pointAt(hole.line, tee - 16, 0), pointAt(hole.line, tee - 14, 12)], toClub);
+    add('marquee', [pointAt(hole.line, tee - 40, 50), pointAt(hole.line, tee - 40, -50), pointAt(hole.line, tee - 80, 30), pointAt(hole.line, tee - 80, -30)], toClub);
+    add('tent', [pointAt(hole.line, tee - 15, 34), pointAt(hole.line, tee - 15, -34)], toClub);
+    add('trophy-board', [pointAt(hole.line, tee - 24, -22), pointAt(hole.line, tee - 24, 22), pointAt(hole.line, tee - 30, -30)], toTeeMid);
+    add('signpost-first-tee', [pointAt(hole.line, tee - 10, 9), pointAt(hole.line, tee - 10, -9)], toTeeMid);
+    add('signpost-clubhouse', [pointAt(hole.line, tee - 22, 10), pointAt(hole.line, tee - 22, -10)], toTeeMid);
+    add(pick(14, ['signpost-range', 'signpost-practice', 'signpost-parking']), [pointAt(hole.line, tee - 50, 14), pointAt(hole.line, tee - 50, -14)], toClub);
   }
   return plan;
 }
@@ -437,10 +485,11 @@ export function tournamentSites(course) {
   // Everything already standing, on the map: { m, size }.
   const taken = [];
   course.holes.forEach((h, i) => { for (const q of holeProps(h)) taken.push({ m: toMap(places[i], q.at), size: q.clear }); });
+  const extras = eventExtras(course), seed = (course.seed >>> 0) % 9973;
   const out = course.holes.map((h, i) => {
     const sites = [];
-    for (const want of eventPlan(h)) {
-      const size = EVENT_SIZE[want.name];
+    for (const want of eventPlan(h, extras.get(h.number), seed)) {
+      const size = eventSize(want.name);
       for (const at of want.spots) {
         const m = toMap(places[i], at);
         if (taken.some((t) => Math.hypot(t.m.x - m.x, t.m.y - m.y) < (t.size + size) * 0.6)) continue;
@@ -510,7 +559,7 @@ function paintScenery(buf, W, H, view, hole) {
 // the viewer, its front; away, its back; facing left, its right side; facing
 // right, its left side. Screen heights are squashed by half, hence the 2.
 function propView(view, q) {
-  if (!q.face) return q.name;
+  if (!q.face || SPRITES[q.name]) return q.name;
   const d = view.worldDirToScreen(q.face.x, q.face.y);
   const side = Math.abs(d.x) > 2 * Math.abs(d.y) ? (d.x < 0 ? 'right' : 'left') : d.y > 0 ? 'front' : 'back';
   // Some are only drawn from some sides: then the nearest one drawn.

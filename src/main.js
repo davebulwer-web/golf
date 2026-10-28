@@ -5,7 +5,7 @@
 
 import { makeRng, dist, surfaceAt, pointAt, STYLES } from './course-generator.js';
 import { buildCourse } from './course.js';
-import { layoutHole, shiftView, addSurroundings, drawHole, isOutOfBounds, courseHoles, courseView, piecePad } from './hole-view.js';
+import { layoutHole, shiftView, addSurroundings, drawHole, isOutOfBounds, courseHoles, courseView, piecePad, tournamentSites } from './hole-view.js';
 import { drawSprite } from './art.js';
 import { drawHud, drawShotBar, drawPuttBar, drawBanner, drawScorecard, shotButtons, actionButtons, viewButtons, drawViewButtons, drawHoleNumber, BAR_TOP } from './hud.js';
 import { roundWeather, holeWind } from './weather.js';
@@ -854,7 +854,7 @@ function autoPutt() {
   pt.meterAt = now - plan.power * POWER_SWEEP;
   stopPower(now);
 }
-window.golf = { get game() { return game; }, get world() { return world; }, get round() { return round; }, ui, cam, display, shoot, clampAim, setZoom, turnView, changeGolfer, autoPutt, greenFor, toggleEvent };
+window.golf = { get game() { return game; }, get world() { return world; }, get round() { return round; }, ui, cam, display, shoot, clampAim, setZoom, turnView, changeGolfer, autoPutt, greenFor, toggleEvent, tournamentSites: () => tournamentSites(game.course) };
 
 measure();
 loadHole();
