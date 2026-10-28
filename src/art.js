@@ -1,5 +1,7 @@
-// Placeholder pixel art: ground colours, sprites and a tiny bitmap font.
-// Everything is drawn from code so there are no image files to load.
+// Pixel art drawn from code: ground colours, sprites and a tiny bitmap font,
+// plus the trees from assets/trees (packed into tree-assets.js).
+
+import { TREE_PIXELS } from './tree-assets.js';
 
 const hex = (s) => {
   const n = parseInt(s.slice(1), 16);
@@ -26,22 +28,26 @@ const BASE_GROUND = {
 };
 
 // Style tweaks: what grows off the fairway and which trees line the hole.
+// A name listed more than once turns up more often. `density` is the chance of
+// a tree on each tile of woods.
+const LEAFY = ['oak-1', 'oak-2', 'oak-3', 'oak-4', 'oak-5', 'oak-6', 'oak-7', 'bushy-1', 'bushy-2'];
+const PINES = ['pine-1', 'pine-2', 'pine-3', 'pine-4', 'pine-5', 'pine-6', 'pine-7', 'pine-8', 'pine-9', 'pine-10'];
 export const STYLE_ART = {
-  parkland: { trees: ['oak'], density: 0.5 },
-  stadium: { trees: ['oak'], density: 0.45 },
-  woodland: { trees: ['oak', 'pine'], density: 0.6 },
-  alpine: { trees: ['pine'], density: 0.55, ground: { land: ['#4c9638', '#479034'] } },
+  parkland: { trees: [...LEAFY, ...LEAFY, ...LEAFY, ...LEAFY, ...LEAFY, ...LEAFY, 'willow', 'willow', 'cypress-1', 'cypress-1', 'blossom', 'berry-bush'], density: 0.2 },
+  stadium: { trees: [...LEAFY, 'cypress-1', 'cypress-2', 'cypress-2', 'bush-1'], density: 0.18 },
+  woodland: { trees: [...LEAFY, ...LEAFY, ...PINES, ...PINES, 'autumn-1', 'autumn-2', 'autumn-3', 'bare-1', 'bare-2', 'willow'], density: 0.26 },
+  alpine: { trees: PINES, density: 0.24, ground: { land: ['#4c9638', '#479034'] } },
   heathland: {
-    trees: ['pine', 'heather'], density: 0.45,
+    trees: [...PINES, 'bushy-1', 'heather', 'heather', 'heather', 'heather', 'heather'], density: 0.25,
     ground: { trees: ['#6b5a72', '#5d4f66'], land: ['#5e8a38', '#587f34'], rough: ['#5a7f30', '#638a36'] },
   },
-  tropical: { trees: ['palm'], density: 0.45, ground: { land: ['#60aa3a', '#5ba436'], trees: ['#2f7424', '#2b6c22'] } },
+  tropical: { trees: ['palm-1', 'palm-2', 'palm-3', 'palm-1', 'palm-2', 'palm-3', 'bush-1', 'berry-bush'], density: 0.2, ground: { land: ['#60aa3a', '#5ba436'], trees: ['#2f7424', '#2b6c22'] } },
   links: {
-    trees: ['gorse'], density: 0.35,
+    trees: ['gorse', 'gorse', 'gorse', 'gorse', 'bush-1', 'bush-2'], density: 0.3,
     ground: { trees: ['#8a9448', '#7f8a40'], land: ['#93a050', '#8a984a'], rough: ['#76933c', '#7e9a42'] },
   },
   desert: {
-    trees: ['cactus'], density: 0.12,
+    trees: ['cactus', 'cactus', 'acacia'], density: 0.1,
     ground: { trees: ['#d4a868', '#c99c5c'], land: ['#dbb070', '#d0a464'], rough: ['#8f9a48', '#9aa250'] },
   },
 };
@@ -68,52 +74,6 @@ function darken(c) {
 // its colours. (ax, ay) is the pixel that sits on the ground point.
 
 export const SPRITES = {
-  oak: {
-    ax: 3, ay: 8, colors: { a: '#1f4d18', b: '#2f7a26', c: '#4f9e3a', d: '#5a3a1e' },
-    rows: [
-      '..aaa..',
-      '.abcca.',
-      'abbccba',
-      'abbbbba',
-      'abbbbba',
-      '.abbba.',
-      '..aaa..',
-      '...d...',
-      '...d...',
-    ],
-  },
-  pine: {
-    ax: 3, ay: 10, colors: { a: '#173f1c', b: '#24602a', c: '#3a7f3a', d: '#4a2f18' },
-    rows: [
-      '...a...',
-      '..aca..',
-      '..aba..',
-      '.abcba.',
-      '.abbba.',
-      'abcbbba',
-      '.abbba.',
-      'abbbbba',
-      'aaaaaaa',
-      '...d...',
-      '...d...',
-    ],
-  },
-  palm: {
-    ax: 4, ay: 10, colors: { a: '#2b6a1e', b: '#4fa02e', d: '#8a6a3a' },
-    rows: [
-      '.aa...aa.',
-      'abba.abba',
-      '...abba..',
-      '..ab.dba.',
-      '.ab..d.ba',
-      '.....d...',
-      '.....d...',
-      '....d....',
-      '....d....',
-      '....d....',
-      '...ddd...',
-    ],
-  },
   cactus: {
     ax: 2, ay: 7, colors: { a: '#3f7a32', b: '#5a9a44' },
     rows: [
@@ -180,6 +140,22 @@ for (const s of Object.values(SPRITES)) {
   s.w = s.rows[0].length;
   s.h = s.rows.length;
   s.px = s.rows.map((r) => [...r].map((ch) => (ch === '.' ? 0 : hex(s.colors[ch]))));
+}
+
+// The trees, anchored at the foot of the trunk: the middle of the bottom row.
+for (const [name, [w, h, b64]] of Object.entries(TREE_PIXELS)) {
+  const bytes = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
+  const px = [];
+  for (let j = 0; j < h; j++) {
+    const row = [];
+    for (let i = 0; i < w; i++) {
+      const k = (j * w + i) * 4;
+      row.push(bytes[k + 3] < 128 ? 0 : (0xff << 24 | bytes[k + 2] << 16 | bytes[k + 1] << 8 | bytes[k]) >>> 0);
+    }
+    px.push(row);
+  }
+  const foot = px[h - 1].map((c, i) => (c ? i : -1)).filter((i) => i >= 0);
+  SPRITES[name] = { w, h, px, ax: foot.length ? Math.round((foot[0] + foot[foot.length - 1]) / 2) : w >> 1, ay: h - 1 };
 }
 
 // Draw a sprite into a packed pixel buffer with its anchor at (x, y).
