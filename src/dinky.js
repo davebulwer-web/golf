@@ -126,8 +126,8 @@ export function golferFrame(pose, t = 0, now = 0) {
 // The ball in the air gets bigger the higher it is.
 export const ballFrame = (h) => `ball-${h < 12 ? 1 : h < 30 ? 2 : 3}`;
 
-// The flag's frame, waving.
-export const flagFrame = (now) => `flag-${1 + (Math.floor(now / 160) % 4)}`;
+// The flag's frame, waving; `plain` without the ring round the hole.
+export const flagFrame = (now, plain = false) => `flag-${plain ? 'plain-' : ''}${1 + (Math.floor(now / 160) % 4)}`;
 
 // Result banners: which picture goes with a lie after a shot, or a score on a hole.
 export const LIE_BANNERS = { fairway: 'txt-fairway', rough: 'txt-intherough', bunker: 'pop-bunker', green: 'txt-onthegreen' };
