@@ -5,6 +5,7 @@
 
 import { TREE_PIXELS } from './tree-assets.js';
 import { PROP_PIXELS } from './prop-assets.js';
+import { EVENT_PIXELS } from './event-assets.js';
 import { GROUND_PIXELS } from './ground-assets.js';
 
 const hex = (s) => {
@@ -133,7 +134,7 @@ for (const s of Object.values(SPRITES)) {
 // The trees and props, anchored at the foot: the middle of the bottom row.
 // Props have a soft shadow below them, which isn't drawn, so theirs is the
 // lowest solid row; a flag's is the hole, under its pole.
-for (const [name, [w, h, b64]] of Object.entries({ ...TREE_PIXELS, ...PROP_PIXELS })) {
+for (const [name, [w, h, b64]] of Object.entries({ ...TREE_PIXELS, ...PROP_PIXELS, ...EVENT_PIXELS })) {
   const bytes = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
   const px = [];
   for (let j = 0; j < h; j++) {
