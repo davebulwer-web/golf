@@ -28,6 +28,7 @@ const SHIRTS = {
   heavy: { is: (r, g, b) => r >= g + 90 && Math.abs(g - b) < 35, light: (r) => r / 190 },          // red
   athletic: { is: (r, g, b) => r >= g + 70 && b >= g + 30, light: (r) => r / 190 },                // pink
   casual: { is: (r, g, b) => b >= r + 15 && b >= g + 50, light: (r, g, b) => b / 230, above: 33 }, // lilac (her shoes too, so only above row 33)
+  tall: { is: (r, g, b) => g >= r + 40 && g >= b + 20, light: (r, g) => g / 150 },               // green
   veteran: null, // a beige jumper, too like the trousers and skin to pick out: keeps his own colours
 };
 // Every golfer look there are sprites for.
