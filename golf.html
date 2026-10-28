@@ -3856,6 +3856,100 @@ function applyForm(skills, form) {
   return change;
 }
 
+// ---- practice.js ----
+// The practice ground: a short drill for each skill, five balls each, played
+// on a hole of your home course. A session trains its skill a little more the
+// better it goes, and never costs any.
+
+
+const BALLS = 5;
+
+const DRILLS = [
+  { key: 'drive', skill: 'power', name: 'LONG DRIVE', about: 'FIVE DRIVES. KEEP THEM IN PLAY, AND HIT THEM A LONG WAY.' },
+  { key: 'target', skill: 'accuracy', name: 'TARGET GREENS', about: 'FIVE APPROACHES FROM 140 TO 170 YARDS. HIT THE GREEN.' },
+  { key: 'chip', skill: 'shortGame', name: 'CHIP TO THE CIRCLE', about: 'FIVE PITCHES FROM 30 TO 70 YARDS. FINISH WITHIN 3 YARDS.' },
+  { key: 'escape', skill: 'recovery', name: 'ESCAPE ARTIST', about: 'FIVE BALLS IN SAND AND ROUGH. GET THEM ON THE GREEN.' },
+  { key: 'putt', skill: 'putting', name: 'PUTTING CHALLENGE', about: 'FIVE PUTTS FROM 6 TO 30 FEET. HOLE THEM.' },
+];
+const drill = (key) => DRILLS.find((d) => d.key === key);
+
+// The hole a drill is played on: for driving, the longest of the first nine
+// that runs straight from the tee for 250 yards; otherwise the first par 4
+// (one with a greenside bunker for escapes).
+function drillHole(course, key) {
+  const nine = course.holes.slice(0, 9);
+  if (key === 'drive') {
+    const straight = nine.filter((h) => h.par > 3 && h.line.segs[0].len >= 250);
+    return (straight.length ? straight : nine).reduce((a, b) => (b.length > a.length ? b : a)).number;
+  }
+  const fours = nine.filter((h) => h.par === 4);
+  if (key === 'escape') return (fours.find((h) => h.bunkers.some((b) => b.greenside)) ?? fours[0] ?? nine[0]).number;
+  return (fours[0] ?? nine[0]).number;
+}
+
+// Where ball `i` (0 to 4) of a drill is played from: { at, lie }.
+function drillSpot(key, hole, i, tee) {
+  const line = hole.line, len = line.length;
+  const spot = (p) => ({ at: p, lie: surfaceAt(hole, p) });
+  if (key === 'drive') return { at: pointAt(line, hole.tees[tee]), lie: 'tee' };
+  // Nearest the distance and line asked for that's on one of `lies` (never water).
+  const near = (d, lat, lies) => {
+    for (let k = 0; k < 40; k++) {
+      const p = pointAt(line, len - d - (k >> 1) * 4 * (k % 2 ? -1 : 1), lat * (1 - k / 40));
+      if (lies.includes(surfaceAt(hole, p))) return spot(p);
+    }
+    return spot(pointAt(line, len - d, 0));
+  };
+  if (key === 'target') return near([140, 155, 170, 150, 160][i], [0, -4, 3, 5, -2][i], ['fairway']);
+  if (key === 'chip') return near([30, 45, 60, 40, 70][i], [-6, 5, -2, 9, 0][i], ['fairway', 'rough', 'fringe']);
+  if (key === 'escape') {
+    // Sand on alternate balls if the green has a bunker, else rough off the side.
+    const sand = hole.bunkers.filter((b) => b.greenside);
+    if (i % 2 === 0 && sand.length) {
+      const b = sand[(i / 2) % sand.length];
+      return { at: { x: b.x, y: b.y }, lie: 'bunker' };
+    }
+    const side = i % 2 ? 1 : -1, d = [100, 80, 120, 90, 110][i];
+    for (let out = 1; out < 4; out += 0.25) {
+      const p = pointAt(line, len - d, side * (hole.fwHalf + hole.roughW * out * 0.5));
+      if (['rough', 'trees'].includes(surfaceAt(hole, p))) return spot(p);
+    }
+    return spot(pointAt(line, len - d, side * (hole.fwHalf + 4)));
+  }
+  // Putts: round the hole at each distance, wherever there's green.
+  const yards = [6, 10, 15, 20, 30][i] / 3;
+  for (let k = 0; k < 24; k++) {
+    const a = i * 1.3 + k * 0.26;
+    const p = { x: hole.pin.x + Math.cos(a) * yards, y: hole.pin.y + Math.sin(a) * yards };
+    if (surfaceAt(hole, p) === 'green') return { at: p, lie: 'green' };
+  }
+  return { at: { x: hole.pin.x + yards * 0.5, y: hole.pin.y }, lie: 'green' };
+}
+
+// How a ball went. `end` is where it finished and `holed` whether it dropped;
+// `from` where it was played from. Returns { hit, text }.
+function drillResult(key, hole, golfer, from, end, holed) {
+  const left = dist(end, hole.pin), on = surfaceAt(hole, end);
+  const ft = `${feet(left)} FT FROM THE HOLE`;
+  if (holed) return { hit: true, text: key === 'putt' ? 'HOLED IT!' : 'IN THE HOLE!' };
+  if (key === 'drive') {
+    const yds = Math.round(dist(from, end)), max = maxCarry(golfer, shotType('straight'), 'tee', hole);
+    const fair = ['fairway', 'fringe', 'green'].includes(on), inPlay = fair || on === 'rough';
+    const text = `${yds} YARDS, ${fair ? 'ON THE FAIRWAY' : inPlay ? 'IN THE ROUGH' : 'IN TROUBLE'}`;
+    return { hit: inPlay && yds >= 0.85 * max, text: inPlay && yds < 0.85 * max ? `${text}, TOO SHORT` : text };
+  }
+  if (key === 'target') return { hit: on === 'green' || left <= 10, text: on === 'green' ? ft : `MISSED THE GREEN, ${Math.round(left)} YARDS AWAY` };
+  if (key === 'chip') return { hit: left <= 3, text: ft };
+  if (key === 'escape') return { hit: on === 'green', text: on === 'green' ? `ON THE GREEN, ${ft}` : 'STILL IN TROUBLE' };
+  return { hit: false, text: `MISSED, ${feet(left)} FT LEFT` };
+}
+
+// What a session of `hits` out of five does for a skill at `value`.
+function drillGain(hits, value) {
+  const base = [0.2, 0.3, 0.5, 0.7, 0.9, 1.2][hits];
+  return Math.round(base * (100 - value) / 55 * 10) / 10;
+}
+
 // ---- course-list.js ----
 // The career's courses, tier by tier, easiest first. Written by
 // tools/curate-courses.mjs: `rating` is how many shots over par a club-standard
@@ -4018,6 +4112,20 @@ function finishRound(c, result) {
   if (c.week > WEEKS) { c.week = 1; c.season += 1; }
 }
 
+// ---------- Practice ----------
+// One practice session a week (the week's midweek slot); it's free.
+
+const weekKey = (c) => `${c.season}:${c.week}`;
+const canPractise = (c) => c.practised !== weekKey(c);
+
+// Note a practice session: the skill goes up by `gain`, and it goes in the history.
+function recordPractice(c, { name, skill, hits, balls, gain }) {
+  c.skills[skill] = Math.min(99, Math.round((c.skills[skill] + gain) * 10) / 10);
+  c.practised = weekKey(c);
+  c.history.unshift({ season: c.season, week: c.week, practice: { name, skill, hits, balls, gain } });
+  c.history = c.history.slice(0, 40);
+}
+
 // ---------- Saving ----------
 // Storage can be missing or refuse (private windows, sandboxed pages): then the
 // career just lasts until the page is closed.
@@ -4178,13 +4286,14 @@ function drawNewCareer(ctx, W, H, L, { draft, hover, now, replaces }) {
 // ---------- Clubhouse ----------
 
 function hubLayout(W, H, career) {
-  const pw = 380, ph = 232, px = mid(W, pw), py = mid(H, ph);
+  const pw = 420, ph = 232, px = mid(W, pw), py = mid(H, ph);
   const play = career.round ? `CONTINUE ${career.round.match ? 'MATCH' : 'ROUND'}, HOLE ${career.round.hole}` : 'PRACTICE ROUND';
   return {
     panel: { x: px, y: py, w: pw, h: ph },
-    play: { key: 'play', label: play, x: px + pw - 156, y: py + ph - 30, w: 140, h: 18 },
-    match: { key: 'match', label: 'MONEY MATCH', x: px + pw - 282, y: py + ph - 30, w: 118, h: 18 },
-    menu: { key: 'menu', label: 'MENU', x: px + 16, y: py + ph - 30, w: 64, h: 18 },
+    play: { key: 'play', label: play, x: px + pw - 136, y: py + ph - 30, w: 120, h: 18 },
+    match: { key: 'match', label: 'MONEY MATCH', x: px + pw - 250, y: py + ph - 30, w: 108, h: 18 },
+    practice: { key: 'practice', label: 'PRACTICE', x: px + pw - 340, y: py + ph - 30, w: 84, h: 18 },
+    menu: { key: 'menu', label: 'MENU', x: px + 16, y: py + ph - 30, w: 56, h: 18 },
   };
 }
 
@@ -4215,6 +4324,11 @@ function drawHub(ctx, W, H, L, { career: c, hover, now }) {
   drawText(ctx, 'RECENT ROUNDS', sx, ry, DIM, 1, null);
   if (!c.history.length) drawText(ctx, 'NONE YET. PLAY NINE HOLES AT YOUR CLUB.', sx, ry + 11, QUIET, 1, null);
   c.history.slice(0, 5).forEach((r, i) => {
+    if (r.practice) {
+      const pr = r.practice;
+      drawText(ctx, `WK ${r.week}  PRACTICE: ${pr.name} ${pr.hits}/${pr.balls}  ${SKILL_NAMES[pr.skill]} +${pr.gain.toFixed(1)}`, sx, ry + 11 + i * 9, '#7ee07e', 1, null);
+      return;
+    }
     if (r.match) {
       const m = r.match, money = m.money > 0 ? `+£${m.money}` : m.money < 0 ? `-£${-m.money}` : '£0';
       const how = m.lead > 0 ? `BEAT ${r.vs}` : m.lead < 0 ? `LOST TO ${r.vs}` : `HALVED WITH ${r.vs}`;
@@ -4229,7 +4343,10 @@ function drawHub(ctx, W, H, L, { career: c, hover, now }) {
 
   menuButton(ctx, L.menu, hover === 'menu');
   menuButton(ctx, L.play, hover === 'play');
-  if (!c.round) menuButton(ctx, L.match, hover === 'match');
+  if (!c.round) {
+    menuButton(ctx, L.match, hover === 'match');
+    menuButton(ctx, L.practice, hover === 'practice');
+  }
 }
 
 // ---------- Where to play ----------
@@ -4332,6 +4449,37 @@ function drawMembers(ctx, W, H, L, { career: c, pick, hover, now }) {
   menuButton(ctx, L.challenge, hover === 'challenge', !!pick.stake);
 }
 
+// ---------- Practice ground ----------
+
+function drillsLayout(W, H) {
+  const pw = 360, ch = 30, ph = 50 + DRILLS.length * (ch + 4) + 30, px = mid(W, pw), py = mid(H, ph);
+  return {
+    panel: { x: px, y: py, w: pw, h: ph },
+    drills: DRILLS.map((d, i) => ({ key: `drill-${i}`, x: px + 12, y: py + 44 + i * (ch + 4), w: pw - 24, h: ch })),
+    back: { key: 'back', label: 'BACK', x: px + 12, y: py + ph - 26, w: 70, h: 18 },
+  };
+}
+
+function drawDrills(ctx, W, H, L, { career: c, hover }) {
+  const p = L.panel, open = canPractise(c);
+  panel(ctx, p.x, p.y, p.w, p.h);
+  drawText(ctx, 'PRACTICE GROUND', p.x + 12, p.y + 12, GOLD, 2);
+  drawText(ctx, open ? `ONE FREE SESSION A WEEK, ${BALLS} BALLS. THE BETTER IT GOES, THE MORE IT HELPS.` : 'YOU HAVE PRACTISED THIS WEEK. PLAY A ROUND TO MOVE THE WEEK ON.', p.x + 12, p.y + 28, open ? DIM : '#f08a8a', 1, null);
+  L.drills.forEach((b, i) => {
+    const d = DRILLS[i], hot = open && hover === b.key;
+    ctx.fillStyle = !open ? '#241a40' : hot ? '#4a3a8a' : '#2c2050';
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.fillStyle = hot ? GOLD : open ? '#7a68c0' : '#3a2e60';
+    ctx.fillRect(b.x, b.y, b.w, 1); ctx.fillRect(b.x, b.y + b.h - 1, b.w, 1);
+    ctx.fillRect(b.x, b.y, 1, b.h); ctx.fillRect(b.x + b.w - 1, b.y, 1, b.h);
+    drawText(ctx, d.name, b.x + 8, b.y + 6, !open ? '#5a4a80' : hot ? GOLD : '#ffffff', 1, null);
+    const sk = `${SKILL_NAMES[d.skill]} ${Math.round(c.skills[d.skill])}`;
+    drawText(ctx, sk, b.x + b.w - 8 - textWidth(sk), b.y + 6, open ? GOLD : '#5a4a80', 1, null);
+    drawText(ctx, d.about, b.x + 8, b.y + 18, open ? QUIET : '#4a3e70', 1, null);
+  });
+  menuButton(ctx, L.back, hover === 'back');
+}
+
 // ---- main.js ----
 // Play a round on a generated course against a computer golfer. Pick a shot,
 // drag out where it should land, then hit it. On the green, putting is a little
@@ -4371,6 +4519,7 @@ const settings = {
   tour: null, // a career tier's course: club and county ones have no signature doglegs
   career: false, // playing a round of the career
   match: null,   // a money match: { member, stake }
+  practice: null, // a practice session: { key, ball, hits }
 };
 
 // Which screen is up: 'title', 'new' (starting a career), 'hub' (the
@@ -4663,6 +4812,7 @@ function ballNow(now) {
 }
 
 function update(now) {
+  if (ui.phase === 'drill') { if (now >= ui.nextBall) practiceBall(now); return; }
   if (ui.phase === 'putting') return updatePutting(now);
   if (ui.phase === 'aim' && !humanTurn()) return updateComputer(now);
   const a = ui.anim;
@@ -4672,6 +4822,7 @@ function update(now) {
     const me = current(game.play), lie = me.lie;
     settle(game.play, a.shot);
     ui.anim = null;
+    if (settings.practice) return practiceDone(a.shot.from, a.shot.rest, a.shot.holed, now);
     if (form && !me.golfer.ai) noteForm(judgeShot(a.shot, lie, game.hole, me.golfer), now);
     let note = a.shot.note;
     const pic = note?.startsWith('OUT OF BOUNDS') ? OB_BANNER : note?.startsWith('IN THE WATER') ? WATER_BANNER : !me.holed && LIE_BANNERS[me.lie];
@@ -4835,6 +4986,7 @@ function updatePutting(now) {
   if (now - pt.rollAt < pt.roll.path.length * 1000 / 60 + 600) return;
   const roll = pt.roll, from = me.at, nth = me.putts + 1;
   settlePutt(game.play, roll);
+  if (settings.practice) { ui.putt = null; return practiceDone(from, roll.rest, roll.holed, now); }
   if (form && !me.golfer.ai) noteForm(judgePutt(dist(from, game.hole.pin), me.holed, nth), now);
   ui.putt = null;
   if (me.holed) return afterStroke(now, null);
@@ -4850,6 +5002,7 @@ function updatePutting(now) {
 
 // Everyone's round so far against par, e.g. 'YOU +2  BERTIE E'.
 function standings() {
+  if (settings.practice) { const pr = settings.practice; return `BALL ${Math.min(pr.ball + 1, BALLS)} OF ${BALLS}, ${pr.hits} GOOD`; }
   if (settings.match) return matchWords(matchPlay(round, settings.holes), round.players.map((p) => p.name.toUpperCase()));
   return round.players.map((p, i) => {
     const st = standing(round, i);
@@ -5093,6 +5246,7 @@ function renderMenu(now) {
   if (app.mode === 'title') drawTitle(hud, W, H, { buttons: titleLayout(W, H, !!app.career), hover, save: app.career });
   if (app.mode === 'new') drawNewCareer(hud, W, H, newCareerLayout(W, H), { draft: app.draft, hover, now, replaces: !!app.career });
   if (app.mode === 'hub') drawHub(hud, W, H, hubLayout(W, H, app.career), { career: app.career, hover, now });
+  if (app.mode === 'drills') drawDrills(hud, W, H, drillsLayout(W, H), { career: app.career, hover });
   if (app.mode === 'members') drawMembers(hud, W, H, membersLayout(W, H), { career: app.career, pick: app.pick, hover, now });
   if (app.mode === 'courses') drawCourses(hud, W, H, coursesLayout(W, H, clubCourses(app.career)), { courses: clubCourses(app.career), hover });
 }
@@ -5102,7 +5256,8 @@ function menuButtons() {
   const { W, H } = display;
   if (app.mode === 'title') return titleLayout(W, H, !!app.career);
   if (app.mode === 'new') { const L = newCareerLayout(W, H); return [L.prev, L.next, ...L.shirts, L.back, L.start]; }
-  if (app.mode === 'hub') { const L = hubLayout(W, H, app.career); return app.career.round ? [L.play, L.menu] : [L.play, L.match, L.menu]; }
+  if (app.mode === 'hub') { const L = hubLayout(W, H, app.career); return app.career.round ? [L.play, L.menu] : [L.play, L.match, L.practice, L.menu]; }
+  if (app.mode === 'drills') { const L = drillsLayout(W, H); return [...(canPractise(app.career) ? L.drills : []), L.back]; }
   if (app.mode === 'members') { const L = membersLayout(W, H); return [...L.members, ...L.stakes, L.challenge, L.back]; }
   if (app.mode === 'courses') { const L = coursesLayout(W, H, clubCourses(app.career)); return [...L.cards, L.back]; }
   return [];
@@ -5124,7 +5279,9 @@ function menuAction(key) {
     return;
   }
   if (key.startsWith('shirt-')) { d.shirt = SHIRT_COLOURS[Number(key.slice(6))]; return; }
-  if (key === 'back' && (app.mode === 'courses' || app.mode === 'members')) return goHub();
+  if (key === 'back' && ['courses', 'members', 'drills'].includes(app.mode)) return goHub();
+  if (key === 'practice') { app.mode = 'drills'; app.hover = canPractise(app.career) ? 'drill-0' : 'back'; return; }
+  if (key.startsWith('drill-')) return startPractice(DRILLS[Number(key.slice(6))].key);
   if (key === 'back' || key === 'menu') return showTitle();
   if (key === 'start' && d.name.trim()) {
     app.career = newCareer({ name: d.name.trim(), look: d.look, shirt: d.shirt });
@@ -5162,7 +5319,7 @@ function menuKey(e) {
     if (k === 'Escape') return menuAction('back');
     return;
   }
-  if ((app.mode === 'courses' || app.mode === 'members') && k === 'Escape') return menuAction('back');
+  if (['courses', 'members', 'drills'].includes(app.mode) && k === 'Escape') return menuAction('back');
   if (app.mode === 'hub') {
     if (k === 'Enter') return menuAction('play');
     if (k === 'Escape') return menuAction('menu');
@@ -5184,12 +5341,13 @@ function showTitle() {
 let playing = null;
 
 // Show a course behind the menus (or play it): settings for the course, hole and round.
-function useCourse(course, hole, career, match = null) {
+function useCourse(course, hole, career, match = null, practice = null) {
   playing = course;
   form = null;
   settings.match = match;
+  settings.practice = practice;
   Object.assign(settings, { style: course.style, seed: course.seed, name: course.name ?? null, par: course.par ?? 72, length: course.length ?? 'standard', tour: course.tour ?? null, holes: course.holes ?? 18, hole, career, event: false });
-  golfers = !career ? [PLAYER, RIVAL] : [careerGolfer(app.career), match ? memberGolfer(app.career, match.member) : clubOpponent()];
+  golfers = !career ? [PLAYER, RIVAL] : practice ? [careerGolfer(app.career)] : [careerGolfer(app.career), match ? memberGolfer(app.career, match.member) : clubOpponent()];
   showMap(false);
   loadHole();
 }
@@ -5202,6 +5360,8 @@ function goHub() {
   if (c.round && c.round.hole > c.round.course.holes) return endCareerRound();
   app.mode = 'hub';
   app.hover = 'play';
+  // Back to your own zoom after a drill zoomed in.
+  if (settings.practice) setZoom(settings.practice.zoom);
   useCourse(c.home, 1, true);
 }
 
@@ -5227,6 +5387,51 @@ function endCareerRound() {
   finishRound(c, { course: course.name, holes, score: total(saved.scores[0]), par: total(pars), vs: (saved.vs ?? clubOpponent().name).toUpperCase(), vsScore: total(saved.scores[1]), match });
   saveCareer(c);
   goHub();
+}
+
+// ---------- Practice ground ----------
+
+// A drill on its hole of your home course, on your own.
+function startPractice(key) {
+  const c = app.career;
+  if (!canPractise(c)) return;
+  app.mode = 'play';
+  round = null;
+  const home = buildCourse({ ...c.home }, { layout: false });
+  useCourse(c.home, drillHole(home, key), true, null, { key, ball: 0, hits: 0, zoom: display.zoom });
+  practiceBall(performance.now());
+}
+
+// Put the next ball down where the drill plays from.
+function practiceBall(now) {
+  const pr = settings.practice, me = current(game.play);
+  const { at, lie } = drillSpot(pr.key, game.hole, pr.ball, TEE);
+  Object.assign(me, { at, lie, strokes: 0, putts: 0, holed: false, onGreen: lie === 'green' });
+  // Closer in for the short shots, so the ball and the green read well.
+  if (pr.ball === 0) setZoom(pr.key === 'chip' ? 2 : pr.key === 'escape' ? 1 : 0);
+  startTurn(now, `${drill(pr.key).name}: BALL ${pr.ball + 1} OF ${BALLS}`);
+  aimCamera(true);
+}
+
+// A drill ball has finished: say how it went, then the next ball, or the end.
+function practiceDone(from, end, holed, now) {
+  const pr = settings.practice, me = current(game.play), d = drill(pr.key);
+  const res = drillResult(pr.key, game.hole, me.golfer, from, end, holed);
+  if (res.hit) pr.hits += 1;
+  pr.ball += 1;
+  ui.anim = null;
+  ui.aim = null;
+  if (pr.ball < BALLS) {
+    ui.banner = { text: res.hit ? `GOOD! ${res.text}` : res.text, sub: `${pr.hits} GOOD OF ${pr.ball}`, until: now + 2000 };
+    ui.phase = 'drill';
+    ui.nextBall = now + 2000;
+    return;
+  }
+  const c = app.career, gain = drillGain(pr.hits, c.skills[d.skill]);
+  recordPractice(c, { name: d.name, skill: d.skill, hits: pr.hits, balls: BALLS, gain });
+  saveCareer(c);
+  ui.phase = 'done';
+  ui.banner = { text: `${res.text}. ${pr.hits} OF ${BALLS} GOOD`, sub: `${SKILL_NAMES[d.skill]} +${gain.toFixed(1)}. ENTER FOR THE CLUBHOUSE`, until: Infinity };
 }
 
 function startFreePlay() {
@@ -5352,6 +5557,7 @@ addEventListener('keydown', (e) => {
   if (k === 'h') return settings.career ? goHub() : showTitle();
   if (k === 'tab') { e.preventDefault(); ui.card = !ui.card; ui.cardAt = 0; return; }
   if (k === 'enter' && ui.phase === 'done') {
+    if (settings.practice) return goHub();
     const last = roundOver();
     if (settings.career && last) return endCareerRound();
     // On to the next hole, or a fresh round after the last.

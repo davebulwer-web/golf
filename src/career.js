@@ -113,6 +113,20 @@ export function finishRound(c, result) {
   if (c.week > WEEKS) { c.week = 1; c.season += 1; }
 }
 
+// ---------- Practice ----------
+// One practice session a week (the week's midweek slot); it's free.
+
+const weekKey = (c) => `${c.season}:${c.week}`;
+export const canPractise = (c) => c.practised !== weekKey(c);
+
+// Note a practice session: the skill goes up by `gain`, and it goes in the history.
+export function recordPractice(c, { name, skill, hits, balls, gain }) {
+  c.skills[skill] = Math.min(99, Math.round((c.skills[skill] + gain) * 10) / 10);
+  c.practised = weekKey(c);
+  c.history.unshift({ season: c.season, week: c.week, practice: { name, skill, hits, balls, gain } });
+  c.history = c.history.slice(0, 40);
+}
+
 // ---------- Saving ----------
 // Storage can be missing or refuse (private windows, sandboxed pages): then the
 // career just lasts until the page is closed.
