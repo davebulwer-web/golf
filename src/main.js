@@ -432,7 +432,7 @@ function render(now) {
     const still = game.play.players.find((o) => !o.holed);
     const dir = mood ? (still ? -side(still.at) : 1) : side(target);
     const x = stand.x + (mood ? 10 : playing ? (onGreen ? -2 : -5) : -18) * dir;
-    items.push({ y: stand.y, draw: () => drawDinky(ctx, frame, x, stand.y, p.golfer.shirt, false, dir < 0) || drawSprite(ctx, 'golfer', x, stand.y, { c: p.golfer.shirt }) });
+    items.push({ y: stand.y, draw: () => drawDinky(ctx, `${p.golfer.look ?? 'club'}/${frame}`, x, stand.y, p.golfer.shirt, false, dir < 0) || drawSprite(ctx, 'golfer', x, stand.y, { c: p.golfer.shirt }) });
     if (p.holed) return;
     const s = v.worldToScreen(ball), up = v.worldToScreen(ball, ball.z);
     items.push({ y: s.y + 0.5, draw: () => {

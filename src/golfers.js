@@ -5,13 +5,15 @@
 //   recovery   how well they play from rough, sand, waste and trees
 //   putting    how often putts drop
 // Computer golfers also have `nerve` (0 to 1): how much risk they'll take for a better spot.
+// `look` is which golfer sprites they use (a folder in assets/golfers), and
+// `shirt` the colour their shirt is painted.
 
 export const PLAYER = {
-  name: 'You', shirt: '#d03a2a',
+  name: 'You', look: 'club', shirt: '#d03a2a',
   skills: { power: 55, accuracy: 55, shortGame: 55, recovery: 50, putting: 55 },
 };
 
 export const RIVAL = {
-  name: 'Bertie', shirt: '#2f6fd6', ai: true, nerve: 0.5,
+  name: 'Bertie', look: 'heavy', shirt: '#2f6fd6', ai: true, nerve: 0.5,
   skills: { power: 60, accuracy: 52, shortGame: 55, recovery: 55, putting: 50 },
 };
