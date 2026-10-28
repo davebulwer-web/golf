@@ -414,7 +414,7 @@ function render(now) {
   const pins = [game.hole.pin, ...v.others.map((o) => o.toHere(o.hole.pin))];
   for (const pin of pins) {
     const at = v.worldToScreen(pin);
-    items.push({ y: at.y, draw: () => drawDinky(ctx, flagFrame(now), at.x, at.y) || drawSprite(ctx, 'flag', at.x, at.y) });
+    items.push({ y: at.y, draw: () => drawSprite(ctx, flagFrame(now), at.x, at.y) });
   }
   game.play.players.forEach((p, i) => {
     const playing = i === game.play.turn;
@@ -443,7 +443,7 @@ function render(now) {
     items.push({ y: s.y + 0.5, draw: () => {
       const y = Math.round(up.y), bx = Math.round(s.x);
       if (ball.h > 0.3) { ctx.fillStyle = 'rgba(0, 0, 0, 0.45)'; ctx.fillRect(bx - 1, Math.round(s.y), 2, 1); }
-      if (ball.h > 4 && drawDinky(ctx, ballFrame(ball.h), bx, y + 1)) return;
+      if (ball.h > 4) return drawSprite(ctx, ballFrame(ball.h), bx, y + 1);
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(bx - 1, y - 1, 2, 2);
     } });

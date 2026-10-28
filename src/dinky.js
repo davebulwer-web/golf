@@ -1,5 +1,5 @@
 // Sprites from the Dinky Tiny Golf pack by Mike Moore (www.pixelbitsnbytes.com):
-// the ball in flight, the flag and a few result banners. Also the golfer and
+// a few result banners. Also the golfer and
 // the score and hazard pop-ups, from Dave's sheets. Until the images have
 // loaded, callers fall back to the placeholder art.
 
@@ -65,7 +65,7 @@ function prepared(name, shirt = null) {
   else for (let y = c.height - 1; y >= 0; y--) {
     const xs = [];
     for (let x = 0; x < c.width; x++) if (px[(y * c.width + x) * 4 + 3] > 0) xs.push(x);
-    if (xs.length) { ax = name.startsWith('flag') ? xs[0] : Math.round((xs[0] + xs[xs.length - 1]) / 2); ay = y; break; }
+    if (xs.length) { ax = Math.round((xs[0] + xs[xs.length - 1]) / 2); ay = y; break; }
   }
   const out = { canvas: c, ax, ay, w: c.width, h: c.height };
   preparedCache.set(key, out);
@@ -122,11 +122,11 @@ export function golferFrame(pose, t = 0, now = 0) {
   return IDLE_FRAMES[Math.floor(now / 450) % IDLE_FRAMES.length];
 }
 
-// The ball gets bigger the higher it is, from 'ball0' on the ground.
-export const ballFrame = (h) => `ball${Math.max(0, Math.min(4, Math.round(h / 9)))}`;
+// The ball in the air gets bigger the higher it is.
+export const ballFrame = (h) => `ball-${h < 12 ? 1 : h < 30 ? 2 : 3}`;
 
 // The flag's frame, waving.
-export const flagFrame = (now) => `flag${1 + (Math.floor(now / 160) % 4)}`;
+export const flagFrame = (now) => `flag-${1 + (Math.floor(now / 160) % 4)}`;
 
 // Result banners: which picture goes with a lie after a shot, or a score on a hole.
 export const LIE_BANNERS = { fairway: 'txt-fairway', rough: 'txt-intherough', bunker: 'pop-bunker', green: 'txt-onthegreen' };

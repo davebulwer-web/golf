@@ -297,8 +297,7 @@ function paintMarkers(buf, W, H, view, hole, actors) {
   const items = [];
   for (const t of TEE_SETS) {
     const at = view.worldToScreen(pointAt(hole.line, hole.tees[t.key]));
-    const col = hex(t.color), dark = hex('#1a1a1a');
-    for (const dx of [-3, 3]) items.push({ y: at.y, draw: () => { put(buf, W, H, at.x + dx, at.y, col); put(buf, W, H, at.x + dx, at.y + 1, dark); } });
+    for (const dx of [-5, 5]) items.push({ y: at.y, draw: () => blit(buf, W, H, SPRITES[`tee-${t.key}`], at.x + dx, at.y) });
   }
   // The flags are drawn over the top each frame, so they can wave.
   for (const a of actors) {
