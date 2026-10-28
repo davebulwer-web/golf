@@ -49,10 +49,11 @@ export const viewButtons = (W) => ({
   left: { x: W - 62, y: 44, w: 27, h: 22 }, right: { x: W - 33, y: 44, w: 27, h: 22 },
   golfer: { x: W - 62, y: 69, w: 56, h: 13 }, // changes which golfer you play as
   map: { x: W - 62, y: 85, w: 56, h: 13 },    // the whole course, and back
+  event: { x: W - 62, y: 101, w: 56, h: 13 }, // tournament stands and tents on or off
 });
 
-export function drawViewButtons(ctx, W, onMap = false) {
-  const { left, right, golfer, map } = viewButtons(W);
+export function drawViewButtons(ctx, W, onMap = false, event = false) {
+  const { left, right, golfer, map, event: eventButton } = viewButtons(W);
   for (const [b, dir, key] of [[left, -1, 'Q'], [right, 1, 'E']]) {
     panel(ctx, b.x, b.y, b.w, b.h);
     // A curved arrow round the top of a circle, pointing the way the view turns.
@@ -69,6 +70,9 @@ export function drawViewButtons(ctx, W, onMap = false) {
   panel(ctx, map.x, map.y, map.w, map.h);
   const mapLabel = onMap ? 'BACK  M' : 'MAP  M';
   drawText(ctx, mapLabel, map.x + Math.round((map.w - textWidth(mapLabel)) / 2), map.y + 4, onMap ? GOLD : '#f4f4f4', 1, null);
+  panel(ctx, eventButton.x, eventButton.y, eventButton.w, eventButton.h);
+  const eventLabel = event ? 'EVENT ON  T' : 'EVENT  T';
+  drawText(ctx, eventLabel, eventButton.x + Math.round((eventButton.w - textWidth(eventLabel)) / 2), eventButton.y + 4, event ? GOLD : '#f4f4f4', 1, null);
 }
 
 // A hole number on a little plate, centred at (x, y): gold for the hole being played.

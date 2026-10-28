@@ -10,10 +10,10 @@
 import fs from 'fs';
 import zlib from 'zlib';
 
-// Pack every PNG in `dir` (bar the source sheet) as data URLs into src/<file>.
+// Pack every PNG in `dir` (bar the source sheets) as data URLs into src/<file>.
 // A folder of folders (one per golfer look) gives names like 'heavy/address'.
 function packUrls(dir, file, name, credit) {
-  const pngsIn = (d) => fs.readdirSync(d).filter((f) => f.endsWith('.png') && f !== 'source-sheet.png').sort();
+  const pngsIn = (d) => fs.readdirSync(d).filter((f) => f.endsWith('.png') && !f.startsWith('source-sheet')).sort();
   const subs = fs.readdirSync(dir).filter((f) => fs.statSync(`${dir}/${f}`).isDirectory()).sort();
   const pngs = subs.length ? subs.flatMap((s) => pngsIn(`${dir}/${s}`).map((f) => `${s}/${f}`)) : pngsIn(dir);
   const lines = pngs.map((f) => `  '${f.slice(0, -4)}': 'data:image/png;base64,${fs.readFileSync(`${dir}/${f}`).toString('base64')}',`);
@@ -64,9 +64,9 @@ function readPng(file) {
   return { w, h, rgba };
 }
 
-// Pack every PNG in `dir` (bar the source sheet) as raw pixels into src/<file>.
+// Pack every PNG in `dir` (bar the source sheets) as raw pixels into src/<file>.
 function packPixels(dir, file, name, what) {
-  const pngs = fs.readdirSync(dir).filter((f) => f.endsWith('.png') && f !== 'source-sheet.png').sort();
+  const pngs = fs.readdirSync(dir).filter((f) => f.endsWith('.png') && !f.startsWith('source-sheet')).sort();
   const lines = pngs.map((f) => {
     const { w, h, rgba } = readPng(`${dir}/${f}`);
     return `  '${f.slice(0, -4)}': [${w}, ${h}, '${rgba.toString('base64')}'],`;
@@ -83,4 +83,5 @@ ${lines.join('\n')}
 
 packPixels('assets/trees', 'tree-assets.js', 'TREE_PIXELS', 'tree');
 packPixels('assets/props', 'prop-assets.js', 'PROP_PIXELS', 'prop');
+packPixels('assets/events', 'event-assets.js', 'EVENT_PIXELS', 'tournament stand or building');
 packPixels('assets/ground', 'ground-assets.js', 'GROUND_PIXELS', 'ground texture');

@@ -5,7 +5,7 @@
 
 import { makeRng, dist, surfaceAt, pointAt, STYLES } from './course-generator.js';
 import { buildCourse } from './course.js';
-import { layoutHole, shiftView, addSurroundings, drawHole, isOutOfBounds, courseHoles, courseView, piecePad } from './hole-view.js';
+import { layoutHole, shiftView, addSurroundings, drawHole, isOutOfBounds, courseHoles, courseView, piecePad, tournamentSites } from './hole-view.js';
 import { drawSprite } from './art.js';
 import { drawHud, drawShotBar, drawPuttBar, drawBanner, drawScorecard, shotButtons, actionButtons, viewButtons, drawViewButtons, drawHoleNumber, BAR_TOP } from './hud.js';
 import { roundWeather, holeWind } from './weather.js';
@@ -40,6 +40,8 @@ const settings = {
   style: STYLE_KEYS.includes(params.get('style')) ? params.get('style') : 'tropical',
   seed: Number(params.get('seed')) || 1989,
   hole: Math.min(18, Math.max(1, Number(params.get('hole')) || 1)),
+  // A tournament round: grandstands, TV towers and tents round the course.
+  event: params.get('event') === '1',
 };
 
 // fitScale: screen pixels per game pixel when the whole hole is shown. W x H: the
@@ -164,6 +166,7 @@ function loadHole() {
   const course = buildCourse({ name: `Course ${settings.seed}`, style: settings.style, par: 72, length: 'standard', seed: settings.seed });
   const hole = course.holes[settings.hole - 1];
   const weather = roundWeather(course);
+  course.tournament = settings.event;
   game = { course, hole, weather, wind: holeWind(weather, hole), play: startHole(hole, GOLFERS, TEE) };
   // Scores carry on from hole to hole on the same course.
   const key = `${settings.style}:${settings.seed}`;
@@ -174,7 +177,7 @@ function loadHole() {
   buildWorld();
   startTurn(performance.now());
   // Keep the address shareable where the page is allowed to change it.
-  try { history.replaceState(null, '', `?style=${settings.style}&seed=${settings.seed}&hole=${settings.hole}`); } catch { /* sandboxed */ }
+  try { history.replaceState(null, '', `?style=${settings.style}&seed=${settings.seed}&hole=${settings.hole}${settings.event ? '&event=1' : ''}`); } catch { /* sandboxed */ }
 }
 
 // ---------- Camera ----------
@@ -211,6 +214,14 @@ function setZoom(z) {
   if (z === display.zoom) return;
   display.zoom = z;
   rescale();
+}
+
+// Dress the course for a tournament, or take it all down again.
+function toggleEvent() {
+  settings.event = !settings.event;
+  game.course.tournament = settings.event;
+  buildWorld();
+  try { history.replaceState(null, '', `?style=${settings.style}&seed=${settings.seed}&hole=${settings.hole}${settings.event ? '&event=1' : ''}`); } catch { /* sandboxed */ }
 }
 
 // Play as the next golfer look (until there's a proper character picker).
@@ -677,7 +688,7 @@ function render(now) {
     lie: LIE_NAMES[me.lie] ?? me.lie.toUpperCase(), toPin: Math.round(toPin(game.play)), stroke: me.holed ? me.strokes : me.strokes + 1,
     hint: display.map ? 'CLICK THE MAP OR PRESS M TO GO BACK' : !humanTurn() && ui.phase !== 'done' ? `${who(me.golfer)} IS PLAYING` : ui.phase !== 'aim' ? '' : !ui.aim ? 'DRAG ON THE COURSE TO AIM' : ui.dragging ? 'LET GO TO SET THE AIM' : 'CHANGE SHOT OR DRAG AGAIN',
   });
-  drawViewButtons(hud, W, display.map);
+  drawViewButtons(hud, W, display.map, settings.event);
   if (ui.banner && now < ui.banner.until) drawBanner(hud, W, ui.banner.text, ui.banner.sub);
   if (ui.pop && now < ui.pop.until) drawPop(hud, W, H, now);
   if (ui.cardAt && now >= ui.cardAt) { ui.card = true; ui.cardAt = 0; }
@@ -718,6 +729,7 @@ canvas.addEventListener('mousedown', (e) => {
   if (inside(p, turn.right)) return turnView(1);
   if (inside(p, turn.golfer)) return changeGolfer();
   if (inside(p, turn.map)) return showMap(!display.map);
+  if (inside(p, turn.event)) return toggleEvent();
   if (ui.phase === 'putting') return puttClick(p);
   // A click on the map goes back to the hole.
   if (display.map && p.y < BAR_TOP(display.H)) return showMap(false);
@@ -800,6 +812,7 @@ addEventListener('keydown', (e) => {
   }
   if (k === 'c') { cam.manual = false; return; }
   if (k === 'm') return showMap(!display.map);
+  if (k === 't') return toggleEvent();
   if (k === 'q') return turnView(-1);
   if (k === 'e') return turnView(1);
   if (k === 'g') return changeGolfer();
@@ -841,7 +854,7 @@ function autoPutt() {
   pt.meterAt = now - plan.power * POWER_SWEEP;
   stopPower(now);
 }
-window.golf = { get game() { return game; }, get world() { return world; }, get round() { return round; }, ui, cam, display, shoot, clampAim, setZoom, turnView, changeGolfer, autoPutt, greenFor };
+window.golf = { get game() { return game; }, get world() { return world; }, get round() { return round; }, ui, cam, display, shoot, clampAim, setZoom, turnView, changeGolfer, autoPutt, greenFor, toggleEvent, tournamentSites: () => tournamentSites(game.course) };
 
 measure();
 loadHole();
