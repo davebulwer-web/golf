@@ -1,7 +1,8 @@
 // Packs the sprite images in assets/dinky, assets/golfers and assets/popups into
 // src/dinky-assets.js, src/golfer-assets.js and src/popup-assets.js as data URLs,
-// and the trees and ground textures in assets/trees and assets/ground into
-// src/tree-assets.js and src/ground-assets.js as raw pixels (they're drawn into
+// and the trees, props and ground textures in assets/trees, assets/props and
+// assets/ground into src/tree-assets.js, src/prop-assets.js and
+// src/ground-assets.js as raw pixels (they're drawn into
 // the hole's picture straight away, before any image could load),
 // so the game stays a single file that opens from disk.
 // Run with: node tools/pack-assets.mjs (then node tools/build.mjs)
@@ -81,4 +82,5 @@ ${lines.join('\n')}
 }
 
 packPixels('assets/trees', 'tree-assets.js', 'TREE_PIXELS', 'tree');
+packPixels('assets/props', 'prop-assets.js', 'PROP_PIXELS', 'prop');
 packPixels('assets/ground', 'ground-assets.js', 'GROUND_PIXELS', 'ground texture');

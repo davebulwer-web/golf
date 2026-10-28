@@ -1,8 +1,10 @@
 // Pixel art drawn from code: ground colours, sprites and a tiny bitmap font,
-// plus the trees and ground textures from assets/trees and assets/ground
-// (packed into tree-assets.js and ground-assets.js).
+// plus the trees, course props and ground textures from assets/trees,
+// assets/props and assets/ground (packed into tree-assets.js, prop-assets.js
+// and ground-assets.js).
 
 import { TREE_PIXELS } from './tree-assets.js';
+import { PROP_PIXELS } from './prop-assets.js';
 import { GROUND_PIXELS } from './ground-assets.js';
 
 const hex = (s) => {
@@ -40,16 +42,16 @@ export const STYLE_ART = {
   woodland: { trees: [...LEAFY, ...LEAFY, ...PINES, ...PINES, 'autumn-1', 'autumn-2', 'autumn-3', 'bare-1', 'bare-2', 'willow'], density: 0.26 },
   alpine: { trees: PINES, density: 0.24, ground: { land: ['#4c9638', '#479034'] } },
   heathland: {
-    trees: [...PINES, 'bushy-1', 'heather', 'heather', 'heather', 'heather', 'heather'], density: 0.25,
+    trees: [...PINES, 'bushy-1', 'heather-1', 'heather-2', 'heather-3', 'heather-1', 'heather-2'], density: 0.25,
     ground: { trees: ['#6b5a72', '#5d4f66'], land: ['#5e8a38', '#587f34'], rough: ['#5a7f30', '#638a36'] },
   },
   tropical: { trees: ['palm-1', 'palm-2', 'palm-3', 'palm-1', 'palm-2', 'palm-3', 'bush-1', 'berry-bush'], density: 0.2, ground: { land: ['#60aa3a', '#5ba436'], trees: ['#2f7424', '#2b6c22'] } },
   links: {
-    trees: ['gorse', 'gorse', 'gorse', 'gorse', 'bush-1', 'bush-2'], density: 0.3,
+    trees: ['gorse-1', 'gorse-2', 'gorse-3', 'gorse-1', 'bush-1', 'bush-2'], density: 0.22,
     ground: { trees: ['#8a9448', '#7f8a40'], land: ['#93a050', '#8a984a'], rough: ['#76933c', '#7e9a42'] },
   },
   desert: {
-    trees: ['cactus', 'cactus', 'acacia'], density: 0.1,
+    trees: ['cactus-1', 'cactus-2', 'cactus-3', 'acacia'], density: 0.1,
     ground: { trees: ['#d4a868', '#c99c5c'], land: ['#dbb070', '#d0a464'], rough: ['#8f9a48', '#9aa250'] },
   },
 };
@@ -104,35 +106,6 @@ function darken(c) {
 // its colours. (ax, ay) is the pixel that sits on the ground point.
 
 export const SPRITES = {
-  cactus: {
-    ax: 2, ay: 7, colors: { a: '#3f7a32', b: '#5a9a44' },
-    rows: [
-      '..a..',
-      'a.b..',
-      'a.a.a',
-      'aba.b',
-      '..aba',
-      '..a..',
-      '..a..',
-      '..a..',
-    ],
-  },
-  gorse: {
-    ax: 2, ay: 2, colors: { a: '#3d5a1e', b: '#567a2a', c: '#e8c83a' },
-    rows: [
-      '.aca.',
-      'abcba',
-      '.aaa.',
-    ],
-  },
-  heather: {
-    ax: 2, ay: 2, colors: { a: '#4a3a52', b: '#8a5a96', c: '#b07ac0' },
-    rows: [
-      '.bcb.',
-      'abbba',
-      '.aaa.',
-    ],
-  },
   golfer: {
     ax: 2, ay: 9, colors: { h: '#f4f4f4', s: '#e8b88a', c: '#d03a2a', p: '#2a2a3a', k: '#1a3a12' },
     rows: [
@@ -148,21 +121,6 @@ export const SPRITES = {
       'kk.kk',
     ],
   },
-  flag: {
-    ax: 0, ay: 9, colors: { f: '#e8302a', g: '#b01e1a', p: '#f4f4f4', k: '#1a1a1a' },
-    rows: [
-      'pff.',
-      'pfff',
-      'pgg.',
-      'p...',
-      'p...',
-      'p...',
-      'p...',
-      'p...',
-      'p...',
-      'k...',
-    ],
-  },
 };
 
 // Turn sprite rows into packed pixels once, with colours resolved.
@@ -172,8 +130,10 @@ for (const s of Object.values(SPRITES)) {
   s.px = s.rows.map((r) => [...r].map((ch) => (ch === '.' ? 0 : hex(s.colors[ch]))));
 }
 
-// The trees, anchored at the foot of the trunk: the middle of the bottom row.
-for (const [name, [w, h, b64]] of Object.entries(TREE_PIXELS)) {
+// The trees and props, anchored at the foot: the middle of the bottom row.
+// Props have a soft shadow below them, which isn't drawn, so theirs is the
+// lowest solid row; a flag's is the hole, under its pole.
+for (const [name, [w, h, b64]] of Object.entries({ ...TREE_PIXELS, ...PROP_PIXELS })) {
   const bytes = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
   const px = [];
   for (let j = 0; j < h; j++) {
@@ -184,8 +144,15 @@ for (const [name, [w, h, b64]] of Object.entries(TREE_PIXELS)) {
     }
     px.push(row);
   }
-  const foot = px[h - 1].map((c, i) => (c ? i : -1)).filter((i) => i >= 0);
-  SPRITES[name] = { w, h, px, ax: foot.length ? Math.round((foot[0] + foot[foot.length - 1]) / 2) : w >> 1, ay: h - 1 };
+  let ay = h - 1;
+  while (ay > 0 && !px[ay].some((c) => c)) ay--;
+  const foot = px[ay].map((c, i) => (c ? i : -1)).filter((i) => i >= 0);
+  let ax = foot.length ? Math.round((foot[0] + foot[foot.length - 1]) / 2) : w >> 1;
+  if (name.startsWith('flag-')) {
+    ax = Math.min(...px.slice(0, h >> 1).map((row) => row.findIndex((c) => c)).filter((i) => i >= 0));
+    ay = Math.max(0, ay - 2);
+  }
+  SPRITES[name] = { w, h, px, ax, ay };
 }
 
 // Draw a sprite into a packed pixel buffer with its anchor at (x, y).
