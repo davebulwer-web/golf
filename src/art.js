@@ -1,7 +1,9 @@
 // Pixel art drawn from code: ground colours, sprites and a tiny bitmap font,
-// plus the trees from assets/trees (packed into tree-assets.js).
+// plus the trees and ground textures from assets/trees and assets/ground
+// (packed into tree-assets.js and ground-assets.js).
 
 import { TREE_PIXELS } from './tree-assets.js';
+import { GROUND_PIXELS } from './ground-assets.js';
 
 const hex = (s) => {
   const n = parseInt(s.slice(1), 16);
@@ -60,6 +62,34 @@ export function groundPalette(style) {
     const [a, b, e] = g[k];
     out[k] = [hex(a), hex(b), hex(e ?? darken(a))];
   }
+  return out;
+}
+
+// Ground textures for a style, as packed pixels: { surface: { w, h, px } }.
+// The textures are drawn in parkland colours. A style with its own colour for a
+// surface keeps the texture's light and dark but takes its colour from the style.
+const textureCache = new Map();
+export function groundTextures(style) {
+  if (textureCache.has(style)) return textureCache.get(style);
+  const own = { ...BASE_GROUND, ...(STYLE_ART[style]?.ground ?? {}) };
+  const out = {};
+  for (const [name, [w, h, b64]] of Object.entries(GROUND_PIXELS)) {
+    const bytes = Uint8Array.from(atob(b64), (ch) => ch.charCodeAt(0));
+    const n = w * h;
+    const lum = (k) => 0.3 * bytes[k * 4] + 0.59 * bytes[k * 4 + 1] + 0.11 * bytes[k * 4 + 2];
+    let mean = 0;
+    for (let k = 0; k < n; k++) mean += lum(k) / n;
+    const recolour = own[name][0] !== BASE_GROUND[name][0];
+    const to = parseInt(own[name][0].slice(1), 16), base = [to >> 16, (to >> 8) & 255, to & 255];
+    const px = new Uint32Array(n);
+    for (let k = 0; k < n; k++) {
+      const f = lum(k) / mean;
+      const [r, g, b] = recolour ? base.map((v) => Math.min(255, Math.round(v * f))) : [0, 1, 2].map((i) => bytes[k * 4 + i]);
+      px[k] = (0xff << 24 | b << 16 | g << 8 | r) >>> 0;
+    }
+    out[name] = { w, h, px };
+  }
+  textureCache.set(style, out);
   return out;
 }
 

@@ -4,7 +4,7 @@ import { holeToGrid, holeBounds, pointAt, surfaceAt, TEE_SETS } from './course-g
 import { neighbours, courseMap, coastAt, toMap } from './course-map.js';
 import { fitView, makeView, liftPx } from './iso.js';
 import { heightAt } from './terrain.js';
-import { groundPalette, STYLE_ART, SPRITES, blit, recolor, hex } from './art.js';
+import { groundPalette, groundTextures, STYLE_ART, SPRITES, blit, recolor, hex } from './art.js';
 
 // Yards per tile, most detailed first. The first one that fits the screen is used.
 const CELLS = [3, 4, 5, 6, 8];
@@ -234,34 +234,34 @@ function sampleGround(view, W, H) {
   return { names, surf, tc, tr, shade };
 }
 
+// Mowing stripes across the hole, as how much darker the alternate stripes are.
+const MOWN = { fairway: [1, 0.93], green: [0, 0.95] };
+
 function paintGround(buf, W, H, style, g) {
   const pal = groundPalette(style);
-  const { names, surf, tc, tr, shade } = g;
+  const tex = groundTextures(style);
+  const { names, surf, tr, shade } = g;
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const k = y * W + x;
       const s = names[surf[k]];
-      const [base, alt, edge] = pal[s] ?? pal.land;
-      let c = base;
-      switch (s) {
-        case 'fairway': c = (tr[k] >> 1) & 1 ? alt : base; break; // mowing stripes across the hole
-        case 'green': case 'tee': c = tr[k] & 1 ? alt : base; break;
-        case 'water': case 'sea': c = hash(x >> 2, y, 7) < 0.05 ? alt : base; break; // ripples
-        case 'bunker': case 'beach': case 'waste': c = hash(x, y, 3) < 0.14 ? alt : base; break;
-        case 'fringe': break;
-        default: c = hash(x, y, 1) < 0.28 ? alt : base; // grassy speckle
-      }
+      const edge = (pal[s] ?? pal.land)[2];
+      // Each surface's texture repeats across the picture.
+      const t = tex[s] ?? tex.land;
+      let c = t.px[(y % t.h) * t.w + (x % t.w)];
+      const mown = MOWN[s];
+      if (mown && (tr[k] >> mown[0]) & 1) c = dimmed(c, mown[1]);
       // Lips on the far side of bunkers and water, banks on the near side of greens and tees.
       if (SUNKEN.has(s) && y > 0 && surf[k - W] !== surf[k] && !SUNKEN.has(names[surf[k - W]])) c = edge;
       if (RAISED.has(s) && y < H - 1 && names[surf[k + W]] !== s) c = edge;
-      if (shade[k] !== LIT) {
-        const f = shade[k] / LIT;
-        c = (c & 0xff000000) | (Math.min(255, ((c >>> 16) & 255) * f) << 16) | (Math.min(255, ((c >>> 8) & 255) * f) << 8) | Math.min(255, (c & 255) * f);
-      }
+      if (shade[k] !== LIT) c = dimmed(c, shade[k] / LIT);
       buf[k] = c;
     }
   }
 }
+
+// A packed pixel made lighter or darker by factor f.
+const dimmed = (c, f) => (c & 0xff000000) | (Math.min(255, ((c >>> 16) & 255) * f) << 16) | (Math.min(255, ((c >>> 8) & 255) * f) << 8) | Math.min(255, (c & 255) * f);
 
 // Trees, bushes and cacti, sorted back to front.
 function paintScenery(buf, W, H, view, style) {

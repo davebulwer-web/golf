@@ -37,7 +37,7 @@ The game is plain JavaScript and a canvas, with no engine or libraries.
 - `src/play.js`: playing a hole and a round: strokes, putts, penalties and whose turn it is.
 - `src/iso.js`: the isometric projection between grid tiles, yards (with the height of the ground) and screen pixels.
 - `src/hole-view.js`: draws a whole hole as pixel art (ground, trees, tees, flag, golfers) with its neighbours around it.
-- `src/art.js`: ground colours and which trees grow for each course style, the sprites (trees from `src/tree-assets.js`, plus a few placeholders drawn in code) and a small bitmap font.
+- `src/art.js`: ground colours and textures and which trees grow for each course style, the sprites (trees from `src/tree-assets.js`, plus a few placeholders drawn in code) and a small bitmap font.
 - `src/dinky.js`: the Dinky Tiny Golf sprites: golfer poses (recoloured per player), the ball in flight, the waving flag and result banners.
 - `src/weather.js`: the wind for a round and how it blows across each hole.
 - `src/hud.js`, `src/main.js`: the on-screen panels and the page itself.
@@ -46,4 +46,4 @@ The game is plain JavaScript and a canvas, with no engine or libraries.
 
 ## Credits
 
-The golfer, ball, flag and result banner sprites are from **Dinky Tiny Golf** by Mike Moore ([www.pixelbitsnbytes.com](https://www.pixelbitsnbytes.com)), free to use with credit. The original files and their licence are in `assets/dinky/`; `node tools/pack-assets.mjs` packs them into `src/dinky-assets.js` so the game stays a single file. The trees come from Dave's tree sheet, `assets/trees/source-sheet.png`. `python3 tools/cut-trees.py` cuts them out and shrinks them to game size (into `assets/trees/`), and `node tools/pack-assets.mjs` packs them into `src/tree-assets.js`. The ground colours, cacti, gorse, heather and font are still placeholder pixel art drawn from code.
+The golfer, ball, flag and result banner sprites are from **Dinky Tiny Golf** by Mike Moore ([www.pixelbitsnbytes.com](https://www.pixelbitsnbytes.com)), free to use with credit. The original files and their licence are in `assets/dinky/`; `node tools/pack-assets.mjs` packs them into `src/dinky-assets.js` so the game stays a single file. The trees come from Dave's tree sheet, `assets/trees/source-sheet.png`. `python3 tools/cut-trees.py` cuts them out and shrinks them to game size (into `assets/trees/`), and `node tools/pack-assets.mjs` packs them into `src/tree-assets.js`. The ground textures come from Dave's texture sheet, `assets/ground/source-sheet.png`: `python3 tools/cut-ground.py` turns each swatch into a seamless 32 x 16 texture in `assets/ground/`, packed into `src/ground-assets.js`. Styles with their own ground colours (links, desert, heathland...) keep each texture's light and dark in their own colour. The cacti, gorse, heather and font are still placeholder pixel art drawn from code.
