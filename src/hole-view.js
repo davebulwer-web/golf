@@ -268,7 +268,7 @@ function paintScenery(buf, W, H, view, style) {
   for (let r = r0; r <= r1; r++) {
     for (let c = c0; c <= c1; c++) {
       const s = lookAt(view.look, c, r);
-      const density = s === 'trees' ? art.density : s === 'copse' ? 0.85 : s === 'land' ? landDensity(art, c, r) : 0;
+      const density = s === 'trees' ? art.density : s === 'copse' ? 0.35 : s === 'land' ? landDensity(art, c, r) : 0;
       if (!density || hash(c, r, 11) >= density) continue;
       const p = view.tileToScreen(c, r);
       p.y -= Math.round(liftPx(tileHeight(view, c, r), view.grid.cell));
