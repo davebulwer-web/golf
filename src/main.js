@@ -1,7 +1,8 @@
 // Play a round on a generated course against a computer golfer. Pick a shot,
 // drag out where it should land, then hit it. On the green, putting is a little
 // game of its own, seen from above: aim, then stop the power bar.
-// The URL can pick the course: ?style=tropical&seed=1989&hole=1
+// It opens on a title screen: carry on a career, start a new one, or free play.
+// The URL can pick a course for free play: ?style=tropical&seed=1989&hole=1
 
 import { makeRng, dist, surfaceAt, pointAt, STYLES } from './course-generator.js';
 import { buildCourse } from './course.js';
@@ -16,10 +17,13 @@ import { planShot } from './ai.js';
 import { feet, puttRange, puttRise, readPutt, strike } from './putting.js';
 import { makeGreenView, drawGreenView } from './green-view.js';
 import { drawDinky, dinkySize, golferFrame, ballFrame, flagFrame, GOLFER_LOOKS, LIE_BANNERS, WATER_BANNER, OB_BANNER, scoreBanner } from './dinky.js';
+import { LOOKS, SHIRT_COLOURS, newCareer, careerGolfer, clubOpponent, finishRound, saveCareer, loadCareer } from './career.js';
+import { titleLayout, drawTitle, newCareerLayout, drawNewCareer, hubLayout, drawHub } from './menus.js';
 
 const STYLE_KEYS = Object.keys(STYLES);
 const TEE = 'white';
-const GOLFERS = [PLAYER, RIVAL];
+// Who's playing: you and Bertie in free play; in a career, your golfer and a club member.
+let golfers = [PLAYER, RIVAL];
 // Where the whole-hole view sits in the picture of the course.
 const MARGIN = 200;
 // The course is drawn in square pieces this many pixels across, as they come into view.
@@ -42,6 +46,16 @@ const settings = {
   hole: Math.min(18, Math.max(1, Number(params.get('hole')) || 1)),
   // A tournament round: grandstands, TV towers and tents round the course.
   event: params.get('event') === '1',
+  // The course's name, par and tees, and how many holes make the round.
+  name: null, par: 72, length: 'standard', holes: 18,
+  career: false, // playing a round of the career
+};
+
+// Which screen is up: 'title', 'new' (starting a career), 'hub' (the
+// clubhouse between rounds) or 'play'. A course in the address goes straight to play.
+const app = {
+  mode: ['style', 'seed', 'hole'].some((k) => params.has(k)) ? 'play' : 'title',
+  hover: null, career: loadCareer(), draft: null,
 };
 
 // fitScale: screen pixels per game pixel when the whole hole is shown. W x H: the
@@ -163,20 +177,24 @@ function showMap(on) {
 }
 
 function loadHole() {
-  const course = buildCourse({ name: `Course ${settings.seed}`, style: settings.style, par: 72, length: 'standard', seed: settings.seed });
+  const course = buildCourse({ name: settings.name ?? `Course ${settings.seed}`, style: settings.style, par: settings.par, length: settings.length, seed: settings.seed });
   const hole = course.holes[settings.hole - 1];
   const weather = roundWeather(course);
   course.tournament = settings.event;
-  game = { course, hole, weather, wind: holeWind(weather, hole), play: startHole(hole, GOLFERS, TEE) };
+  game = { course, hole, weather, wind: holeWind(weather, hole), play: startHole(hole, golfers, TEE) };
   // Scores carry on from hole to hole on the same course.
-  const key = `${settings.style}:${settings.seed}`;
-  if (round?.key !== key) round = newRound(course, key, GOLFERS);
+  const key = `${settings.style}:${settings.seed}:${settings.par}:${settings.length}:${settings.career}`;
+  if (round?.key !== key) round = newRound(course, key, golfers);
   Object.assign(ui, { dragging: false, aim: null, phase: 'aim', anim: null, banner: null, card: false, cardAt: 0, pop: null, moods: [], putt: null });
   greenZoom(false);
   cam.manual = false;
   buildWorld();
   startTurn(performance.now());
-  // Keep the address shareable where the page is allowed to change it.
+  // Keep a free play address shareable where the page is allowed to change it.
+  if (app.mode === 'play' && !settings.career) shareAddress();
+}
+
+function shareAddress() {
   try { history.replaceState(null, '', `?style=${settings.style}&seed=${settings.seed}&hole=${settings.hole}${settings.event ? '&event=1' : ''}`); } catch { /* sandboxed */ }
 }
 
@@ -218,14 +236,16 @@ function setZoom(z) {
 
 // Dress the course for a tournament, or take it all down again.
 function toggleEvent() {
+  if (settings.career) return;
   settings.event = !settings.event;
   game.course.tournament = settings.event;
   buildWorld();
-  try { history.replaceState(null, '', `?style=${settings.style}&seed=${settings.seed}&hole=${settings.hole}${settings.event ? '&event=1' : ''}`); } catch { /* sandboxed */ }
+  shareAddress();
 }
 
 // Play as the next golfer look (until there's a proper character picker).
 function changeGolfer() {
+  if (settings.career) return;
   PLAYER.look = GOLFER_LOOKS[(GOLFER_LOOKS.indexOf(PLAYER.look) + 1) % GOLFER_LOOKS.length];
 }
 
@@ -505,9 +525,15 @@ function holeFinished() {
   ui.phase = 'done';
   ui.cardAt = ui.pop ? ui.pop.until : 1; // let the last BIRDIE (or BOGEY) show before the card covers it
   ui.anim = null;
-  const last = game.hole.number === 18;
+  const last = game.hole.number === settings.holes;
   const result = game.play.players.map((p) => `${who(p.golfer)} ${p.strokes}`).join(', ');
-  ui.banner = { text: result, sub: last ? 'ROUND OVER. ENTER FOR A NEW ROUND' : 'ENTER FOR THE NEXT HOLE', until: Infinity };
+  const over = settings.career ? 'ROUND OVER. ENTER TO GO TO THE CLUBHOUSE' : 'ROUND OVER. ENTER FOR A NEW ROUND';
+  ui.banner = { text: result, sub: last ? over : 'ENTER FOR THE NEXT HOLE', until: Infinity };
+  // A career round is saved hole by hole, so it can be picked up again later.
+  if (settings.career) {
+    app.career.round = { hole: game.hole.number + 1, scores: round.players.map((p) => p.scores.slice()), putts: round.players.map((p) => p.putts.slice()) };
+    saveCareer(app.career);
+  }
 }
 
 const scoreName = (d) => ({ '-3': 'ALBATROSS', '-2': 'EAGLE', '-1': 'BIRDIE', 0: 'PAR', 1: 'BOGEY', 2: 'DOUBLE BOGEY' })[d] ?? (d < 0 ? `${-d} UNDER` : `${d} OVER`);
@@ -667,7 +693,10 @@ function render(now) {
       others, dropped: rolling?.done && pt.roll.holed,
     });
   }
-  drawHud(hud, W, H, { course: game.course, hole: game.hole, tee: TEE, weather: game.weather, wind: game.wind, windScreen: world.view.worldDirToScreen(game.wind.across, game.wind.along), standing: standings() });
+  drawHud(hud, W, H, {
+    course: game.course, hole: game.hole, tee: TEE, weather: game.weather, wind: game.wind, windScreen: world.view.worldDirToScreen(game.wind.across, game.wind.along), standing: standings(),
+    keys: settings.career ? '+/- ZOOM  Q/E TURN  M MAP  RIGHT-DRAG SCROLLS  H CLUBHOUSE' : 'N/P HOLE  R COURSE  S STYLE  +/- ZOOM  Q/E TURN  M MAP  RIGHT-DRAG SCROLLS  H MENU',
+  });
   if (pt) {
     const d = dist(me.at, game.hole.pin);
     const human = humanTurn();
@@ -688,21 +717,147 @@ function render(now) {
     lie: LIE_NAMES[me.lie] ?? me.lie.toUpperCase(), toPin: Math.round(toPin(game.play)), stroke: me.holed ? me.strokes : me.strokes + 1,
     hint: display.map ? 'CLICK THE MAP OR PRESS M TO GO BACK' : !humanTurn() && ui.phase !== 'done' ? `${who(me.golfer)} IS PLAYING` : ui.phase !== 'aim' ? '' : !ui.aim ? 'DRAG ON THE COURSE TO AIM' : ui.dragging ? 'LET GO TO SET THE AIM' : 'CHANGE SHOT OR DRAG AGAIN',
   });
-  drawViewButtons(hud, W, display.map, settings.event);
+  drawViewButtons(hud, W, display.map, settings.event, !settings.career);
   if (ui.banner && now < ui.banner.until) drawBanner(hud, W, ui.banner.text, ui.banner.sub);
   if (ui.pop && now < ui.pop.until) drawPop(hud, W, H, now);
   if (ui.cardAt && now >= ui.cardAt) { ui.card = true; ui.cardAt = 0; }
   if (ui.card) {
     const played = round.players[0].scores.filter((s) => s != null).length;
-    drawScorecard(hud, W, H, round, game.hole.number, played === 18 ? 'ROUND COMPLETE' : `${game.course.name.toUpperCase()}  SCORECARD`);
+    drawScorecard(hud, W, H, round, game.hole.number, played === settings.holes ? 'ROUND COMPLETE' : `${game.course.name.toUpperCase()}  SCORECARD`);
   }
 }
 
 function frame(now) {
-  update(now);
-  aimCamera(false);
-  render(now);
+  if (app.mode === 'play') {
+    update(now);
+    aimCamera(false);
+    render(now);
+  } else renderMenu(now);
   requestAnimationFrame(frame);
+}
+
+// ---------- Career and menus ----------
+
+// The menus are drawn over a course, dimmed: the title over whatever was last
+// played, the clubhouse over the first hole of your home course.
+function renderMenu(now) {
+  aimCamera(false);
+  drawPlay(now);
+  const { W, H } = display;
+  hud.clearRect(0, 0, W, H);
+  hud.fillStyle = 'rgba(12, 8, 24, 0.6)';
+  hud.fillRect(0, 0, W, H);
+  const hover = app.hover;
+  if (app.mode === 'title') drawTitle(hud, W, H, { buttons: titleLayout(W, H, !!app.career), hover, save: app.career });
+  if (app.mode === 'new') drawNewCareer(hud, W, H, newCareerLayout(W, H), { draft: app.draft, hover, now, replaces: !!app.career });
+  if (app.mode === 'hub') drawHub(hud, W, H, hubLayout(W, H, app.career), { career: app.career, hover, now });
+}
+
+// The buttons on the screen that's up, as { key, x, y, w, h }.
+function menuButtons() {
+  const { W, H } = display;
+  if (app.mode === 'title') return titleLayout(W, H, !!app.career);
+  if (app.mode === 'new') { const L = newCareerLayout(W, H); return [L.prev, L.next, ...L.shirts, L.back, L.start]; }
+  if (app.mode === 'hub') { const L = hubLayout(W, H, app.career); return [L.play, L.menu]; }
+  return [];
+}
+
+function menuClick(p) {
+  const b = menuButtons().find((r) => inside(p, r));
+  if (b) menuAction(b.key);
+}
+
+function menuAction(key) {
+  const d = app.draft;
+  if (key === 'continue') return goHub();
+  if (key === 'new') { app.draft = { name: '', look: 'club', shirt: SHIRT_COLOURS[0] }; app.mode = 'new'; app.hover = 'start'; return; }
+  if (key === 'free') return startFreePlay();
+  if (key === 'prev' || key === 'next') {
+    const i = LOOKS.findIndex((l) => l.look === d.look);
+    d.look = LOOKS[(i + (key === 'next' ? 1 : LOOKS.length - 1)) % LOOKS.length].look;
+    return;
+  }
+  if (key.startsWith('shirt-')) { d.shirt = SHIRT_COLOURS[Number(key.slice(6))]; return; }
+  if (key === 'back' || key === 'menu') return showTitle();
+  if (key === 'start' && d.name.trim()) {
+    app.career = newCareer({ name: d.name.trim(), look: d.look, shirt: d.shirt });
+    saveCareer(app.career);
+    return goHub();
+  }
+  if (key === 'play') return playCareerRound();
+}
+
+function menuKey(e) {
+  const k = e.key;
+  if (app.mode === 'new') {
+    const d = app.draft;
+    if (k === 'Backspace') { e.preventDefault(); d.name = d.name.slice(0, -1); return; }
+    if (/^[a-zA-Z0-9 '.-]$/.test(k) && d.name.length < 14) { e.preventDefault(); d.name += k.toUpperCase(); return; }
+    if (k === 'ArrowLeft') return menuAction('prev');
+    if (k === 'ArrowRight') return menuAction('next');
+    if (k === 'Enter') return menuAction('start');
+    if (k === 'Escape') return menuAction('back');
+    return;
+  }
+  if (app.mode === 'hub') {
+    if (k === 'Enter') return menuAction('play');
+    if (k === 'Escape') return menuAction('menu');
+    return;
+  }
+  // The title: up and down pick a button, Enter presses it.
+  const keys = menuButtons().map((b) => b.key);
+  const i = keys.indexOf(app.hover);
+  if (k === 'ArrowDown' || k === 'ArrowUp') { e.preventDefault(); app.hover = keys.at(((i < 0 ? 0 : i + (k === 'ArrowDown' ? 1 : -1)) + keys.length) % keys.length); }
+  if (k === 'Enter') menuAction(keys.includes(app.hover) ? app.hover : keys[0]);
+}
+
+function showTitle() {
+  app.mode = 'title';
+  app.hover = app.career ? 'continue' : 'new';
+}
+
+// Show a course behind the menus (or play it): settings for the course, hole and round.
+function useCourse(course, hole, career) {
+  Object.assign(settings, { style: course.style, seed: course.seed, name: course.name ?? null, par: course.par ?? 72, length: course.length ?? 'standard', holes: course.holes ?? 18, hole, career, event: false });
+  golfers = career ? [careerGolfer(app.career), clubOpponent()] : [PLAYER, RIVAL];
+  showMap(false);
+  loadHole();
+}
+
+// The clubhouse: your career between rounds, over your home course.
+function goHub() {
+  const c = app.career;
+  if (!c) return showTitle();
+  // A round whose last hole was played but not handed in yet.
+  if (c.round && c.round.hole > c.home.holes) return endCareerRound();
+  app.mode = 'hub';
+  app.hover = 'play';
+  useCourse(c.home, 1, true);
+}
+
+// Play (or carry on) a round on your home course.
+function playCareerRound() {
+  const c = app.career;
+  app.mode = 'play';
+  round = null;
+  useCourse(c.home, c.round?.hole ?? 1, true);
+  if (c.round) round.players.forEach((p, i) => { p.scores = c.round.scores[i].slice(); p.putts = c.round.putts[i].slice(); });
+}
+
+// Hand in a finished career round: note it, move the week on, back to the clubhouse.
+function endCareerRound() {
+  const c = app.career, saved = c.round;
+  const holes = c.home.holes, total = (a) => a.slice(0, holes).reduce((t, v) => t + (v ?? 0), 0);
+  const pars = round?.key?.endsWith(':true') ? round.pars : buildCourse({ ...c.home }, { layout: false }).holes.map((h) => h.par);
+  finishRound(c, { course: c.home.name, holes, score: total(saved.scores[0]), par: total(pars), vs: clubOpponent().name.toUpperCase(), vsScore: total(saved.scores[1]) });
+  saveCareer(c);
+  goHub();
+}
+
+function startFreePlay() {
+  app.mode = 'play';
+  round = null;
+  useCourse({ style: 'tropical', seed: 1989 }, 1, false);
 }
 
 // ---------- Input ----------
@@ -717,6 +872,7 @@ const inside = (p, b) => p.x >= b.x && p.x < b.x + b.w && p.y >= b.y && p.y < b.
 let scroll = null;
 
 canvas.addEventListener('mousedown', (e) => {
+  if (app.mode !== 'play') { if (e.button === 0) menuClick(toHud(e)); return; }
   if (e.button === 2 || e.button === 1) {
     e.preventDefault();
     scroll = { x: e.clientX, y: e.clientY, camX: cam.x, camY: cam.y, moved: false, button: e.button };
@@ -727,9 +883,9 @@ canvas.addEventListener('mousedown', (e) => {
   const turn = viewButtons(display.W);
   if (inside(p, turn.left)) return turnView(-1);
   if (inside(p, turn.right)) return turnView(1);
-  if (inside(p, turn.golfer)) return changeGolfer();
+  if (!settings.career && inside(p, turn.golfer)) return changeGolfer();
   if (inside(p, turn.map)) return showMap(!display.map);
-  if (inside(p, turn.event)) return toggleEvent();
+  if (!settings.career && inside(p, turn.event)) return toggleEvent();
   if (ui.phase === 'putting') return puttClick(p);
   // A click on the map goes back to the hole.
   if (display.map && p.y < BAR_TOP(display.H)) return showMap(false);
@@ -761,6 +917,7 @@ function puttClick(p) {
 }
 
 addEventListener('mousemove', (e) => {
+  if (app.mode !== 'play') { app.hover = menuButtons().find((b) => inside(toHud(e), b))?.key ?? app.hover; return; }
   if (scroll && !display.map && ui.phase !== 'putting') {
     const dx = e.clientX - scroll.x, dy = e.clientY - scroll.y;
     if (Math.abs(dx) + Math.abs(dy) > 4) scroll.moved = true;
@@ -793,6 +950,7 @@ canvas.addEventListener('wheel', (e) => { e.preventDefault(); setZoom(display.zo
 const PAN = { arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] };
 
 addEventListener('keydown', (e) => {
+  if (app.mode !== 'play') return menuKey(e);
   const k = e.key.toLowerCase();
   if (k >= '1' && k <= '5') return pickShot(SHOT_TYPES[Number(k) - 1].key);
   if (k === ' ') {
@@ -816,12 +974,16 @@ addEventListener('keydown', (e) => {
   if (k === 'q') return turnView(-1);
   if (k === 'e') return turnView(1);
   if (k === 'g') return changeGolfer();
+  if (k === 'h') return settings.career ? goHub() : showTitle();
   if (k === 'tab') { e.preventDefault(); ui.card = !ui.card; ui.cardAt = 0; return; }
   if (k === 'enter' && ui.phase === 'done') {
-    // On to the next hole, or a fresh round after the 18th.
-    if (game.hole.number === 18) { settings.hole = 1; round = null; } else settings.hole += 1;
+    const last = game.hole.number === settings.holes;
+    if (settings.career && last) return endCareerRound();
+    // On to the next hole, or a fresh round after the last.
+    if (last) { settings.hole = 1; round = null; } else settings.hole += 1;
     return loadHole();
   }
+  if (settings.career) return; // the course is the career's: no changing hole or course
   if (k === 'n') settings.hole = settings.hole % 18 + 1;
   else if (k === 'p') settings.hole = (settings.hole + 16) % 18 + 1;
   else if (k === 'r') { settings.seed = Math.floor(Math.random() * 1e6); settings.hole = 1; }
@@ -854,8 +1016,12 @@ function autoPutt() {
   pt.meterAt = now - plan.power * POWER_SWEEP;
   stopPower(now);
 }
-window.golf = { get game() { return game; }, get world() { return world; }, get round() { return round; }, ui, cam, display, shoot, clampAim, setZoom, turnView, changeGolfer, autoPutt, greenFor, toggleEvent, tournamentSites: () => tournamentSites(game.course) };
+window.golf = { get game() { return game; }, get world() { return world; }, get round() { return round; }, ui, cam, display, app, settings, shoot, clampAim, setZoom, turnView, changeGolfer, autoPutt, greenFor, toggleEvent, menuAction, menuButtonsForTest: () => menuButtons(), tournamentSites: () => tournamentSites(game.course) };
 
 measure();
-loadHole();
+if (app.mode === 'title') {
+  showTitle();
+  // Behind the title: your home course if you have a career, else a sunny one.
+  if (app.career) useCourse(app.career.home, 1, true); else loadHole();
+} else loadHole();
 requestAnimationFrame(frame);

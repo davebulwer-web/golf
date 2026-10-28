@@ -6,6 +6,8 @@ A retro, pixel-art, isometric golf game in the style of Sid Meier's Sim Golf, bu
 
 Download `golf.html` and open it in a browser. It's a single self-contained file, so there's nothing to install.
 
+The game opens on a title screen: start a **new career**, **continue** the one you have, or go to **free play**. A new career asks for your name and a player type (all-rounder, big hitter, athlete, weekender, beanpole or old hand, each tilting the starting skills a little) and a shirt colour. You start at a small club with £100, playing nine holes at a time from the forward tees of a short course, against Bertie. The clubhouse between rounds shows your money, skills, the week of the season (twelve weeks to a season) and your recent rounds; each round moves the week on. The career is saved in the browser as you go, after every hole, so you can close the page mid-round and carry on where you left off. `H` goes back to the clubhouse (or, in free play, the title). The career is built up step by step from the plan in the project; for now a round at your club is all there is to do.
+
 Pick a shot from the bar at the bottom (or press `1` to `5`): normal, fade, draw, lob or runner. Then press on the course and drag to where you want the ball to land, and let go to set the aim. The dotted line shows the shot's flight and the oval shows where it's likely to land: it grows and turns red as you push for more distance. You can still change the shot type or drag again; press **HIT** (or space) to play it, or **CANCEL** (`Esc` or right-click) to clear it. Clubs are picked for you. Wind isn't in the preview, so aim off for it.
 
 The game fills the window and shows the whole hole. Zoom in with the mouse wheel or `+` / `-`; zoomed in, the view follows the ball. Drag with the right (or middle) mouse button, or use the arrow keys, to scroll round the rest of the course, as far as its edge; `C` (or the next shot) brings the view back. Zoom out past the whole hole, or press MAP (`M`), for the whole course on one screen; click it or press `M` to go back. Every hole's number is shown over its flag and by its back tee, gold for the hole being played. The course round the hole is drawn a piece at a time as it scrolls into view (`piece` in `src/main.js`), using the same drawing as the hole itself, so the pieces meet without a seam. The two buttons under the wind panel (or `Q` / `E`) turn the view a quarter turn round the hole, as in Sim Golf, so you can see past trees and hills from another side.
@@ -20,13 +22,15 @@ You play against Bertie, a computer golfer. Whoever is farthest from the pin pla
 
 Scoring is medal play. After each hole the scorecard shows the round so far for both of you (front nine, back nine, total against par); `Enter` goes on to the next hole and `Tab` shows or hides the card. The hole card at the top left keeps the running score.
 
-Other keys: `N` / `P` jump to the next or previous hole (for testing; skipped holes stay blank on the card), `R` a new random course, `S` change course style. You can also pick a hole in the address bar, e.g. `golf.html?style=links&seed=7&hole=2`.
+Other keys: `N` / `P` jump to the next or previous hole (for testing; skipped holes stay blank on the card), `R` a new random course, `S` change course style. These are free play only. You can also pick a hole in the address bar, e.g. `golf.html?style=links&seed=7&hole=2`, which skips the title and goes straight to free play.
 
 ## Working on it
 
 The game is plain JavaScript and a canvas, with no engine or libraries.
 
 - `src/course-generator.js`: the course generator (see `src/COURSE-GENERATOR.md`).
+- `src/career.js`: the career: your golfer, money, skills, week of the season and the round in progress, saved in the browser's storage.
+- `src/menus.js`: the title, new career and clubhouse screens, drawn over a dimmed course.
 - `src/course.js`: the game's tweaks to the generator: more doglegs and extra hazards, on their own random stream.
 - `src/course-map.js`: lays the 18 holes out on one map (where each hole sits and which way it faces) and the coastline for seaside courses.
 - `src/terrain.js`: hills and slopes: rolling ground over the whole course map, shaped on each hole (flat tees, tilted greens, smooth fairways, lakes in hollows).

@@ -4,9 +4,10 @@ import { drawText, textWidth } from './art.js';
 import { STYLES, teeYards } from './course-generator.js';
 import { windWords } from './weather.js';
 
-const PANEL = 'rgba(40, 28, 70, 0.82)', EDGE = '#9a86d8', GOLD = '#f2c93a';
+const PANEL = 'rgba(40, 28, 70, 0.82)', EDGE = '#9a86d8';
+export const GOLD = '#f2c93a';
 
-function panel(ctx, x, y, w, h) {
+export function panel(ctx, x, y, w, h) {
   ctx.fillStyle = PANEL;
   ctx.fillRect(x, y, w, h);
   ctx.fillStyle = EDGE;
@@ -16,12 +17,12 @@ function panel(ctx, x, y, w, h) {
 
 // `wind` is from holeWind; `windScreen` is the same wind as a screen direction.
 // `standing` is the round so far, e.g. '+2 THRU 3'.
-export function drawHud(ctx, W, H, { course, hole, tee, weather, wind, windScreen, standing }) {
+export function drawHud(ctx, W, H, { course, hole, tee, weather, wind, windScreen, standing, keys: keyLine }) {
   // Hole card, top left.
   const title = `HOLE ${hole.number}`;
   const line2 = `PAR ${hole.par}  ${teeYards(hole, tee)} YDS`;
   const line3 = `${course.name}  ${STYLES[course.style].name}`;
-  const keys = 'N/P HOLE  R COURSE  S STYLE  +/- ZOOM  Q/E TURN  M MAP  RIGHT-DRAG SCROLLS';
+  const keys = keyLine ?? 'N/P HOLE  R COURSE  S STYLE  +/- ZOOM  Q/E TURN  M MAP  RIGHT-DRAG SCROLLS';
   const w = Math.max(textWidth(title, 2) + (standing ? textWidth(standing) + 8 : 0), textWidth(line2), textWidth(line3), textWidth(keys)) + 12;
   panel(ctx, 6, 6, w, 42);
   drawText(ctx, title, 12, 11, GOLD, 2);
@@ -52,7 +53,9 @@ export const viewButtons = (W) => ({
   event: { x: W - 62, y: 101, w: 56, h: 13 }, // tournament stands and tents on or off
 });
 
-export function drawViewButtons(ctx, W, onMap = false, event = false) {
+// In a career the golfer and event buttons are hidden: you are who you are,
+// and the event dressing comes with the event.
+export function drawViewButtons(ctx, W, onMap = false, event = false, showAll = true) {
   const { left, right, golfer, map, event: eventButton } = viewButtons(W);
   for (const [b, dir, key] of [[left, -1, 'Q'], [right, 1, 'E']]) {
     panel(ctx, b.x, b.y, b.w, b.h);
@@ -64,12 +67,15 @@ export function drawViewButtons(ctx, W, onMap = false, event = false) {
     for (let k = 0; k <= 2; k++) { ctx.fillRect(tipX - k, tipY - k, 1, 1); ctx.fillRect(tipX + k, tipY - k, 1, 1); }
     drawText(ctx, key, b.x + Math.round((b.w - textWidth(key)) / 2), b.y + 14, '#c8c0e8', 1, null);
   }
-  panel(ctx, golfer.x, golfer.y, golfer.w, golfer.h);
-  const label = 'GOLFER  G';
-  drawText(ctx, label, golfer.x + Math.round((golfer.w - textWidth(label)) / 2), golfer.y + 4, '#f4f4f4', 1, null);
+  if (showAll) {
+    panel(ctx, golfer.x, golfer.y, golfer.w, golfer.h);
+    const label = 'GOLFER  G';
+    drawText(ctx, label, golfer.x + Math.round((golfer.w - textWidth(label)) / 2), golfer.y + 4, '#f4f4f4', 1, null);
+  }
   panel(ctx, map.x, map.y, map.w, map.h);
   const mapLabel = onMap ? 'BACK  M' : 'MAP  M';
   drawText(ctx, mapLabel, map.x + Math.round((map.w - textWidth(mapLabel)) / 2), map.y + 4, onMap ? GOLD : '#f4f4f4', 1, null);
+  if (!showAll) return;
   panel(ctx, eventButton.x, eventButton.y, eventButton.w, eventButton.h);
   const eventLabel = event ? 'EVENT ON  T' : 'EVENT  T';
   drawText(ctx, eventLabel, eventButton.x + Math.round((eventButton.w - textWidth(eventLabel)) / 2), eventButton.y + 4, event ? GOLD : '#f4f4f4', 1, null);
