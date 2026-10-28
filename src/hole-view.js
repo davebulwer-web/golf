@@ -263,9 +263,34 @@ function paintGround(buf, W, H, style, g) {
 // A packed pixel made lighter or darker by factor f.
 const dimmed = (c, f) => (c & 0xff000000) | (Math.min(255, ((c >>> 16) & 255) * f) << 16) | (Math.min(255, ((c >>> 8) & 255) * f) << 8) | Math.min(255, (c & 255) * f);
 
-// Trees, bushes and cacti, sorted back to front.
-function paintScenery(buf, W, H, view, style) {
-  const art = STYLE_ART[style] ?? STYLE_ART.parkland;
+// The furniture round the hole, as { at (yards), name, clear (yards kept free
+// of trees) }: a sign, bench, ball washer and bin by the back tees, behind
+// the white tees played from so they don't crowd the golfers, yardage posts at
+// the edge of the fairway, a rake by each bunker, and the clubhouse behind the
+// 1st tee.
+function holeProps(hole) {
+  const tee = Math.min(hole.tees.black + 4, hole.tees.white - 45);
+  const side = (s, lat, name, clear = 7) => ({ at: pointAt(hole.line, s, lat), name, clear });
+  const out = [
+    side(tee, 12, 'hole-sign'), side(tee + 12, 13, 'bench'),
+    side(tee + 2, -12, 'ball-washer'), side(tee + 9, -13, 'bin'),
+  ];
+  const dry = (q) => !['bunker', 'water', 'sea', 'beach'].includes(surfaceAt(hole, q.at));
+  for (const d of [100, 150, 200]) {
+    const s = hole.line.length - d;
+    if (s > hole.tees.white + 60) out.push(side(s, -(hole.fwHalf + 4), `post-${d}`, 2));
+  }
+  // A rake beside each bunker.
+  for (const b of hole.bunkers) out.push({ at: { x: b.x + b.r * 1.1, y: b.y + b.r * 0.3 }, name: 'rake', clear: 2 });
+  if (hole.number === 1) out.push(side(hole.tees.black - 38, 0, 'clubhouse', 26));
+  return out.filter(dry);
+}
+
+// Trees, bushes and cacti, and the hole's furniture, sorted back to front.
+function paintScenery(buf, W, H, view, hole) {
+  const art = STYLE_ART[hole.style] ?? STYLE_ART.parkland;
+  const props = holeProps(hole);
+  const clear = (p) => props.some((q) => Math.hypot(p.x - q.at.x, p.y - q.at.y) < q.clear);
   // Range of tiles that can show on screen, with room for tall sprites below the edge.
   const corners = [[0, 0], [W, 0], [0, H + LOW], [W, H + LOW]].map(([x, y]) => view.screenToTile(x, y));
   const c0 = Math.floor(Math.min(...corners.map((t) => t.col))), c1 = Math.ceil(Math.max(...corners.map((t) => t.col)));
@@ -276,7 +301,7 @@ function paintScenery(buf, W, H, view, style) {
     for (let c = c0; c <= c1; c++) {
       const s = lookAt(view.look, c, r);
       const density = s === 'trees' ? art.density : s === 'copse' ? 0.35 : s === 'land' ? landDensity(art, c, r) : 0;
-      if (!density || hash(c, r, 11) >= density) continue;
+      if (!density || hash(c, r, 11) >= density || clear(view.grid.toWorld(c, r))) continue;
       const p = view.tileToScreen(c, r);
       p.y -= Math.round(liftPx(tileHeight(view, c, r), view.grid.cell));
       const kind = art.trees[Math.floor(hash(c, r, 12) * art.trees.length)];
@@ -284,6 +309,10 @@ function paintScenery(buf, W, H, view, style) {
       if (x < -10 || x > W + 10 || y < -2 || y > H + 16) continue;
       items.push({ sprite: SPRITES[kind], x, y });
     }
+  }
+  for (const q of props) {
+    const p = view.worldToScreen(q.at);
+    if (p.x > -60 && p.x < W + 60 && p.y > -2 && p.y < H + 40) items.push({ sprite: SPRITES[q.name], x: Math.round(p.x), y: Math.round(p.y) });
   }
   items.sort((a, b) => a.y - b.y || a.x - b.x);
   for (const it of items) blit(buf, W, H, it.sprite, it.x, it.y);
@@ -322,7 +351,7 @@ function put(buf, W, H, x, y, c) {
 export function drawHole(buf, W, H, hole, view, actors = []) {
   const ground = sampleGround(view, W, H);
   paintGround(buf, W, H, hole.style, ground);
-  paintScenery(buf, W, H, view, hole.style);
+  paintScenery(buf, W, H, view, hole);
   if (view.others.length) shadeOutOfBounds(buf, W, H, view, ground);
   paintMarkers(buf, W, H, view, hole, actors);
 }
