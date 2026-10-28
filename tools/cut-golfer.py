@@ -53,6 +53,19 @@ SHEETS = {
         ],
         'blank': [(20, 672, 385, 710), (655, 672, 1040, 710), (1315, 672, 1500, 742)],
     },
+    'tall': {
+        'shrink': 6.3,
+        'rows': [
+            ((50, 305), SWING),
+            ((415, 618), PUTT + IDLE),
+            ((672, 952), HAPPY + CROSS + ['shade-eyes']),
+        ],
+        'blank': [(20, 670, 385, 706), (690, 670, 1065, 706), (1315, 670, 1500, 738)],
+        # His green shirt is as dark as the shadows in places, so shadows are
+        # only looked for in the bottom of each row, round the feet.
+        'ground': 50,
+        'quantize': Image.Quantize.MAXCOVERAGE,  # median cut turns his shirt teal
+    },
     'veteran': {
         'shrink': 6.3,
         'rows': [
@@ -114,6 +127,12 @@ def cut(look, spec):
     core = lit & (g > r + 8) & (g > b + 4) & (bright < 120)
     shadow = lit & (g >= r + 2) & (g >= b + 2) & (bright < 120)
     # The golfer: anything clearly lit that isn't shadow.
+    if 'ground' in spec:
+        feet_band = np.zeros(lit.shape, bool)
+        for (y0, y1), _ in spec['rows']:
+            feet_band[y1 - spec['ground']:y1] = True
+        core &= feet_band
+        shadow &= feet_band
     body = (bright > 45) & ~shadow
 
     # Pad the sheet so cells near its edge can be cut whole.
