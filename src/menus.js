@@ -159,7 +159,13 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
   drawText(ctx, `£${c.money}`, p.x + 16, p.y + 130, GOLD, 2);
   const sx = p.x + 112, sy = p.y + 48;
   drawText(ctx, 'SKILLS', sx, sy - 6, DIM, 1, null);
-  Object.entries(SKILL_NAMES).forEach(([k, name], i) => skillBar(ctx, sx, sy + 6 + i * 12, name, c.skills[k]));
+  Object.entries(SKILL_NAMES).forEach(([k, name], i) => {
+    skillBar(ctx, sx, sy + 6 + i * 12, name, c.skills[k]);
+    // How the last round's form moved it.
+    const d = c.report?.change[k];
+    if (d) drawText(ctx, `${d > 0 ? '+' : ''}${d.toFixed(1)}`, sx + 148, sy + 6 + i * 12, d > 0 ? '#7ee07e' : '#f08a8a', 1, null);
+  });
+  if (c.report) drawText(ctx, `LAST ROUND: ${c.report.good} GOOD SHOTS, ${c.report.bad} BAD`, sx, sy + 66, QUIET, 1, null);
 
   // Recent rounds.
   const ry = p.y + 128;
