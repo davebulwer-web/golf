@@ -21,11 +21,13 @@ const ready = (name) => images[name]?.complete && images[name].naturalWidth > 0;
 
 // How to find each look's shirt in its frames (its colour as drawn on the
 // sheet), and how light each shirt pixel is, to keep the shading when it's
-// recoloured; null for a look whose shirt can't be recoloured.
+// recoloured, and optionally the row it stops at; null for a look whose shirt
+// can't be recoloured.
 const SHIRTS = {
   club: { is: (r, g, b) => b >= r + 25 && b >= g + 15, light: (r, g, b) => (r + g + b) / 3 / 120 }, // blue
   heavy: { is: (r, g, b) => r >= g + 90 && Math.abs(g - b) < 35, light: (r) => r / 190 },          // red
   athletic: { is: (r, g, b) => r >= g + 70 && b >= g + 30, light: (r) => r / 190 },                // pink
+  casual: { is: (r, g, b) => b >= r + 15 && b >= g + 50, light: (r, g, b) => b / 230, above: 33 }, // lilac (her shoes too, so only above row 33)
   veteran: null, // a beige jumper, too like the trousers and skin to pick out: keeps his own colours
 };
 // Every golfer look there are sprites for.
@@ -51,7 +53,7 @@ function prepared(name, shirt = null) {
     const n = parseInt(shirt.slice(1), 16), sr = n >> 16, sg = (n >> 8) & 255, sb = n & 255;
     for (let i = 0; i < px.length; i += 4) {
       const [r, gg, b] = [px[i], px[i + 1], px[i + 2]];
-      if (px[i + 3] === 0 || !look.is(r, gg, b)) continue;
+      if (px[i + 3] === 0 || !look.is(r, gg, b) || i / 4 / c.width >= (look.above ?? Infinity)) continue;
       const light = look.light(r, gg, b);
       px[i] = Math.min(255, sr * light); px[i + 1] = Math.min(255, sg * light); px[i + 2] = Math.min(255, sb * light);
     }
