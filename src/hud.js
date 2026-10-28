@@ -21,7 +21,7 @@ export function drawHud(ctx, W, H, { course, hole, tee, weather, wind, windScree
   const title = `HOLE ${hole.number}`;
   const line2 = `PAR ${hole.par}  ${teeYards(hole, tee)} YDS`;
   const line3 = `${course.name}  ${STYLES[course.style].name}`;
-  const keys = 'N/P HOLE  R COURSE  S STYLE  +/- ZOOM';
+  const keys = 'N/P HOLE  R COURSE  S STYLE  +/- ZOOM  Q/E TURN';
   const w = Math.max(textWidth(title, 2) + (standing ? textWidth(standing) + 8 : 0), textWidth(line2), textWidth(line3), textWidth(keys)) + 12;
   panel(ctx, 6, 6, w, 42);
   drawText(ctx, title, 12, 11, GOLD, 2);
@@ -42,6 +42,23 @@ export function drawHud(ctx, W, H, { course, hole, tee, weather, wind, windScree
   for (let a = 0; a < 32; a++) ctx.fillRect(Math.round(cx + Math.cos(a / 5.1) * 8), Math.round(cy + Math.sin(a / 5.1) * 4), 1, 1);
   if (weather.windMph >= 1) arrow(ctx, cx, cy, windScreen, 8, '#f4f4f4');
 
+}
+
+// Buttons under the wind panel that turn the view round the hole, a quarter turn each way.
+export const viewButtons = (W) => ({ left: { x: W - 62, y: 44, w: 27, h: 22 }, right: { x: W - 33, y: 44, w: 27, h: 22 } });
+
+export function drawViewButtons(ctx, W) {
+  const { left, right } = viewButtons(W);
+  for (const [b, dir, key] of [[left, -1, 'Q'], [right, 1, 'E']]) {
+    panel(ctx, b.x, b.y, b.w, b.h);
+    // A curved arrow round the top of a circle, pointing the way the view turns.
+    const cx = b.x + b.w / 2, cy = b.y + 10;
+    ctx.fillStyle = '#f4f4f4';
+    for (let a = 0.15; a <= Math.PI - 0.15; a += 0.08) ctx.fillRect(Math.round(cx + Math.cos(a) * 7), Math.round(cy - Math.sin(a) * 5), 1, 1);
+    const tipX = Math.round(cx + dir * 7), tipY = cy;
+    for (let k = 0; k <= 2; k++) { ctx.fillRect(tipX - k, tipY - k, 1, 1); ctx.fillRect(tipX + k, tipY - k, 1, 1); }
+    drawText(ctx, key, b.x + Math.round((b.w - textWidth(key)) / 2), b.y + 14, '#c8c0e8', 1, null);
+  }
 }
 
 // A pixel arrow from (x, y) along screen direction `d`, `len` pixels long.

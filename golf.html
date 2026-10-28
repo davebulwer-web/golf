@@ -1470,31 +1470,43 @@ function scoreBanner(strokes, par) {
 
 // ---- iso.js ----
 // Isometric projection for a hole grid from holeToGrid.
-// Each grid square is drawn as a diamond TW x TH pixels. Rows are flipped so the
-// tee sits towards the bottom left of the screen and the green towards the top right.
+// Each grid square is drawn as a diamond TW x TH pixels. Unturned, rows are
+// flipped so the tee sits towards the bottom left of the screen and the green
+// towards the top right; the view can turn round the hole a quarter at a time.
 
 const TW = 8, TH = 4;
 
 // Yards of height to pixels up the screen, on a grid of `cell`-yard tiles.
 const liftPx = (h, cell) => h / cell * TH * 1.5;
 
-// A view places a grid on the screen. (ox, oy) is where the centre of tile
-// col 0, flipped row 0 lands, in screen pixels. `ground(p)` is the height of
-// the ground in yards at world point p (flat if left out).
-function makeView(grid, ox, oy, ground = () => 0) {
-  const { rows, cell, originX, originY } = grid;
-  const flip = (row) => rows - 1 - row;
+// Screen axes (u, v) for a tile (col, row), and back, for each quarter turn.
+// u runs down to the right on screen and v down to the left, so tiles with a
+// bigger u + v are nearer the viewer.
+const QUARTER_TURNS = [
+  [(c, r, C, R) => [c, R - r], (u, v, C, R) => [u, R - v]],
+  [(c, r, C, R) => [R - r, C - c], (u, v, C, R) => [C - v, R - u]],
+  [(c, r, C, R) => [C - c, r], (u, v, C, R) => [C - u, v]],
+  [(c, r) => [r, c], (u, v) => [v, u]],
+];
+
+// A view places a grid on the screen, turned `turn` quarter turns (0 to 3).
+// (ox, oy) is where the centre of the tile at u = v = 0 lands, in screen pixels.
+// `ground(p)` is the height of the ground in yards at world point p (flat if left out).
+function makeView(grid, ox, oy, ground = () => 0, turn = 0) {
+  const { rows, cols, cell, originX, originY } = grid;
+  const [uv, cr] = QUARTER_TURNS[turn & 3];
+  const toUV = (col, row) => uv(col, row, cols - 1, rows - 1);
+  const fromUV = (u, v) => { const [col, row] = cr(u, v, cols - 1, rows - 1); return { col, row }; };
 
   // Fractional tile position to screen pixels (tile centres are whole numbers).
-  const tileToScreen = (col, row) => {
-    const rp = flip(row);
-    return { x: ox + (col - rp) * TW / 2, y: oy + (col + rp) * TH / 2 };
-  };
+  const uvToScreen = (u, v) => ({ x: ox + (u - v) * TW / 2, y: oy + (u + v) * TH / 2 });
+  const tileToScreen = (col, row) => uvToScreen(...toUV(col, row));
   // Screen pixels to fractional tile position; round both to get the tile under a pixel.
-  const screenToTile = (x, y) => {
-    const u = (x - ox) / (TW / 2), v = (y - oy) / (TH / 2);
-    return { col: (u + v) / 2, row: flip((v - u) / 2) };
+  const screenToUV = (x, y) => {
+    const a = (x - ox) / (TW / 2), b = (y - oy) / (TH / 2);
+    return [(a + b) / 2, (b - a) / 2];
   };
+  const screenToTile = (x, y) => fromUV(...screenToUV(x, y));
   // World yards (as used by the generator) to screen pixels, on the ground or
   // at height z yards.
   const flatToScreen = (p) => tileToScreen((p.x - originX) / cell - 0.5, (p.y - originY) / cell - 0.5);
@@ -1515,17 +1527,20 @@ function makeView(grid, ox, oy, ground = () => 0) {
     return p;
   };
   // A direction in world yards to a screen direction, in pixels per yard.
-  const worldDirToScreen = (dx, dy) => ({ x: (dx + dy) / cell * TW / 2, y: (dx - dy) / cell * TH / 2 });
+  const worldDirToScreen = (dx, dy) => {
+    const a = tileToScreen(0, 0), b = tileToScreen(dx / cell, dy / cell);
+    return { x: b.x - a.x, y: b.y - a.y };
+  };
 
-  return { grid, ox, oy, ground, tileToScreen, screenToTile, worldToScreen, screenToWorld, worldDirToScreen };
+  return { grid, ox, oy, ground, turn: turn & 3, toUV, fromUV, uvToScreen, screenToUV, tileToScreen, screenToTile, worldToScreen, screenToWorld, worldDirToScreen };
 }
 
 // Place a grid so its playable part (everything that isn't the tree margin) is
 // centred in the box { x, y, w, h }, with the ground raised by `ground`.
 // Returns the view and whether it fitted.
-function fitView(grid, box, ground = () => 0) {
+function fitView(grid, box, ground = () => 0, turn = 0) {
   let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  const probe = makeView(grid, 0, 0);
+  const probe = makeView(grid, 0, 0, ground, turn);
   for (let row = 0; row < grid.rows; row++) {
     for (let col = 0; col < grid.cols; col++) {
       if (grid.tiles[row][col] === 'trees') continue;
@@ -1537,7 +1552,7 @@ function fitView(grid, box, ground = () => 0) {
   }
   const ox = Math.round(box.x + box.w / 2 - (minX + maxX) / 2);
   const oy = Math.round(box.y + box.h / 2 - (minY + maxY) / 2);
-  return { view: makeView(grid, ox, oy, ground), fits: maxX - minX <= box.w && maxY - minY <= box.h };
+  return { view: makeView(grid, ox, oy, ground, turn), fits: maxX - minX <= box.w && maxY - minY <= box.h };
 }
 
 // ---- weather.js ----
@@ -1582,11 +1597,12 @@ const hash = (a, b, k = 0) => {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 };
 
-// Pick the most detailed grid whose playable area fits in `box`.
-function layoutHole(hole, box) {
+// Pick the most detailed grid whose playable area fits in `box`, seen from `turn`
+// quarter turns round.
+function layoutHole(hole, box, turn = 0) {
   let best;
   for (const cell of CELLS) {
-    best = fitView(holeToGrid(hole, { cell }), box, (p) => heightAt(hole, p));
+    best = fitView(holeToGrid(hole, { cell }), box, (p) => heightAt(hole, p), turn);
     if (best.fits) break;
   }
   const { rows, cols, tiles } = best.view.grid;
@@ -1598,7 +1614,7 @@ function layoutHole(hole, box) {
 
 // The same view moved by (dx, dy) pixels, e.g. to draw into a bigger image with a margin.
 function shiftView(view, dx, dy) {
-  return { ...makeView(view.grid, view.ox + dx, view.oy + dy, view.ground), own: view.own, look: view.look, others: view.others, heights: view.heights };
+  return { ...makeView(view.grid, view.ox + dx, view.oy + dy, view.ground, view.turn), own: view.own, look: view.look, others: view.others, heights: view.heights };
 }
 
 // What to draw at tile (col, row): a surface, or 'land' for open grass.
@@ -1676,7 +1692,7 @@ function addSurroundings(view, course, index, W, H) {
     return lookAt(own, tl.col, tl.row) === 'land' ? tileHeight(view, Math.floor((p.x - grid.originX) / grid.cell), Math.floor((p.y - grid.originY) / grid.cell)) : heightAt(hole, p);
   };
   view.baseGround = (p) => heightAt(hole, p);
-  Object.assign(view, makeView(grid, view.ox, view.oy, ground));
+  Object.assign(view, makeView(grid, view.ox, view.oy, ground, view.turn));
 }
 const TILE_PAD = 24;
 const LOW = 72; // pixels below the picture that raised ground could reach up from
@@ -1744,25 +1760,31 @@ function sampleGround(view, W, H) {
       bottom.set(dx, Math.max(bottom.get(dx) ?? -9, dy));
     }
   }
-  // Every tile that could show, back to front.
-  const corners = [[0, 0], [W, 0], [0, H + LOW], [W, H + LOW]].map(([x, y]) => view.screenToTile(x, y));
-  const c0 = Math.floor(Math.min(...corners.map((t) => t.col))) - 1, c1 = Math.ceil(Math.max(...corners.map((t) => t.col))) + 1;
-  const r0 = Math.floor(Math.min(...corners.map((t) => t.row))) - 1, r1 = Math.ceil(Math.max(...corners.map((t) => t.row))) + 1;
-  const lift = (c, r) => Math.round(liftPx(tileHeight(view, c, r), grid.cell));
-  for (let d = c0 - r1; d <= c1 - r0; d++) {
-    for (let c = Math.max(c0, d + r0); c <= Math.min(c1, d + r1); c++) {
-      const r = c - d;
+  // Every tile that could show, back to front: in rows of equal u + v down the
+  // screen, each tile at u - v across it.
+  const [ua, va] = view.screenToUV(0, 0), [ub, vb] = view.screenToUV(W, H + LOW);
+  const [uc, vc] = view.screenToUV(W, 0), [ud, vd] = view.screenToUV(0, H + LOW);
+  const d0 = Math.floor(ua + va) - 2, d1 = Math.ceil(ub + vb) + 2;
+  const e0 = Math.floor(ud - vd) - 2, e1 = Math.ceil(uc - vc) + 2;
+  const at = (u, v) => view.fromUV(u, v);
+  const heightUV = (u, v) => { const t = at(u, v); return tileHeight(view, t.col, t.row); };
+  const lift = (u, v) => Math.round(liftPx(heightUV(u, v), grid.cell));
+  for (let d = d0; d <= d1; d++) {
+    for (let e = e0 + ((e0 + d) & 1); e <= e1; e += 2) {
+      const u = (d + e) / 2, v = (d - e) / 2;
+      const { col: c, row: r } = at(u, v);
       const s = lookAt(view.look, c, r), sid = id(s);
-      const p = view.tileToScreen(c, r);
-      const lp = lift(c, r);
+      const p = view.uvToScreen(u, v);
+      const lp = lift(u, v);
       if (p.y - lp > H + 4 || p.x < -6 || p.x > W + 6) continue;
-      // Light from the top left of the screen, which is the -x side of the hole.
+      // Light from the top left of the screen: ground rising down to the right
+      // (along u) or down to the left (along v) faces it.
       let light = LIT;
       if (s !== 'water' && s !== 'sea') {
-        const gx = (tileHeight(view, c + 1, r) - tileHeight(view, c - 1, r)) / (2 * grid.cell);
-        const gy = (tileHeight(view, c, r + 1) - tileHeight(view, c, r - 1)) / (2 * grid.cell);
+        const gu = (heightUV(u + 1, v) - heightUV(u - 1, v)) / (2 * grid.cell);
+        const gv = (heightUV(u, v + 1) - heightUV(u, v - 1)) / (2 * grid.cell);
         const k = s === 'green' ? 7 : 3.5; // greens tilt gently, so show them more strongly
-        const lit = Math.max(-0.3, Math.min(0.22, k * gx - 0.4 * k * gy));
+        const lit = Math.max(-0.3, Math.min(0.22, k * gu + 0.4 * k * gv));
         light = LIT + Math.round(lit / 0.05) * 5;
       }
       for (const [dx, dy] of mask) {
@@ -1772,7 +1794,7 @@ function sampleGround(view, W, H) {
         surf[k] = sid; tc[k] = c; tr[k] = r; shade[k] = light;
       }
       // Banks down to the tiles in front, on the left and on the right.
-      const dropL = lp - lift(c, r - 1), dropR = lp - lift(c + 1, r);
+      const dropL = lp - lift(u, v + 1), dropR = lp - lift(u + 1, v);
       for (const [dx, b] of bottom) {
         const drop = dx < 0 ? dropL : dropR;
         const x = p.x + dx;
@@ -1915,7 +1937,7 @@ function drawHud(ctx, W, H, { course, hole, tee, weather, wind, windScreen, stan
   const title = `HOLE ${hole.number}`;
   const line2 = `PAR ${hole.par}  ${teeYards(hole, tee)} YDS`;
   const line3 = `${course.name}  ${STYLES[course.style].name}`;
-  const keys = 'N/P HOLE  R COURSE  S STYLE  +/- ZOOM';
+  const keys = 'N/P HOLE  R COURSE  S STYLE  +/- ZOOM  Q/E TURN';
   const w = Math.max(textWidth(title, 2) + (standing ? textWidth(standing) + 8 : 0), textWidth(line2), textWidth(line3), textWidth(keys)) + 12;
   panel(ctx, 6, 6, w, 42);
   drawText(ctx, title, 12, 11, GOLD, 2);
@@ -1936,6 +1958,23 @@ function drawHud(ctx, W, H, { course, hole, tee, weather, wind, windScreen, stan
   for (let a = 0; a < 32; a++) ctx.fillRect(Math.round(cx + Math.cos(a / 5.1) * 8), Math.round(cy + Math.sin(a / 5.1) * 4), 1, 1);
   if (weather.windMph >= 1) arrow(ctx, cx, cy, windScreen, 8, '#f4f4f4');
 
+}
+
+// Buttons under the wind panel that turn the view round the hole, a quarter turn each way.
+const viewButtons = (W) => ({ left: { x: W - 62, y: 44, w: 27, h: 22 }, right: { x: W - 33, y: 44, w: 27, h: 22 } });
+
+function drawViewButtons(ctx, W) {
+  const { left, right } = viewButtons(W);
+  for (const [b, dir, key] of [[left, -1, 'Q'], [right, 1, 'E']]) {
+    panel(ctx, b.x, b.y, b.w, b.h);
+    // A curved arrow round the top of a circle, pointing the way the view turns.
+    const cx = b.x + b.w / 2, cy = b.y + 10;
+    ctx.fillStyle = '#f4f4f4';
+    for (let a = 0.15; a <= Math.PI - 0.15; a += 0.08) ctx.fillRect(Math.round(cx + Math.cos(a) * 7), Math.round(cy - Math.sin(a) * 5), 1, 1);
+    const tipX = Math.round(cx + dir * 7), tipY = cy;
+    for (let k = 0; k <= 2; k++) { ctx.fillRect(tipX - k, tipY - k, 1, 1); ctx.fillRect(tipX + k, tipY - k, 1, 1); }
+    drawText(ctx, key, b.x + Math.round((b.w - textWidth(key)) / 2), b.y + 14, '#c8c0e8', 1, null);
+  }
 }
 
 // A pixel arrow from (x, y) along screen direction `d`, `len` pixels long.
@@ -2574,8 +2613,9 @@ const settings = {
 
 // fitScale: screen pixels per game pixel when the whole hole is shown. W x H: the
 // game's size in pixels at that scale (the panels are laid out on this).
-// zoom is the player's choice; onGreen zooms right in while putting.
-const display = { fitScale: 1, W: 0, H: 0, zoom: 0, onGreen: false };
+// zoom is the player's choice; onGreen zooms right in while putting. turn is
+// how many quarter turns the view has been turned round the hole.
+const display = { fitScale: 1, W: 0, H: 0, zoom: 0, onGreen: false, turn: 0 };
 const cam = { x: MARGIN, y: MARGIN, manual: false };
 let game, world, round;
 // phase: 'aim' (waiting for a shot), 'flight', 'roll', 'putting' (putts playing
@@ -2612,7 +2652,7 @@ function measure() {
 // Draw the hole once into a picture big enough for the whole-hole view plus a margin.
 function buildWorld() {
   const { W, H } = display;
-  const fit = layoutHole(game.hole, { x: 8, y: 54, w: W - 16, h: BAR_TOP(H) - 60 });
+  const fit = layoutHole(game.hole, { x: 8, y: 54, w: W - 16, h: BAR_TOP(H) - 60 }, display.turn);
   const view = shiftView(fit, MARGIN, MARGIN);
   const w = W + 2 * MARGIN, h = H + 2 * MARGIN;
   addSurroundings(view, game.course, game.hole.number - 1, w, h);
@@ -2668,6 +2708,13 @@ function setZoom(z) {
   if (z === display.zoom) return;
   display.zoom = z;
   rescale();
+}
+
+// Turn the view a quarter turn round the hole: -1 one way, +1 the other.
+function turnView(dir) {
+  display.turn = (display.turn + dir + 4) % 4;
+  cam.manual = false;
+  buildWorld();
 }
 
 function greenZoom(on) {
@@ -2977,6 +3024,7 @@ function render(now) {
     lie: LIE_NAMES[me.lie] ?? me.lie.toUpperCase(), toPin: Math.round(toPin(game.play)), stroke: me.holed ? me.strokes : me.strokes + 1,
     hint: !humanTurn() && ui.phase !== 'done' ? `${who(me.golfer)} IS PLAYING` : ui.phase === 'putting' ? 'PUTTING...' : ui.phase !== 'aim' ? '' : !ui.aim ? 'DRAG ON THE COURSE TO AIM' : ui.dragging ? 'LET GO TO SET THE AIM' : 'CHANGE SHOT OR DRAG AGAIN',
   });
+  drawViewButtons(hud, W);
   if (ui.banner && now < ui.banner.until) drawBanner(hud, W, ui.banner.text, ui.banner.sub);
   if (ui.pop && now < ui.pop.until) drawPop(hud, W, H, now);
   if (ui.cardAt && now >= ui.cardAt) { ui.card = true; ui.cardAt = 0; }
@@ -3004,6 +3052,9 @@ canvas.addEventListener('mousedown', (e) => {
   if (e.button === 2) { cancelAim(); return; }
   if (e.button !== 0) return;
   const p = toHud(e);
+  const turn = viewButtons(display.W);
+  if (inside(p, turn.left)) return turnView(-1);
+  if (inside(p, turn.right)) return turnView(1);
   if (p.y >= BAR_TOP(display.H)) {
     const b = shotButtons(display.H, SHOT_TYPES.length).findIndex((r) => inside(p, r));
     if (b >= 0) pickShot(SHOT_TYPES[b].key);
@@ -3044,6 +3095,8 @@ addEventListener('keydown', (e) => {
     return clampCamera();
   }
   if (k === 'c') { cam.manual = false; return; }
+  if (k === 'q') return turnView(-1);
+  if (k === 'e') return turnView(1);
   if (k === 'tab') { e.preventDefault(); ui.card = !ui.card; ui.cardAt = 0; return; }
   if (k === 'enter' && ui.phase === 'done') {
     // On to the next hole, or a fresh round after the 18th.
@@ -3066,7 +3119,7 @@ addEventListener('resize', () => {
 });
 
 // Lets the test tools play shots without a mouse.
-window.golf = { get game() { return game; }, get world() { return world; }, get round() { return round; }, ui, cam, display, shoot, clampAim, setZoom };
+window.golf = { get game() { return game; }, get world() { return world; }, get round() { return round; }, ui, cam, display, shoot, clampAim, setZoom, turnView };
 
 measure();
 loadHole();
