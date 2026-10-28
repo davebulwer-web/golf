@@ -8,6 +8,7 @@ import { panel, GOLD } from './hud.js';
 import { drawDinky, golferFrame } from './dinky.js';
 import { STYLES } from './course-generator.js';
 import { LOOKS, SHIRT_COLOURS, SKILL_NAMES, WEEKS, MEMBERS, STAKES, startingSkills, courseStars, memberGolfer, record, canPractise } from './career.js';
+import { SLOTS, TIER_NAMES, kitItem, kitBoost, shopItem, nextItem, boostWords } from './shop.js';
 import { DRILLS, BALLS } from './practice.js';
 
 const DIM = '#c8c0e8', QUIET = '#8a80b0';
@@ -25,15 +26,18 @@ function menuButton(ctx, b, hot, on = true) {
   drawText(ctx, b.label, b.x + Math.round((b.w - textWidth(b.label, scale)) / 2), b.y + Math.round((b.h - 5 * scale) / 2), color, scale, on ? '#1a1a2a' : null);
 }
 
-// A skill as a labelled bar, 0 to 100.
-function skillBar(ctx, x, y, name, value) {
+// A skill as a labelled bar, 0 to 100, with what your kit adds (`boost`) in blue.
+const KIT_BLUE = '#6ac8f0';
+function skillBar(ctx, x, y, name, value, boost = 0) {
   drawText(ctx, name, x, y, DIM, 1, null);
-  const bx = x + 46, bw = 80;
+  const bx = x + 46, bw = 80, all = Math.min(99, value + boost);
   ctx.fillStyle = '#1a1430';
   ctx.fillRect(bx, y, bw, 5);
+  ctx.fillStyle = KIT_BLUE;
+  ctx.fillRect(bx, y, Math.round(bw * all / 100), 5);
   ctx.fillStyle = value >= 60 ? '#5ac85a' : value >= 45 ? GOLD : '#e07a4a';
   ctx.fillRect(bx, y, Math.round(bw * value / 100), 5);
-  drawText(ctx, `${Math.round(value)}`, bx + bw + 5, y, '#ffffff', 1, null);
+  drawText(ctx, `${Math.round(all)}`, bx + bw + 5, y, boost ? KIT_BLUE : '#ffffff', 1, null);
 }
 
 // The golfer at twice size, feet at (x, y).
@@ -136,13 +140,14 @@ export function drawNewCareer(ctx, W, H, L, { draft, hover, now, replaces }) {
 // ---------- Clubhouse ----------
 
 export function hubLayout(W, H, career) {
-  const pw = 420, ph = 232, px = mid(W, pw), py = mid(H, ph);
+  const pw = 512, ph = 232, px = mid(W, pw), py = mid(H, ph);
   const play = career.round ? `CONTINUE ${career.round.match ? 'MATCH' : 'ROUND'}, HOLE ${career.round.hole}` : 'PRACTICE ROUND';
   return {
     panel: { x: px, y: py, w: pw, h: ph },
     play: { key: 'play', label: play, x: px + pw - 136, y: py + ph - 30, w: 120, h: 18 },
     match: { key: 'match', label: 'MONEY MATCH', x: px + pw - 250, y: py + ph - 30, w: 108, h: 18 },
     practice: { key: 'practice', label: 'PRACTICE', x: px + pw - 340, y: py + ph - 30, w: 84, h: 18 },
+    shop: { key: 'shop', label: 'PRO SHOP', x: px + pw - 430, y: py + ph - 30, w: 84, h: 18 },
     menu: { key: 'menu', label: 'MENU', x: px + 16, y: py + ph - 30, w: 56, h: 18 },
   };
 }
@@ -159,10 +164,11 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
   golferAt(ctx, c.look, c.shirt, p.x + 46, p.y + 112, now);
   drawText(ctx, c.name, p.x + 16, p.y + 120, '#ffffff', 1, null);
   drawText(ctx, `£${c.money}`, p.x + 16, p.y + 130, GOLD, 2);
-  const sx = p.x + 112, sy = p.y + 48;
+  const sx = p.x + 112, sy = p.y + 48, boost = kitBoost(c.kit);
   drawText(ctx, 'SKILLS', sx, sy - 6, DIM, 1, null);
+  if (Object.keys(c.kit ?? {}).length) drawText(ctx, 'BLUE: YOUR KIT', sx + 46, sy - 6, KIT_BLUE, 1, null);
   Object.entries(SKILL_NAMES).forEach(([k, name], i) => {
-    skillBar(ctx, sx, sy + 6 + i * 12, name, c.skills[k]);
+    skillBar(ctx, sx, sy + 6 + i * 12, name, c.skills[k], boost[k]);
     // How the last round's form moved it.
     const d = c.report?.change[k];
     if (d) drawText(ctx, `${d > 0 ? '+' : ''}${d.toFixed(1)}`, sx + 148, sy + 6 + i * 12, d > 0 ? '#7ee07e' : '#f08a8a', 1, null);
@@ -174,6 +180,10 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
   drawText(ctx, 'RECENT ROUNDS', sx, ry, DIM, 1, null);
   if (!c.history.length) drawText(ctx, 'NONE YET. PLAY NINE HOLES AT YOUR CLUB.', sx, ry + 11, QUIET, 1, null);
   c.history.slice(0, 5).forEach((r, i) => {
+    if (r.bought) {
+      drawText(ctx, `WK ${r.week}  PRO SHOP: ${r.bought.name}  -£${r.bought.price}`, sx, ry + 11 + i * 9, KIT_BLUE, 1, null);
+      return;
+    }
     if (r.practice) {
       const pr = r.practice;
       drawText(ctx, `WK ${r.week}  PRACTICE: ${pr.name} ${pr.hits}/${pr.balls}  ${SKILL_NAMES[pr.skill]} +${pr.gain.toFixed(1)}`, sx, ry + 11 + i * 9, '#7ee07e', 1, null);
@@ -190,12 +200,14 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
   });
   if (c.round?.match) drawText(ctx, `MATCH IN PROGRESS: ${c.round.vs.toUpperCase()} FOR £${c.round.match.stake}`, p.x + 16, p.y + p.h - 44, GOLD, 1, null);
   else if (c.round) drawText(ctx, `ROUND IN PROGRESS AT ${c.round.course.name}: ${c.round.hole - 1} PLAYED`, p.x + 16, p.y + p.h - 44, GOLD, 1, null);
+  else if (c.worn?.length) drawText(ctx, `WORN OUT: ${c.worn.join(', ')}. THE PRO SHOP HAS MORE.`, p.x + 16, p.y + p.h - 44, '#f08a8a', 1, null);
 
   menuButton(ctx, L.menu, hover === 'menu');
   menuButton(ctx, L.play, hover === 'play');
   if (!c.round) {
     menuButton(ctx, L.match, hover === 'match');
     menuButton(ctx, L.practice, hover === 'practice');
+    menuButton(ctx, L.shop, hover === 'shop');
   }
 }
 
@@ -327,5 +339,44 @@ export function drawDrills(ctx, W, H, L, { career: c, hover }) {
     drawText(ctx, sk, b.x + b.w - 8 - textWidth(sk), b.y + 6, open ? GOLD : '#5a4a80', 1, null);
     drawText(ctx, d.about, b.x + 8, b.y + 18, open ? QUIET : '#4a3e70', 1, null);
   });
+  menuButton(ctx, L.back, hover === 'back');
+}
+
+// ---------- Pro shop ----------
+
+export function shopLayout(W, H) {
+  const pw = 440, rh = 32, ph = 50 + SLOTS.length * (rh + 4) + 42, px = mid(W, pw), py = mid(H, ph);
+  return {
+    panel: { x: px, y: py, w: pw, h: ph },
+    rows: SLOTS.map((s, i) => ({ x: px + 12, y: py + 44 + i * (rh + 4), w: pw - 24, h: rh })),
+    buys: SLOTS.map((s, i) => ({ key: `buy-${i}`, x: px + pw - 82, y: py + 44 + i * (rh + 4) + 8, w: 62, h: 16 })),
+    back: { key: 'back', label: 'BACK', x: px + 12, y: py + ph - 26, w: 70, h: 18 },
+  };
+}
+
+export function drawShop(ctx, W, H, L, { career: c, hover, note }) {
+  const p = L.panel;
+  panel(ctx, p.x, p.y, p.w, p.h);
+  drawText(ctx, 'PRO SHOP', p.x + 12, p.y + 12, GOLD, 2);
+  const cash = `£${c.money}`;
+  drawText(ctx, cash, p.x + p.w - 12 - textWidth(cash, 2), p.y + 12, GOLD, 2);
+  drawText(ctx, 'KIT ADDS TO YOUR SKILLS UNTIL IT WEARS OUT. ONE PIECE FOR EACH SLOT.', p.x + 12, p.y + 30, DIM, 1, null);
+  L.rows.forEach((b, i) => {
+    const slot = SLOTS[i], item = shopItem(slot.key, c.tier), have = c.kit?.[slot.key], owned = have && kitItem(have.id);
+    const afford = c.money >= item.price;
+    ctx.fillStyle = '#2c2050';
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    drawText(ctx, slot.name, b.x + 6, b.y + 5, QUIET, 1, null);
+    drawText(ctx, item.name, b.x + 50, b.y + 5, '#ffffff', 1, null);
+    drawText(ctx, `${boostWords(item.boost, SKILL_NAMES)}  FOR ${item.rounds} ROUNDS`, b.x + 50, b.y + 14, KIT_BLUE, 1, null);
+    const bag = owned ? `IN YOUR BAG: ${owned.name}, ${have.left} ROUND${have.left === 1 ? '' : 'S'} LEFT` : 'IN YOUR BAG: NOTHING SPECIAL';
+    drawText(ctx, bag, b.x + 50, b.y + 23, owned ? GOLD : '#5a4a80', 1, null);
+    const btn = L.buys[i];
+    menuButton(ctx, { ...btn, label: `${owned?.id === item.id ? 'NEW ' : ''}£${item.price}` }, hover === btn.key, afford);
+  });
+  // What the next tier up has in store.
+  const next = nextItem('driver', c.tier);
+  if (next) drawText(ctx, `BETTER KIT UNLOCKS AT ${TIER_NAMES[next.tier]} LEVEL.`, L.back.x + L.back.w + 10, L.back.y + 7, QUIET, 1, null);
+  if (note) drawText(ctx, note.text, p.x + 12, L.back.y - 12, note.good ? '#7ee07e' : '#f08a8a', 1, null);
   menuButton(ctx, L.back, hover === 'back');
 }
