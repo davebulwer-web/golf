@@ -3,6 +3,7 @@
 // nine holes at a time on short courses.
 
 import { RIVAL } from './golfers.js';
+import { COURSE_LIST } from './course-list.js';
 
 const SAVE_KEY = 'pixel-golf.career';
 export const WEEKS = 12; // weeks in a season
@@ -28,21 +29,35 @@ export function startingSkills(look) {
   return Object.fromEntries(Object.entries(BASE_SKILLS).map(([k, v]) => [k, v + (tilt[k] ?? 0)]));
 }
 
-// Small clubs to start at; one is picked for each new career.
-const CLUB_NAMES = ['MUDFORD GOLF CLUB', 'PUDDLEBY GOLF CLUB', 'LITTLE WIGGLEY GOLF CLUB', 'BRAMBLE BOTTOM GOLF CLUB', 'NETHER SLOUCH GOLF CLUB'];
-const HOME_STYLES = ['parkland', 'heathland'];
+// How hard a course is, as 1 to 5 stars, from its rating (shots over par per
+// nine holes for a club golfer; see tools/curate-courses.mjs).
+export const courseStars = (rating) => Math.max(1, Math.min(5, Math.round(1 + (rating + 2) / 1.75)));
 
 export function newCareer({ name, look, shirt }, rand = Math.random) {
-  const pick = (list) => list[Math.floor(rand() * list.length)];
+  const club = COURSE_LIST.club.slice();
+  const styles = new Set();
+  // A random course, of a style not picked yet if there is one.
+  const take = () => {
+    const fresh = club.filter((x) => !styles.has(x.style));
+    const pool = fresh.length ? fresh : club;
+    const c = pool[Math.floor(rand() * pool.length)];
+    club.splice(club.indexOf(c), 1);
+    styles.add(c.style);
+    return c;
+  };
+  const home = take();
   return {
     version: 1, name, look, shirt: look === 'veteran' ? VETERAN_SHIRT : shirt, tier: 'club', season: 1, week: 1, money: 100,
     skills: startingSkills(look),
-    // The home course: short, from the forward tees, nine holes a round.
-    home: { name: pick(CLUB_NAMES), style: pick(HOME_STYLES), seed: Math.floor(rand() * 1e6), par: 70, length: 'forward', holes: 9 },
-    round: null,   // a round in progress: { hole: next hole to play, scores, putts }
+    // Your home club's course, and two other club courses you can play away.
+    home, away: [take(), take()],
+    round: null,   // a round in progress: { course, hole: next hole to play, scores, putts }
     history: [],   // rounds played, newest first
   };
 }
+
+// The courses you can play a round on: home first, then the away courses.
+export const clubCourses = (c) => [c.home, ...(c.away ?? [])];
 
 // Your golfer for a round, from the career.
 export const careerGolfer = (c) => ({ name: c.name, look: c.look, shirt: c.shirt, skills: { ...c.skills } });
@@ -63,6 +78,18 @@ export function finishRound(c, result) {
 // Storage can be missing or refuse (private windows, sandboxed pages): then the
 // career just lasts until the page is closed.
 
+// Careers saved before the curated courses had a made-up home course: move them
+// to a club course, finishing any round in progress where it was started.
+function upgrade(c) {
+  if (c.round && !c.round.course) c.round.course = c.home;
+  if (!c.home.id) {
+    const club = COURSE_LIST.club;
+    c.home = club[0];
+    c.away = [club[1], club[2]];
+  }
+  return c;
+}
+
 export function saveCareer(c) {
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(c)); return true; } catch { return false; }
 }
@@ -70,6 +97,6 @@ export function saveCareer(c) {
 export function loadCareer() {
   try {
     const c = JSON.parse(localStorage.getItem(SAVE_KEY));
-    return c?.version === 1 ? c : null;
+    return c?.version === 1 ? upgrade(c) : null;
   } catch { return null; }
 }

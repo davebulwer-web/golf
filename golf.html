@@ -3740,6 +3740,54 @@ function planShot(golfer, ball, hole, weather, wind, outOfBounds, seed, tries = 
   return best;
 }
 
+// ---- course-list.js ----
+// The career's courses, tier by tier, easiest first. Written by
+// tools/curate-courses.mjs: `rating` is how many shots over par a club-standard
+// golfer averages per nine holes there. `par` is for all eighteen holes (it
+// shapes the course); `roundPar` and `yards` are for the holes a round there
+// plays, from the white tees.
+
+const COURSE_LIST = {
+  club: [
+    {"id":"club-1","name":"LITTLE WIGGLEY GOLF CLUB","style":"parkland","seed":316924,"par":70,"length":"forward","tour":"club","holes":9,"roundPar":35,"yards":2312,"rating":-3.5},
+    {"id":"club-2","name":"HEATHERCOTE GOLF CLUB","style":"heathland","seed":289367,"par":70,"length":"forward","tour":"club","holes":9,"roundPar":35,"yards":2284,"rating":-1.2},
+    {"id":"club-3","name":"ASHWORTHY GOLF CLUB","style":"parkland","seed":112214,"par":68,"length":"forward","tour":"club","holes":9,"roundPar":34,"yards":2502,"rating":-1},
+    {"id":"club-4","name":"OAKENDEN GOLF CLUB","style":"parkland","seed":105943,"par":69,"length":"forward","tour":"club","holes":9,"roundPar":35,"yards":2430,"rating":-1},
+    {"id":"club-5","name":"SQUIRREL HOLLOW GOLF CLUB","style":"woodland","seed":77334,"par":70,"length":"forward","tour":"club","holes":9,"roundPar":35,"yards":2460,"rating":-0.7},
+    {"id":"club-6","name":"ELMSTEAD GOLF CLUB","style":"woodland","seed":430894,"par":70,"length":"forward","tour":"club","holes":9,"roundPar":35,"yards":2433,"rating":-0.7},
+  ],
+  county: [
+    {"id":"county-1","name":"GULLSTONE GOLF CLUB","style":"links","seed":349366,"par":70,"length":"short","tour":"county","holes":18,"roundPar":70,"yards":5601,"rating":0.6},
+    {"id":"county-2","name":"DRY GULCH GOLF & COUNTRY CLUB","style":"desert","seed":736843,"par":70,"length":"short","tour":"county","holes":18,"roundPar":70,"yards":5686,"rating":0.6},
+    {"id":"county-3","name":"CACTUS FLATS GOLF & COUNTRY CLUB","style":"desert","seed":953185,"par":71,"length":"standard","tour":"county","holes":18,"roundPar":71,"yards":6262,"rating":1},
+    {"id":"county-4","name":"MUDFORD GOLF & COUNTRY CLUB","style":"parkland","seed":463384,"par":72,"length":"standard","tour":"county","holes":18,"roundPar":72,"yards":6214,"rating":1.4},
+    {"id":"county-5","name":"KITTIWAKE GOLF CLUB","style":"links","seed":768656,"par":71,"length":"standard","tour":"county","holes":18,"roundPar":71,"yards":6141,"rating":1.6},
+    {"id":"county-6","name":"WHINBURY GOLF CLUB","style":"heathland","seed":601633,"par":70,"length":"standard","tour":"county","holes":18,"roundPar":70,"yards":5989,"rating":1.6},
+  ],
+  challenge: [
+    {"id":"challenge-1","name":"OWLCOMBE GOLF CLUB","style":"woodland","seed":10122,"par":72,"length":"standard","tour":"challenge","holes":18,"roundPar":72,"yards":6202,"rating":1.3},
+    {"id":"challenge-2","name":"CHUMLEY PARK GOLF RESORT","style":"parkland","seed":367316,"par":72,"length":"standard","tour":"challenge","holes":18,"roundPar":72,"yards":6189,"rating":1.3},
+    {"id":"challenge-3","name":"GORSEMOOR GOLF CLUB","style":"heathland","seed":255957,"par":72,"length":"standard","tour":"challenge","holes":18,"roundPar":72,"yards":6239,"rating":1.3},
+    {"id":"challenge-4","name":"DUNEHAVEN GOLF RESORT","style":"links","seed":85946,"par":72,"length":"standard","tour":"challenge","holes":18,"roundPar":72,"yards":6195,"rating":1.3},
+    {"id":"challenge-5","name":"WINDY POINT GOLF CLUB","style":"links","seed":661940,"par":71,"length":"standard","tour":"challenge","holes":18,"roundPar":71,"yards":6202,"rating":2},
+    {"id":"challenge-6","name":"PALM LAGOON GOLF CLUB","style":"tropical","seed":953051,"par":71,"length":"standard","tour":"challenge","holes":18,"roundPar":71,"yards":6136,"rating":2},
+  ],
+  tour: [
+    {"id":"tour-1","name":"BIG TOP GOLF RESORT","style":"stadium","seed":655086,"par":72,"length":"standard","tour":"tour","holes":18,"roundPar":72,"yards":6218,"rating":2.1},
+    {"id":"tour-2","name":"EDELWEISS NATIONAL","style":"alpine","seed":202473,"par":72,"length":"standard","tour":"tour","holes":18,"roundPar":72,"yards":6759,"rating":2.1},
+    {"id":"tour-3","name":"MARRAMSIDE NATIONAL","style":"links","seed":342917,"par":72,"length":"long","tour":"tour","holes":18,"roundPar":72,"yards":6459,"rating":2.3},
+    {"id":"tour-4","name":"DUSTY SPRINGS GOLF RESORT","style":"desert","seed":524018,"par":72,"length":"long","tour":"tour","holes":18,"roundPar":72,"yards":6482,"rating":2.5},
+    {"id":"tour-5","name":"MESA ROJA NATIONAL","style":"desert","seed":962795,"par":72,"length":"long","tour":"tour","holes":18,"roundPar":72,"yards":6473,"rating":3.1},
+    {"id":"tour-6","name":"THUNDER BOWL GOLF RESORT","style":"stadium","seed":718516,"par":72,"length":"long","tour":"tour","holes":18,"roundPar":72,"yards":6647,"rating":3.5},
+  ],
+  majors: [
+    {"id":"majors-1","name":"ROYAL BRACKENFOLD","style":"heathland","seed":876889,"par":72,"length":"long","tour":"majors","holes":18,"roundPar":72,"yards":6381,"rating":3},
+    {"id":"majors-2","name":"GRAND ARENA NATIONAL","style":"stadium","seed":12836,"par":72,"length":"long","tour":"majors","holes":18,"roundPar":72,"yards":6494,"rating":4},
+    {"id":"majors-3","name":"ROYAL COLOSSEUM CREEK","style":"stadium","seed":752259,"par":72,"length":"long","tour":"majors","holes":18,"roundPar":72,"yards":6705,"rating":4.5},
+    {"id":"majors-4","name":"ROYAL IRONGATE","style":"stadium","seed":105511,"par":72,"length":"long","tour":"majors","holes":18,"roundPar":72,"yards":6566,"rating":5.5},
+  ],
+};
+
 // ---- career.js ----
 // A career: your golfer, money, skills and where you are in the season, kept
 // between visits in the browser's storage. You start at a small club, playing
@@ -3770,21 +3818,35 @@ function startingSkills(look) {
   return Object.fromEntries(Object.entries(BASE_SKILLS).map(([k, v]) => [k, v + (tilt[k] ?? 0)]));
 }
 
-// Small clubs to start at; one is picked for each new career.
-const CLUB_NAMES = ['MUDFORD GOLF CLUB', 'PUDDLEBY GOLF CLUB', 'LITTLE WIGGLEY GOLF CLUB', 'BRAMBLE BOTTOM GOLF CLUB', 'NETHER SLOUCH GOLF CLUB'];
-const HOME_STYLES = ['parkland', 'heathland'];
+// How hard a course is, as 1 to 5 stars, from its rating (shots over par per
+// nine holes for a club golfer; see tools/curate-courses.mjs).
+const courseStars = (rating) => Math.max(1, Math.min(5, Math.round(1 + (rating + 2) / 1.75)));
 
 function newCareer({ name, look, shirt }, rand = Math.random) {
-  const pick = (list) => list[Math.floor(rand() * list.length)];
+  const club = COURSE_LIST.club.slice();
+  const styles = new Set();
+  // A random course, of a style not picked yet if there is one.
+  const take = () => {
+    const fresh = club.filter((x) => !styles.has(x.style));
+    const pool = fresh.length ? fresh : club;
+    const c = pool[Math.floor(rand() * pool.length)];
+    club.splice(club.indexOf(c), 1);
+    styles.add(c.style);
+    return c;
+  };
+  const home = take();
   return {
     version: 1, name, look, shirt: look === 'veteran' ? VETERAN_SHIRT : shirt, tier: 'club', season: 1, week: 1, money: 100,
     skills: startingSkills(look),
-    // The home course: short, from the forward tees, nine holes a round.
-    home: { name: pick(CLUB_NAMES), style: pick(HOME_STYLES), seed: Math.floor(rand() * 1e6), par: 70, length: 'forward', holes: 9 },
-    round: null,   // a round in progress: { hole: next hole to play, scores, putts }
+    // Your home club's course, and two other club courses you can play away.
+    home, away: [take(), take()],
+    round: null,   // a round in progress: { course, hole: next hole to play, scores, putts }
     history: [],   // rounds played, newest first
   };
 }
+
+// The courses you can play a round on: home first, then the away courses.
+const clubCourses = (c) => [c.home, ...(c.away ?? [])];
 
 // Your golfer for a round, from the career.
 const careerGolfer = (c) => ({ name: c.name, look: c.look, shirt: c.shirt, skills: { ...c.skills } });
@@ -3805,6 +3867,18 @@ function finishRound(c, result) {
 // Storage can be missing or refuse (private windows, sandboxed pages): then the
 // career just lasts until the page is closed.
 
+// Careers saved before the curated courses had a made-up home course: move them
+// to a club course, finishing any round in progress where it was started.
+function upgrade(c) {
+  if (c.round && !c.round.course) c.round.course = c.home;
+  if (!c.home.id) {
+    const club = COURSE_LIST.club;
+    c.home = club[0];
+    c.away = [club[1], club[2]];
+  }
+  return c;
+}
+
 function saveCareer(c) {
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(c)); return true; } catch { return false; }
 }
@@ -3812,7 +3886,7 @@ function saveCareer(c) {
 function loadCareer() {
   try {
     const c = JSON.parse(localStorage.getItem(SAVE_KEY));
-    return c?.version === 1 ? c : null;
+    return c?.version === 1 ? upgrade(c) : null;
   } catch { return null; }
 }
 
@@ -3982,10 +4056,54 @@ function drawHub(ctx, W, H, L, { career: c, hover, now }) {
     const vs = r.vsScore == null ? '' : r.score < r.vsScore ? `  BEAT ${r.vs} ${r.vsScore}` : r.score > r.vsScore ? `  LOST TO ${r.vs} ${r.vsScore}` : `  TIED ${r.vs}`;
     drawText(ctx, `WK ${r.week}  ${r.score} (${toPar(r.score - r.par)})${vs}`, sx, ry + 11 + i * 9, '#ffffff', 1, null);
   });
-  if (c.round) drawText(ctx, `ROUND IN PROGRESS: ${c.round.hole - 1} HOLES PLAYED`, p.x + 16, p.y + p.h - 44, GOLD, 1, null);
+  if (c.round) drawText(ctx, `ROUND IN PROGRESS AT ${c.round.course.name}: ${c.round.hole - 1} PLAYED`, p.x + 16, p.y + p.h - 44, GOLD, 1, null);
 
   menuButton(ctx, L.menu, hover === 'menu');
   menuButton(ctx, L.play, hover === 'play');
+}
+
+// ---------- Where to play ----------
+
+// A card for each course you can play (home first), and a way back.
+function coursesLayout(W, H, courses) {
+  const pw = 340, ch = 40, ph = 52 + courses.length * (ch + 6) + 28, px = mid(W, pw), py = mid(H, ph);
+  return {
+    panel: { x: px, y: py, w: pw, h: ph },
+    cards: courses.map((c, i) => ({ key: `course-${i}`, x: px + 16, y: py + 40 + i * (ch + 6), w: pw - 32, h: ch })),
+    back: { key: 'back', label: 'BACK', x: px + 16, y: py + ph - 28, w: 70, h: 18 },
+  };
+}
+
+// Difficulty as five little diamonds, the first `n` lit.
+function stars(ctx, x, y, n) {
+  for (let i = 0; i < 5; i++) {
+    ctx.fillStyle = i < n ? GOLD : '#3a2e60';
+    const cx = x + i * 8 + 3;
+    ctx.fillRect(cx - 1, y, 3, 1); ctx.fillRect(cx - 3, y + 1, 7, 3); ctx.fillRect(cx - 1, y + 4, 3, 1);
+    ctx.fillRect(cx, y - 1, 1, 1); ctx.fillRect(cx, y + 5, 1, 1);
+  }
+}
+
+function drawCourses(ctx, W, H, L, { courses, hover }) {
+  const p = L.panel;
+  panel(ctx, p.x, p.y, p.w, p.h);
+  drawText(ctx, 'WHERE TO PLAY', p.x + 16, p.y + 12, GOLD, 2);
+  drawText(ctx, 'NINE HOLES AGAINST BERTIE, AT HOME OR AWAY', p.x + 16, p.y + 28, DIM, 1, null);
+  L.cards.forEach((b, i) => {
+    const c = courses[i], hot = hover === b.key;
+    ctx.fillStyle = hot ? '#4a3a8a' : '#2c2050';
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.fillStyle = hot ? GOLD : '#7a68c0';
+    ctx.fillRect(b.x, b.y, b.w, 1); ctx.fillRect(b.x, b.y + b.h - 1, b.w, 1);
+    ctx.fillRect(b.x, b.y, 1, b.h); ctx.fillRect(b.x + b.w - 1, b.y, 1, b.h);
+    drawText(ctx, c.name, b.x + 8, b.y + 7, hot ? GOLD : '#ffffff', 1, null);
+    const where = i === 0 ? 'HOME' : 'AWAY';
+    drawText(ctx, where, b.x + b.w - 8 - textWidth(where), b.y + 7, i === 0 ? GOLD : QUIET, 1, null);
+    drawText(ctx, `${STYLES[c.style].name.toUpperCase()}   PAR ${c.roundPar}   ${c.yards} YDS`, b.x + 8, b.y + 19, DIM, 1, null);
+    drawText(ctx, 'DIFFICULTY', b.x + 8, b.y + 29, QUIET, 1, null);
+    stars(ctx, b.x + 8 + textWidth('DIFFICULTY') + 6, b.y + 29, courseStars(c.rating));
+  });
+  menuButton(ctx, L.back, hover === 'back');
 }
 
 // ---- main.js ----
@@ -4024,11 +4142,13 @@ const settings = {
   event: params.get('event') === '1',
   // The course's name, par and tees, and how many holes make the round.
   name: null, par: 72, length: 'standard', holes: 18,
+  tour: null, // a career tier's course: club and county ones have no signature doglegs
   career: false, // playing a round of the career
 };
 
 // Which screen is up: 'title', 'new' (starting a career), 'hub' (the
-// clubhouse between rounds) or 'play'. A course in the address goes straight to play.
+// clubhouse between rounds), 'courses' (picking where to play) or 'play'. A
+// course in the address goes straight to play.
 const app = {
   mode: ['style', 'seed', 'hole'].some((k) => params.has(k)) ? 'play' : 'title',
   hover: null, career: loadCareer(), draft: null,
@@ -4153,13 +4273,13 @@ function showMap(on) {
 }
 
 function loadHole() {
-  const course = buildCourse({ name: settings.name ?? `Course ${settings.seed}`, style: settings.style, par: settings.par, length: settings.length, seed: settings.seed });
+  const course = buildCourse({ name: settings.name ?? `Course ${settings.seed}`, style: settings.style, par: settings.par, length: settings.length, seed: settings.seed, tour: settings.tour });
   const hole = course.holes[settings.hole - 1];
   const weather = roundWeather(course);
   course.tournament = settings.event;
   game = { course, hole, weather, wind: holeWind(weather, hole), play: startHole(hole, golfers, TEE) };
   // Scores carry on from hole to hole on the same course.
-  const key = `${settings.style}:${settings.seed}:${settings.par}:${settings.length}:${settings.career}`;
+  const key = `${settings.style}:${settings.seed}:${settings.par}:${settings.length}:${settings.tour}:${settings.career}`;
   if (round?.key !== key) round = newRound(course, key, golfers);
   Object.assign(ui, { dragging: false, aim: null, phase: 'aim', anim: null, banner: null, card: false, cardAt: 0, pop: null, moods: [], putt: null });
   greenZoom(false);
@@ -4507,7 +4627,7 @@ function holeFinished() {
   ui.banner = { text: result, sub: last ? over : 'ENTER FOR THE NEXT HOLE', until: Infinity };
   // A career round is saved hole by hole, so it can be picked up again later.
   if (settings.career) {
-    app.career.round = { hole: game.hole.number + 1, scores: round.players.map((p) => p.scores.slice()), putts: round.players.map((p) => p.putts.slice()) };
+    app.career.round = { course: playing, hole: game.hole.number + 1, scores: round.players.map((p) => p.scores.slice()), putts: round.players.map((p) => p.putts.slice()) };
     saveCareer(app.career);
   }
 }
@@ -4727,6 +4847,7 @@ function renderMenu(now) {
   if (app.mode === 'title') drawTitle(hud, W, H, { buttons: titleLayout(W, H, !!app.career), hover, save: app.career });
   if (app.mode === 'new') drawNewCareer(hud, W, H, newCareerLayout(W, H), { draft: app.draft, hover, now, replaces: !!app.career });
   if (app.mode === 'hub') drawHub(hud, W, H, hubLayout(W, H, app.career), { career: app.career, hover, now });
+  if (app.mode === 'courses') drawCourses(hud, W, H, coursesLayout(W, H, clubCourses(app.career)), { courses: clubCourses(app.career), hover });
 }
 
 // The buttons on the screen that's up, as { key, x, y, w, h }.
@@ -4735,6 +4856,7 @@ function menuButtons() {
   if (app.mode === 'title') return titleLayout(W, H, !!app.career);
   if (app.mode === 'new') { const L = newCareerLayout(W, H); return [L.prev, L.next, ...L.shirts, L.back, L.start]; }
   if (app.mode === 'hub') { const L = hubLayout(W, H, app.career); return [L.play, L.menu]; }
+  if (app.mode === 'courses') { const L = coursesLayout(W, H, clubCourses(app.career)); return [...L.cards, L.back]; }
   return [];
 }
 
@@ -4754,13 +4876,20 @@ function menuAction(key) {
     return;
   }
   if (key.startsWith('shirt-')) { d.shirt = SHIRT_COLOURS[Number(key.slice(6))]; return; }
+  if (key === 'back' && app.mode === 'courses') return goHub();
   if (key === 'back' || key === 'menu') return showTitle();
   if (key === 'start' && d.name.trim()) {
     app.career = newCareer({ name: d.name.trim(), look: d.look, shirt: d.shirt });
     saveCareer(app.career);
     return goHub();
   }
-  if (key === 'play') return playCareerRound();
+  if (key === 'play') {
+    if (app.career.round) return playCareerRound();
+    app.mode = 'courses';
+    app.hover = 'course-0';
+    return;
+  }
+  if (key.startsWith('course-')) return playCareerRound(clubCourses(app.career)[Number(key.slice(7))]);
 }
 
 function menuKey(e) {
@@ -4775,12 +4904,13 @@ function menuKey(e) {
     if (k === 'Escape') return menuAction('back');
     return;
   }
+  if (app.mode === 'courses' && k === 'Escape') return menuAction('back');
   if (app.mode === 'hub') {
     if (k === 'Enter') return menuAction('play');
     if (k === 'Escape') return menuAction('menu');
     return;
   }
-  // The title: up and down pick a button, Enter presses it.
+  // The title and the course list: up and down pick a button, Enter presses it.
   const keys = menuButtons().map((b) => b.key);
   const i = keys.indexOf(app.hover);
   if (k === 'ArrowDown' || k === 'ArrowUp') { e.preventDefault(); app.hover = keys.at(((i < 0 ? 0 : i + (k === 'ArrowDown' ? 1 : -1)) + keys.length) % keys.length); }
@@ -4792,9 +4922,13 @@ function showTitle() {
   app.hover = app.career ? 'continue' : 'new';
 }
 
+// The course being shown or played, as its definition.
+let playing = null;
+
 // Show a course behind the menus (or play it): settings for the course, hole and round.
 function useCourse(course, hole, career) {
-  Object.assign(settings, { style: course.style, seed: course.seed, name: course.name ?? null, par: course.par ?? 72, length: course.length ?? 'standard', holes: course.holes ?? 18, hole, career, event: false });
+  playing = course;
+  Object.assign(settings, { style: course.style, seed: course.seed, name: course.name ?? null, par: course.par ?? 72, length: course.length ?? 'standard', tour: course.tour ?? null, holes: course.holes ?? 18, hole, career, event: false });
   golfers = career ? [careerGolfer(app.career), clubOpponent()] : [PLAYER, RIVAL];
   showMap(false);
   loadHole();
@@ -4805,27 +4939,27 @@ function goHub() {
   const c = app.career;
   if (!c) return showTitle();
   // A round whose last hole was played but not handed in yet.
-  if (c.round && c.round.hole > c.home.holes) return endCareerRound();
+  if (c.round && c.round.hole > c.round.course.holes) return endCareerRound();
   app.mode = 'hub';
   app.hover = 'play';
   useCourse(c.home, 1, true);
 }
 
-// Play (or carry on) a round on your home course.
-function playCareerRound() {
+// Play a round on one of your club's courses, or carry on the one in progress.
+function playCareerRound(course) {
   const c = app.career;
   app.mode = 'play';
   round = null;
-  useCourse(c.home, c.round?.hole ?? 1, true);
+  useCourse(c.round?.course ?? course, c.round?.hole ?? 1, true);
   if (c.round) round.players.forEach((p, i) => { p.scores = c.round.scores[i].slice(); p.putts = c.round.putts[i].slice(); });
 }
 
 // Hand in a finished career round: note it, move the week on, back to the clubhouse.
 function endCareerRound() {
   const c = app.career, saved = c.round;
-  const holes = c.home.holes, total = (a) => a.slice(0, holes).reduce((t, v) => t + (v ?? 0), 0);
-  const pars = round?.key?.endsWith(':true') ? round.pars : buildCourse({ ...c.home }, { layout: false }).holes.map((h) => h.par);
-  finishRound(c, { course: c.home.name, holes, score: total(saved.scores[0]), par: total(pars), vs: clubOpponent().name.toUpperCase(), vsScore: total(saved.scores[1]) });
+  const course = saved.course, holes = course.holes, total = (a) => a.slice(0, holes).reduce((t, v) => t + (v ?? 0), 0);
+  const pars = round?.key?.endsWith(':true') ? round.pars : buildCourse({ ...course }, { layout: false }).holes.map((h) => h.par);
+  finishRound(c, { course: course.name, holes, score: total(saved.scores[0]), par: total(pars), vs: clubOpponent().name.toUpperCase(), vsScore: total(saved.scores[1]) });
   saveCareer(c);
   goHub();
 }
