@@ -1,11 +1,16 @@
 // Sprites from the Dinky Tiny Golf pack by Mike Moore (www.pixelbitsnbytes.com):
-// the golfer, the ball in flight, the flag and the result banners. Until the
-// images have loaded, callers fall back to the placeholder art.
+// the ball in flight, the flag and the result banners. Also the golfer, from
+// Dave's sheet. Until the images have loaded, callers fall back to the
+// placeholder art.
 
 import { DINKY_PNGS } from './dinky-assets.js';
+import { GOLFER_PNGS } from './golfer-assets.js';
+
+// Every golfer frame is cut the same size, with the middle of the feet here.
+const GOLFER_FEET = { x: 20, y: 36 };
 
 const images = {};
-for (const [name, url] of Object.entries(DINKY_PNGS)) {
+for (const [name, url] of Object.entries({ ...DINKY_PNGS, ...GOLFER_PNGS })) {
   const img = new Image();
   img.src = url;
   images[name] = img;
@@ -40,7 +45,8 @@ function prepared(name, shirt = null) {
   }
   // Anchor at the middle of the lowest row that has anything in it.
   let ax = 0, ay = c.height;
-  for (let y = c.height - 1; y >= 0; y--) {
+  if (GOLFER_PNGS[name]) ({ x: ax, y: ay } = GOLFER_FEET);
+  else for (let y = c.height - 1; y >= 0; y--) {
     const xs = [];
     for (let x = 0; x < c.width; x++) if (px[(y * c.width + x) * 4 + 3] > 0) xs.push(x);
     if (xs.length) { ax = name.startsWith('flag') ? xs[0] : Math.round((xs[0] + xs[xs.length - 1]) / 2); ay = y; break; }
@@ -51,11 +57,19 @@ function prepared(name, shirt = null) {
 }
 
 // Draw sprite `name` with its anchor at (x, y), or with `topLeft` its top left
-// corner. Returns false if it isn't loaded yet.
-export function drawDinky(ctx, name, x, y, shirt = null, topLeft = false) {
+// corner; `flip` mirrors it left to right. Returns false if it isn't loaded yet.
+export function drawDinky(ctx, name, x, y, shirt = null, topLeft = false, flip = false) {
   const s = prepared(name, shirt);
   if (!s) return false;
-  ctx.drawImage(s.canvas, Math.round(topLeft ? x : x - s.ax), Math.round(topLeft ? y : y - s.ay));
+  const left = Math.round(topLeft ? x : flip ? x - (s.w - 1 - s.ax) : x - s.ax), top = Math.round(topLeft ? y : y - s.ay);
+  if (!flip) ctx.drawImage(s.canvas, left, top);
+  else {
+    ctx.save();
+    ctx.translate(left + s.w, top);
+    ctx.scale(-1, 1);
+    ctx.drawImage(s.canvas, 0, 0);
+    ctx.restore();
+  }
   return true;
 }
 
@@ -65,12 +79,31 @@ export function dinkySize(name) {
   return s && { w: s.w, h: s.h };
 }
 
-// The golfer's frame for a pose: 'stand', 'swing' (with t from 0 to 1 through
-// the swing), 'joy' or 'cry' (with now in ms, to flick between frames).
+// The golfer's frame for a pose. `t` is how far through the stroke they are,
+// counting the swing up to the moment of impact as 1 (it goes on past 1 while
+// the ball flies), and `now` (in ms) moves the idle and mood frames along.
+//   'swing': the full swing, then the follow through, holding the finish and
+//            shading the eyes to watch the ball;
+//   'putt':  the putting stroke;
+//   'address': over the ball, about to play;
+//   'joy', 'cry': after holing out, with `now` counted from when they holed;
+//   'stand': waiting a turn, shifting about.
+// Each swing frame with when it ends: a slow take back, a pause at the top, and
+// a quick strike.
+const SWING_FRAMES = [['address', 0.16], ['takeaway', 0.34], ['backswing-1', 0.52], ['backswing-2', 0.76], ['downswing-1', 0.86], ['downswing-2', 0.94], ['impact', 1]];
+const FOLLOW_FRAMES = ['follow-1', 'follow-2', 'finish'];
+const IDLE_FRAMES = ['idle-1', 'idle-2', 'idle-3', 'idle-4', 'idle-3', 'idle-2'];
 export function golferFrame(pose, t = 0, now = 0) {
-  if (pose === 'swing') return `swing${Math.min(5, 1 + Math.floor(t * 5))}`;
-  if (pose === 'joy' || pose === 'cry') return `${pose}${1 + (Math.floor(now / 260) % 2)}`;
-  return 'swing1';
+  if (pose === 'swing') {
+    if (t < 1) return SWING_FRAMES.find(([, end]) => t < end)[0];
+    if (t < 1.6) return FOLLOW_FRAMES[Math.floor((t - 1) / 0.2)];
+    return t < 4 ? 'finish' : 'shade-eyes';
+  }
+  if (pose === 'putt') return t < 0.35 ? 'putt-address' : t < 0.85 ? 'putt-back' : t < 1.15 ? 'putt-forward' : 'putt-follow';
+  if (pose === 'address') return 'address';
+  if (pose === 'joy') return `happy-${1 + (Math.floor(now / 240) % 4)}`;
+  if (pose === 'cry') return `cross-${1 + Math.min(3, Math.floor(now / 350) % 6)}`;
+  return IDLE_FRAMES[Math.floor(now / 450) % IDLE_FRAMES.length];
 }
 
 // The ball gets bigger the higher it is, from 'ball0' on the ground.
