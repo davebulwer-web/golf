@@ -2423,6 +2423,52 @@ function drawShotBar(ctx, W, H, info) {
   if (info.hint) drawText(ctx, info.hint, act.cancel.x - 10 - textWidth(info.hint), top + 35, '#c8c0e8');
 }
 
+// The putting bar: the putt's length and slope, the power bar, and PUTT.
+// `info`: { feet, rise, range, power (0 to 1, or null), target (0 to 1), stage, canPutt, canCancel, hint, stroke }
+const powerBar = (W, H) => ({ x: Math.round(W / 2 - 120), y: BAR_TOP(H) + 18, w: 240, h: 12 });
+
+function drawPuttBar(ctx, W, H, info) {
+  const top = BAR_TOP(H);
+  panel(ctx, 6, top, W - 12, BAR_H);
+  drawText(ctx, `PUTT: ${info.feet} FT`, 14, top + 8, GOLD);
+  const lie = info.rise === 0 ? 'LEVEL' : `${info.rise > 0 ? 'UPHILL' : 'DOWNHILL'} ${Math.abs(info.rise)} IN`;
+  drawText(ctx, lie, 14, top + 17);
+  drawText(ctx, `STROKE ${info.stroke}`, 14, top + 26);
+  drawText(ctx, 'ARROWS RUN DOWNHILL', 14, top + 35, '#c8c0e8');
+
+  // The bar: weak to strong, red through green to blue, like the old games.
+  const b = powerBar(W, H);
+  drawText(ctx, 'POWER', b.x, b.y - 9, GOLD);
+  drawText(ctx, `MAX ${info.range} FT`, b.x + b.w - textWidth(`MAX ${info.range} FT`), b.y - 9);
+  ctx.fillStyle = '#10101c';
+  ctx.fillRect(b.x - 1, b.y - 1, b.w + 2, b.h + 2);
+  for (let x = 0; x < b.w; x++) {
+    const t = x / (b.w - 1);
+    const lit = info.power != null && t <= info.power;
+    const [r, g, bl] = t < 0.5 ? [230 - 160 * t * 2, 60 + 150 * t * 2, 50] : [70 - 40 * (t - 0.5) * 2, 210 - 90 * (t - 0.5) * 2, 50 + 190 * (t - 0.5) * 2];
+    const k = lit ? 1 : 0.35;
+    ctx.fillStyle = `rgb(${Math.round(r * k)}, ${Math.round(g * k)}, ${Math.round(bl * k)})`;
+    ctx.fillRect(b.x + x, b.y + 1, 1, b.h - 2);
+  }
+  // Every 5 feet a notch.
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+  for (let f = 5; f < info.range; f += 5) ctx.fillRect(b.x + Math.round(f / info.range * (b.w - 1)), b.y + b.h - 4, 1, 3);
+  // A red marker over the hole's distance, on the flat.
+  const tx = b.x + Math.round(Math.min(1, info.target) * (b.w - 1));
+  ctx.fillStyle = '#ff4040';
+  for (let k = 0; k < 3; k++) ctx.fillRect(tx - 2 + k, b.y - 4 + k, 5 - 2 * k, 1);
+  if (info.power != null) {
+    const nx = b.x + Math.round(info.power * (b.w - 1));
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(nx, b.y - 1, 1, b.h + 2);
+  }
+
+  const act = actionButtons(W, H);
+  button(ctx, act.cancel, 'CANCEL', 'ESC', info.canCancel, '#7a3a4a');
+  button(ctx, act.hit, info.stage === 'power' ? 'STOP' : 'PUTT', 'SPACE', info.canPutt, '#3a8a3a');
+  if (info.hint) drawText(ctx, info.hint, b.x + Math.round((b.w - textWidth(info.hint)) / 2), b.y + b.h + 4, '#c8c0e8');
+}
+
 // A banner across the middle top, for things like "IN THE WATER".
 function drawBanner(ctx, W, text, sub) {
   const w = Math.max(textWidth(text, 2), sub ? textWidth(sub) : 0) + 20;
@@ -2717,60 +2763,295 @@ function waterDrop(hole, wet, from) {
 }
 
 // ---- putting.js ----
-// Putting is automatic, as in Sim Golf: the golfer's putting skill, the
-// distance and the slope of the green decide whether it drops, and if not, how
-// far away it finishes. Putts across a slope break, and downhill ones run on.
-// Distances here are yards; the game shows putts in feet.
+// Putting is a little game of its own: aim, then stop a swinging power bar.
+// The ball then really rolls: the green's slope pulls it downhill as it slows,
+// and it drops if it reaches the hole slowly enough. The golfer's putting skill
+// adds a small wobble to the line and the pace. Distances here are yards; the
+// game shows putts in feet.
 
 
 const feet = (yards) => Math.max(1, Math.round(yards * 3));
 
-// Chance of holing a putt of `ft` feet: about 80% from 3 ft, 45% from 10 ft and
-// 5% from 40 ft for an average putter; better putters hold on to it for longer.
+const FRICTION = { green: 0.8, fringe: 2.2 }; // how fast the ball slows, yards per second per second
+const ROUGH_FRICTION = 4.5;                    // anywhere else
+const GRAVITY = 7.6;                           // a rolling ball's pull down a slope, yards per second per second
+const CUP = 0.075;                      // the hole's radius, a touch generous
+const DROP_SPEED = 1.5;                        // fastest a ball can be going and still drop, straight in
+const PUTT_STEP = 1 / 60;
+
+const friction = (surface) => FRICTION[surface] ?? ROUGH_FRICTION;
+
+// How hard to hit a putt so it would roll `yards` on flat green.
+const speedFor = (yards) => Math.sqrt(2 * FRICTION.green * Math.max(0, yards));
+
+// Roll a putt from `from` heading `angle` (radians) at `speed` yards per second.
+// Returns { path: [{ x, y }] one point per PUTT_STEP, rest, holed, surface, miss }, where
+// miss is how far from the middle of the hole a holed putt dropped in.
+function rollPutt(hole, from, angle, speed) {
+  let x = from.x, y = from.y;
+  let vx = Math.cos(angle) * speed, vy = Math.sin(angle) * speed;
+  const pin = hole.pin;
+  const path = [{ x, y }];
+  let surface = 'green', holed = false, entry = 0;
+  for (let k = 0; k < 20 / PUTT_STEP; k++) {
+    const g = slopeAt(hole, { x, y });
+    const f = friction(surface);
+    const v = Math.hypot(vx, vy);
+    // Stopped, and the slope isn't steep enough to start it again.
+    if (v < 0.03 && GRAVITY * Math.hypot(g.x, g.y) < f) break;
+    const ax = -GRAVITY * g.x - (v > 0 ? f * vx / v : 0);
+    const ay = -GRAVITY * g.y - (v > 0 ? f * vy / v : 0);
+    let nx = vx + ax * PUTT_STEP, ny = vy + ay * PUTT_STEP;
+    // Friction stops a ball; it doesn't send it backwards.
+    if (nx * vx + ny * vy < 0 && GRAVITY * Math.hypot(g.x, g.y) < f) { nx = 0; ny = 0; }
+    const x2 = x + nx * PUTT_STEP, y2 = y + ny * PUTT_STEP;
+    // Closest it comes to the middle of the hole on this step.
+    const sx = x2 - x, sy = y2 - y, len2 = sx * sx + sy * sy;
+    const t = len2 ? Math.max(0, Math.min(1, ((pin.x - x) * sx + (pin.y - y) * sy) / len2)) : 0;
+    const cx = x + sx * t, cy = y + sy * t;
+    const miss = Math.hypot(pin.x - cx, pin.y - cy);
+    if (miss < CUP) {
+      const fast = Math.hypot(nx, ny);
+      // Straight in it can be going quite quickly; over the edge it must be dying.
+      if (fast < DROP_SPEED * Math.sqrt(1 - (miss / CUP) ** 2) + 0.25) {
+        path.push({ x: pin.x, y: pin.y });
+        holed = true;
+        entry = miss;
+        x = pin.x; y = pin.y;
+        break;
+      }
+      // Too quick: it catches the lip and is kicked off line.
+      if (!path.lipped) {
+        path.lipped = true;
+        const side = Math.sign((pin.x - cx) * ny - (pin.y - cy) * nx) || 1;
+        const a = Math.atan2(ny, nx) - side * 0.5 * (1 - miss / CUP), s = fast * 0.75;
+        nx = Math.cos(a) * s; ny = Math.sin(a) * s;
+      }
+    }
+    vx = nx; vy = ny; x = x2; y = y2;
+    path.push({ x, y });
+    if (k % 6 === 0) surface = surfaceAt(hole, { x, y });
+    if (surface === 'water' || surface === 'bunker') break;
+  }
+  return { path, rest: { x, y }, holed, surface, miss: entry };
+}
+
+// The power bar's range in feet: the next step up that comfortably covers the putt.
+const RANGES = [8, 15, 25, 40, 60, 90, 120];
+const puttRange = (yards) => RANGES.find((r) => r >= Math.max(yards * 3 * 1.3, yards * 3 + 4)) ?? RANGES[RANGES.length - 1];
+
+// The wobble a golfer's stroke puts on the line (radians) and the pace (a fraction).
+const strokeWobble = (golfer) => 1.6 - golfer.skills.putting / 100;
+
+// Strike a putt: aim at `aim` (a point on the green), with the bar stopped at
+// `power` (0 to 1) of `range` feet.
+function strike(rng, golfer, hole, from, aim, power, range) {
+  const w = strokeWobble(golfer);
+  const angle = Math.atan2(aim.y - from.y, aim.x - from.x) + rng.gauss() * 0.01 * w;
+  const yards = power * range / 3 * (1 + rng.gauss() * 0.025 * w);
+  return rollPutt(hole, from, angle, speedFor(yards));
+}
+
+// How the green rises from the ball to the hole, in inches (+ uphill).
+const puttRise = (hole, from) => Math.round(rise(hole, from, hole.pin) * 36);
+
+// Chance of holing a putt of `ft` feet, for the computer golfer's planning: about
+// 80% from 3 ft, 45% from 10 ft and 5% from 40 ft for an average putter.
 function holeChance(golfer, ft) {
   if (ft <= 1.5) return 0.99;
   const reach = 8 + 8 * golfer.skills.putting / 100;
   return Math.min(0.99, Math.exp(-(ft - 1.5) / reach) * (0.9 + 0.1 * golfer.skills.putting / 100));
 }
 
-// How the green slopes along a putt (+ uphill) and across it (+ falls to the
-// golfer's right), rise over run.
-function puttSlope(hole, from, pin) {
-  const d = dist(from, pin) || 1;
-  const ux = (pin.x - from.x) / d, uy = (pin.y - from.y) / d;
-  const g = hole ? slopeAt(hole, { x: (from.x + pin.x) / 2, y: (from.y + pin.y) / 2 }, 2) : { x: 0, y: 0 };
-  return { up: g.x * ux + g.y * uy, falls: g.x * -uy + g.y * ux, ux, uy };
+// The computer golfer reads the putt: it tries lines and paces with the real
+// roll and picks the one that finishes in the hole, or nearest it, preferring
+// putts that would run a little past. Its read gets vaguer from further away.
+// Returns { aim, power, range }.
+function readPutt(rng, golfer, hole, from) {
+  const pin = hole.pin;
+  const d = dist(from, pin);
+  const range = puttRange(d);
+  // Coarse to fine: a fan of lines and paces, then closer in round the best.
+  let best = { angle: Math.atan2(pin.y - from.y, pin.x - from.x), yards: d * 1.3 };
+  for (const [da, n, dy] of [[0.04, 8, 0.15], [0.01, 4, 0.03], [0.003, 3, 0.01]]) {
+    const around = best;
+    best = null;
+    for (let i = -n; i <= n; i++) {
+      for (let j = -4; j <= 4; j++) {
+        const angle = around.angle + i * da, yards = Math.max(0.3, around.yards * (1 + j * dy));
+        const r = rollPutt(hole, from, angle, speedFor(yards));
+        const score = r.holed ? (r.miss + Math.abs(yards - d - 0.4) * 0.05) * 0.01 : dist(r.rest, pin);
+        if (!best || score < best.score) best = { score, angle, yards };
+      }
+    }
+  }
+  // A misread: a little off on line and pace, more so on long putts.
+  const blur = (1 - golfer.skills.putting / 200) * Math.min(1.5, d / 8);
+  const angle = best.angle + rng.gauss() * 0.04 * blur;
+  const yards = best.yards * (1 + rng.gauss() * 0.08 * blur);
+  const aimAt = Math.max(1, yards);
+  return {
+    aim: { x: from.x + Math.cos(angle) * aimAt, y: from.y + Math.sin(angle) * aimAt },
+    power: Math.min(1, yards * 3 / range),
+    range,
+  };
 }
 
-// Roll one putt from `from` at the hole on `hole`'s green. Returns { holed, rest,
-// feet, path }, with the path curving as the putt breaks.
-function putt(rng, golfer, from, pin, hole = null) {
-  const d = dist(from, pin);
-  const ft = d * 3;
-  const { up, falls, ux, uy } = puttSlope(hole, from, pin);
-  // Break and pace are harder to judge from further away; downhill putts are quick.
-  const read = 1 + ft * (1.3 * Math.abs(falls) + 0.8 * Math.max(0, -up));
-  const holed = rng.chance(holeChance(golfer, ft) / read);
-  let rest = { ...pin };
-  if (!holed) {
-    // A miss finishes a few feet away: further on long putts and downhill, closer for good putters.
-    const leaveFt = 0.8 + Math.abs(rng.gauss()) * ft * (0.07 + 0.1 * (1 - golfer.skills.putting / 100)) * (1 + 10 * Math.max(0, -up));
-    const past = rng.chance(0.6) ? 1 : -1; // a bold putt goes by
-    // It tends to miss on the low side.
-    const a = rng.gauss() * 0.5 - Math.sign(falls) * Math.min(0.6, Math.abs(falls) * 15);
-    const ca = Math.cos(a) * past, sa = Math.sin(a);
-    const leave = leaveFt / 3;
-    rest = { x: pin.x + (ux * ca - uy * sa) * leave, y: pin.y + (uy * ca + ux * sa) * leave };
+// ---- green-view.js ----
+// The green seen from above for putting, like the 16-bit golf games: the putt
+// runs up the screen, the green is mown in stripes and shaded lighter where it's
+// higher, and little arrows drift downhill to show the slope.
+
+
+const STRIPE = 10; // pixels per mowing stripe
+const ARROW_GAP = 32;
+const GROUND_RGB = {
+  green: [[88, 176, 72], [78, 160, 64]], fringe: [[62, 136, 52]], rough: [[46, 108, 42], [42, 100, 38]],
+  bunker: [[226, 204, 146], [214, 190, 132]], water: [[58, 120, 200], [52, 110, 188]], trees: [[30, 78, 32], [26, 70, 28]],
+};
+
+// Lay the green out in the screen box { x, y, w, h } for a putt from `ball`:
+// the hole straight up the screen from the ball, the two of them centred and as
+// close up as fits. Draws the ground into a canvas of the whole screen, W x H.
+function makeGreenView(hole, ball, box, W, H) {
+  const pin = hole.pin;
+  const d = Math.max(0.5, dist(ball, pin));
+  const up = { x: (pin.x - ball.x) / d, y: (pin.y - ball.y) / d };
+  // Turned, never mirrored, so it matches the course view.
+  const right = { x: up.y, y: -up.x };
+  const scale = Math.max(5, Math.min(24, box.h * 0.62 / d)); // pixels per yard
+  const mid = { x: (ball.x + pin.x) / 2, y: (ball.y + pin.y) / 2 };
+  const cx = box.x + box.w / 2, cy = box.y + box.h / 2;
+  const toScreen = (p) => {
+    const dx = p.x - mid.x, dy = p.y - mid.y;
+    return { x: cx + (dx * right.x + dy * right.y) * scale, y: cy - (dx * up.x + dy * up.y) * scale };
+  };
+  const toWorld = (x, y) => {
+    const a = (x - cx) / scale, b = -(y - cy) / scale;
+    return { x: mid.x + right.x * a + up.x * b, y: mid.y + right.y * a + up.y * b };
+  };
+  // A direction on the green as a screen direction.
+  const dirToScreen = (v) => ({ x: v.x * right.x + v.y * right.y, y: -(v.x * up.x + v.y * up.y) });
+
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const g = canvas.getContext('2d');
+  const img = g.createImageData(W, H);
+  const arrows = [];
+  const h0 = heightAt(hole, pin);
+  // Find the ground every few pixels, and pixel by pixel only where it changes.
+  const B = 4, gw = Math.ceil(W / B) + 1, gh = Math.ceil(H / B) + 1;
+  const coarse = [], lift = [];
+  for (let j = 0; j < gh; j++) {
+    for (let i = 0; i < gw; i++) {
+      const p = toWorld(i * B + 0.5, j * B + 0.5);
+      coarse.push(surfaceAt(hole, p));
+      lift.push(heightAt(hole, p) - h0);
+    }
   }
-  // The ball starts out on the high side and curls down to where it stops.
-  const curl = Math.max(-0.4, Math.min(0.4, falls * 6)) * dist(from, rest);
-  const via = { x: (from.x + rest.x) / 2 - uy * curl, y: (from.y + rest.y) / 2 + ux * curl };
-  const path = [];
-  for (let k = 0; k <= 16; k++) {
-    const t = k / 16, a = (1 - t) ** 2, b = 2 * t * (1 - t), c = t * t;
-    path.push({ x: a * from.x + b * via.x + c * rest.x, y: a * from.y + b * via.y + c * rest.y });
+  const liftAt = (x, y) => {
+    const i = Math.floor(x / B), j = Math.floor(y / B), k = j * gw + i, u = (x % B) / B, v = (y % B) / B;
+    return lift[k] * (1 - u) * (1 - v) + lift[k + 1] * u * (1 - v) + lift[k + gw] * (1 - u) * v + lift[k + gw + 1] * u * v;
+  };
+  const groundAt = (x, y, p) => {
+    const i = Math.floor(x / B), j = Math.floor(y / B), k = j * gw + i;
+    const a = coarse[k];
+    return a === coarse[k + 1] && a === coarse[k + gw] && a === coarse[k + gw + 1] ? a : surfaceAt(hole, p);
+  };
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const p = toWorld(x + 0.5, y + 0.5);
+      let s = groundAt(x, y, p);
+      if (s === 'waste' || s === 'tee' || s === 'fairway') s = 'rough';
+      const tones = GROUND_RGB[s] ?? GROUND_RGB.rough;
+      let rgb = s === 'green' ? tones[Math.floor(x / STRIPE) % 2] : tones[(x * 7 + y * 13 + ((x * y) >> 3)) % 5 === 0 ? 1 % tones.length : 0];
+      // Higher ground a touch lighter, lower ground darker.
+      if (s === 'green' || s === 'fringe') {
+        const k = 1 + Math.max(-0.16, Math.min(0.16, liftAt(x, y) * 0.5));
+        rgb = rgb.map((c) => Math.min(255, Math.round(c * k)));
+      }
+      const i = (y * W + x) * 4;
+      img.data[i] = rgb[0]; img.data[i + 1] = rgb[1]; img.data[i + 2] = rgb[2]; img.data[i + 3] = 255;
+      if (s === 'green' && x % ARROW_GAP === ARROW_GAP >> 1 && y % ARROW_GAP === ARROW_GAP >> 1) {
+        const sl = slopeAt(hole, p);
+        const steep = Math.hypot(sl.x, sl.y);
+        if (steep > 0.004) {
+          const down = dirToScreen({ x: -sl.x / steep, y: -sl.y / steep });
+          arrows.push({ x, y, dx: down.x, dy: down.y, steep });
+        }
+      }
+    }
   }
-  return { holed, rest, feet: feet(d), path };
+  g.putImageData(img, 0, 0);
+  return { hole, ball, pin, scale, canvas, toScreen, toWorld, arrows };
+}
+
+const dotAt = (ctx, x, y, color, w = 1, h = 1) => { ctx.fillStyle = color; ctx.fillRect(Math.round(x), Math.round(y), w, h); };
+
+// Draw the green: the ground, the slope arrows (moving faster on steeper
+// slopes), the hole, any other balls, the aim and the ball. `aim` and `ball`
+// are world points; `others` are other golfers' balls.
+function drawGreenView(ctx, v, now, { ball, aim, others = [], dropped = false }) {
+  ctx.drawImage(v.canvas, 0, 0);
+  for (const a of v.arrows) {
+    // An arrow pointing downhill, bolder on steeper ground, with a bright
+    // pulse running down it: faster where it's steeper.
+    const len = 4 + Math.min(5, a.steep * 150);
+    const alpha = Math.min(0.75, 0.3 + a.steep * 12);
+    const pulse = ((now / 1000) * (0.5 + a.steep * 30) + (a.x * 0.37 + a.y * 0.11)) % 1;
+    const tipX = a.x + a.dx * len / 2, tipY = a.y + a.dy * len / 2;
+    for (let k = 0; k <= len; k++) {
+      const lit = Math.abs(k / len - (1 - pulse)) < 0.2;
+      ctx.fillStyle = `rgba(240, 255, 224, ${(lit ? Math.min(1, alpha + 0.35) : alpha).toFixed(2)})`;
+      ctx.fillRect(Math.round(tipX - a.dx * k), Math.round(tipY - a.dy * k), 1, 1);
+    }
+    ctx.fillStyle = `rgba(240, 255, 224, ${alpha.toFixed(2)})`;
+    for (const side of [-1, 1]) {
+      for (let k = 1; k <= 2; k++) {
+        ctx.fillRect(Math.round(tipX - (a.dx + side * a.dy * 0.9) * k), Math.round(tipY - (a.dy - side * a.dx * 0.9) * k), 1, 1);
+      }
+    }
+  }
+  // The hole: a dark disc with a lighter lip on the far side.
+  const c = v.toScreen(v.pin);
+  const r = Math.max(3.2, CUP * v.scale);
+  for (let y = -Math.ceil(r); y <= Math.ceil(r); y++) {
+    for (let x = -Math.ceil(r); x <= Math.ceil(r); x++) {
+      const d = Math.hypot(x, y);
+      if (d <= r) dotAt(ctx, c.x + x, c.y + y, d > r - 1 && y < 0 ? '#2a3a24' : '#0a0c08');
+      else if (d <= r + 1) dotAt(ctx, c.x + x, c.y + y, 'rgba(255, 255, 255, 0.55)');
+    }
+  }
+  // The flagstick's shadow, falling down to the right.
+  for (let k = 2; k < 14; k++) dotAt(ctx, c.x + k * 0.7 + r - 1, c.y + k * 0.35, 'rgba(0, 0, 0, 0.25)');
+  for (const o of others) greenBall(ctx, v.toScreen(o), v.scale, '#e8e8f0');
+  if (aim) greenAim(ctx, v, ball, aim, now);
+  if (!dropped) greenBall(ctx, v.toScreen(ball), v.scale, '#ffffff');
+}
+
+function greenBall(ctx, s, scale, color) {
+  const x = Math.round(s.x), y = Math.round(s.y);
+  if (scale >= 10) {
+    dotAt(ctx, x - 1, y + 1, 'rgba(0, 0, 0, 0.35)', 3, 2);
+    dotAt(ctx, x - 1, y - 1, color, 3, 3);
+    dotAt(ctx, x + 1, y + 1, '#b8b8c8');
+  } else {
+    dotAt(ctx, x, y + 1, 'rgba(0, 0, 0, 0.35)', 2, 1);
+    dotAt(ctx, x - 1, y - 1, color, 2, 2);
+  }
+}
+
+// A dotted line from the ball to the aim, and a crosshair on the aim.
+function greenAim(ctx, v, ball, aim, now) {
+  const a = v.toScreen(ball), b = v.toScreen(aim);
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  const crawl = (now / 120) % 4;
+  for (let k = 4 + crawl; k < len - 5; k += 4) dotAt(ctx, a.x + (b.x - a.x) * k / len, a.y + (b.y - a.y) * k / len, 'rgba(255, 255, 255, 0.8)');
+  const x = Math.round(b.x), y = Math.round(b.y);
+  for (let k = 3; k <= 6; k++) {
+    dotAt(ctx, x - k, y, '#ffffff'); dotAt(ctx, x + k, y, '#ffffff');
+    dotAt(ctx, x, y - k, '#ffffff'); dotAt(ctx, x, y + k, '#ffffff');
+  }
 }
 
 // ---- play.js ----
@@ -2826,15 +3107,21 @@ function settle(state, shot) {
   p.onGreen = p.lie === 'green';
 }
 
-// Roll the current player's next putt, without moving the ball yet.
-const nextPutt = (state, rng) => putt(rng, current(state).golfer, current(state).at, state.hole.pin, state.hole);
-
-function settlePutt(state, p) {
+// Count a putt and move the ball to where it stopped (it may run off the green;
+// into water, it costs a shot and is played again).
+function settlePutt(state, roll) {
   const me = current(state);
   me.strokes += 1;
+  if (!roll.holed && surfaceAt(state.hole, roll.rest) === 'water') {
+    me.strokes += 1;
+    me.putts += 1;
+    return;
+  }
   me.putts += 1;
-  me.at = p.rest;
-  me.holed = p.holed;
+  me.at = roll.rest;
+  me.holed = roll.holed;
+  me.lie = roll.holed ? 'green' : surfaceAt(state.hole, roll.rest);
+  me.onGreen = me.lie === 'green';
 }
 
 // A round's scores for each golfer, hole by hole (null until played).
@@ -2953,7 +3240,8 @@ function planShot(golfer, ball, hole, weather, wind, outOfBounds, seed, tries = 
 
 // ---- main.js ----
 // Play a round on a generated course against a computer golfer. Pick a shot,
-// drag out where it should land, then hit it; putting on the green plays itself.
+// drag out where it should land, then hit it. On the green, putting is a little
+// game of its own, seen from above: aim, then stop the power bar.
 // The URL can pick the course: ?style=tropical&seed=1989&hole=1
 
 
@@ -2986,17 +3274,20 @@ const settings = {
 const display = { fitScale: 1, W: 0, H: 0, zoom: 0, onGreen: false, turn: 0 };
 const cam = { x: MARGIN, y: MARGIN, manual: false };
 let game, world, round;
-// phase: 'aim' (waiting for a shot), 'flight', 'roll', 'putting' (putts playing
-// out on the green), 'done'. aiAt/aiPlanned pace the computer golfer's turn.
+// phase: 'aim' (waiting for a shot), 'flight', 'roll', 'putting' (on the green,
+// seen from above: see `putt`), 'done'. aiAt/aiPlanned pace the computer golfer's turn.
 const ui = {
   shot: 'straight', humanShot: 'straight', dragging: false, aim: null, phase: 'aim', anim: null, banner: null,
-  card: false, nextPuttAt: 0, aiAt: 0, aiPlanned: false,
+  card: false, aiAt: 0, aiPlanned: false,
+  // The putt being played: { view, stage, aim, range, power, ... }. stage is
+  // 'wait', 'aim', 'power' (the bar is swinging) or 'roll'.
+  putt: null,
   pop: null,  // a picture banner, e.g. BIRDIE: { names, start, until }
   moods: [],  // golfers celebrating or sulking after holing out: { kind, at, until } by player
 };
 
 const SWING = 750; // ms for the swing before the ball leaves
-const PUTT_SWING = 600; // ms for a putting stroke
+const POWER_SWEEP = 1100; // ms for the power bar to fill
 
 const zoomNow = () => (display.onGreen ? MAX_ZOOM : display.zoom);
 const scale = () => display.fitScale + zoomNow();
@@ -3042,7 +3333,7 @@ function loadHole() {
   // Scores carry on from hole to hole on the same course.
   const key = `${settings.style}:${settings.seed}`;
   if (round?.key !== key) round = newRound(course, key, GOLFERS);
-  Object.assign(ui, { dragging: false, aim: null, phase: 'aim', anim: null, banner: null, card: false, cardAt: 0, pop: null, moods: [] });
+  Object.assign(ui, { dragging: false, aim: null, phase: 'aim', anim: null, banner: null, card: false, cardAt: 0, pop: null, moods: [], putt: null });
   greenZoom(false);
   cam.manual = false;
   buildWorld();
@@ -3241,7 +3532,7 @@ function startTurn(now, note) {
   ui.banner = note ? { text: note, sub: turn, until: now + 2200 } : { text: turn, until: now + 1200 };
   if (me.onGreen) {
     ui.phase = 'putting';
-    ui.nextPuttAt = now + (note ? 2000 : 1100);
+    ui.putt = newPutt(me, me.golfer.ai ? now + (note ? 2000 : 1100) : now);
     greenZoom(true);
   } else {
     ui.phase = 'aim';
@@ -3252,22 +3543,98 @@ function startTurn(now, note) {
   cam.manual = false;
 }
 
-// Putts play out one at a time, with a pause between them.
+// ---------- Putting ----------
+
+// The green from above, laid out between the panels, for a putt from `at`.
+const greenFor = (at) => makeGreenView(game.hole, at, { x: 0, y: 50, w: display.W, h: BAR_TOP(display.H) - 54 }, display.W, display.H);
+
+function newPutt(me, until) {
+  const range = puttRange(dist(me.at, game.hole.pin));
+  return { view: greenFor(me.at), stage: 'wait', until, aim: { ...game.hole.pin }, range, power: null, meterAt: 0, roll: null, rollAt: 0, plan: null };
+}
+
+// The power bar runs up and back down again until it's stopped.
+const meter = (ms) => { const t = (ms / POWER_SWEEP) % 2; return t <= 1 ? t : 2 - t; };
+
+function startPower(now) {
+  const pt = ui.putt;
+  if (pt?.stage !== 'aim') return;
+  Object.assign(pt, { stage: 'power', meterAt: now, power: 0 });
+  ui.dragging = false;
+}
+
+function stopPower(now) {
+  const pt = ui.putt;
+  if (pt?.stage !== 'power') return;
+  const me = current(game.play);
+  pt.power = meter(now - pt.meterAt);
+  pt.roll = strike(rng, me.golfer, game.hole, me.at, pt.aim, pt.power, pt.range);
+  Object.assign(pt, { stage: 'roll', rollAt: now });
+  ui.banner = null;
+}
+
+function cancelPower() {
+  const pt = ui.putt;
+  if (pt?.stage !== 'power' || !humanTurn()) return;
+  Object.assign(pt, { stage: 'aim', power: null });
+}
+
+function aimPutt(p) {
+  const pt = ui.putt;
+  const at = pt.view.toWorld(p.x, p.y);
+  if (dist(at, current(game.play).at) > 0.2) pt.aim = at;
+}
+
+// Where the ball is on its roll: { at, done } (done once it's stopped or dropped).
+function puttBall(now) {
+  const pt = ui.putt, path = pt.roll.path;
+  const k = Math.max(0, Math.floor((now - pt.rollAt) * 60 / 1000));
+  return { at: path[Math.min(path.length - 1, k)], done: k >= path.length - 1 };
+}
+
 function updatePutting(now) {
-  const a = ui.anim;
-  if (!a) {
-    if (now < ui.nextPuttAt) return;
-    const me = current(game.play);
-    const p = nextPutt(game.play, rng);
-    ui.anim = { putt: p, shot: { from: me.at, landing: me.at, rest: p.rest, path: p.path }, swingAt: now, start: now + PUTT_SWING, flight: 0, roll: Math.min(2500, 500 + p.feet * 30) };
-    ui.banner = { text: `PUTT FROM ${p.feet} FT`, until: Infinity };
+  const pt = ui.putt;
+  const me = current(game.play);
+  if (pt.stage === 'wait') {
+    if (now < pt.until) return;
+    pt.stage = 'aim';
+    if (me.golfer.ai) {
+      // The computer reads the putt, then slides its aim across to its line.
+      pt.plan = readPutt(rng, me.golfer, game.hole, me.at);
+      Object.assign(pt, { aimFrom: { ...pt.aim }, aimAt: now, until: now + 1000 });
+    }
     return;
   }
-  if (now - a.start < a.roll) return;
-  settlePutt(game.play, a.putt);
-  ui.anim = null;
-  const me = current(game.play);
-  afterStroke(now, me.holed ? null : `MISSED. ${feet(dist(me.at, game.hole.pin))} FT LEFT`);
+  if (pt.stage === 'aim' && me.golfer.ai) {
+    const t = Math.min(1, (now - pt.aimAt) / 700), e = 1 - (1 - t) ** 2;
+    pt.aim = { x: pt.aimFrom.x + (pt.plan.aim.x - pt.aimFrom.x) * e, y: pt.aimFrom.y + (pt.plan.aim.y - pt.aimFrom.y) * e };
+    if (now >= pt.until) startPower(now);
+    return;
+  }
+  if (pt.stage === 'power') {
+    pt.power = meter(now - pt.meterAt);
+    // The computer stops the bar on its way up, where it meant to.
+    if (me.golfer.ai && now - pt.meterAt >= pt.plan.power * POWER_SWEEP) {
+      pt.meterAt = now - pt.plan.power * POWER_SWEEP;
+      stopPower(now);
+    }
+    return;
+  }
+  if (pt.stage !== 'roll' || !puttBall(now).done) return;
+  // A moment to watch it drop, or to see where it finished.
+  if (now - pt.rollAt < pt.roll.path.length * 1000 / 60 + 600) return;
+  const roll = pt.roll;
+  settlePutt(game.play, roll);
+  ui.putt = null;
+  if (me.holed) return afterStroke(now, null);
+  const left = `${feet(dist(me.at, game.hole.pin))} FT LEFT`;
+  let note = roll.path.lipped ? `LIPPED OUT! ${left}` : `MISSED. ${left}`;
+  if (surfaceAt(game.hole, roll.rest) === 'water') note = 'IN THE WATER. ONE SHOT PENALTY';
+  else if (!me.onGreen) {
+    note = 'OFF THE GREEN';
+    if (LIE_BANNERS[me.lie]) showPop([LIE_BANNERS[me.lie]], now);
+  }
+  afterStroke(now, note);
 }
 
 // Everyone's round so far against par, e.g. 'YOU +2  BERTIE E'.
@@ -3368,13 +3735,13 @@ function render(now) {
     const from = a ? a.shot.from : p.at;
     const stand = v.worldToScreen(from);
     const ball = playing ? ballNow(now) : onGround(p.at);
-    const onGreen = ui.phase === 'putting' || a?.putt;
-    const pose = mood ? mood.kind : a?.swingAt ? (a.putt ? 'putt' : 'swing') : playing ? (onGreen ? 'putt' : 'address') : 'stand';
-    const t = a?.swingAt ? (now - a.swingAt) / (a.putt ? PUTT_SWING : SWING) : 0;
+    const onGreen = ui.phase === 'putting';
+    const pose = mood ? mood.kind : a?.swingAt ? 'swing' : playing ? (onGreen ? 'putt' : 'address') : 'stand';
+    const t = a?.swingAt ? (now - a.swingAt) / SWING : 0;
     const frame = golferFrame(pose, t, mood ? now - mood.at : now + i * 900);
     // The golfer stands side on to where the ball's going, with the ball just
     // in front of them; the sprite faces right, so mirror it to face left.
-    const target = a ? (a.putt ? game.hole.pin : a.shot.landing) : (playing && ui.aim) || game.hole.pin;
+    const target = a ? a.shot.landing : (playing && ui.aim) || game.hole.pin;
     // After holing, they stand clear of the flag, on the side away from anyone still
     // playing. Whoever's waiting stands back behind their ball.
     const side = (q) => (v.worldToScreen(q).x < stand.x ? -1 : 1);
@@ -3398,17 +3765,36 @@ function render(now) {
 
   const { W, H } = display;
   hud.clearRect(0, 0, W, H);
+  const pt = ui.phase === 'putting' ? ui.putt : null;
+  if (pt) {
+    // Putting: the green from above covers the course.
+    const rolling = pt.roll ? puttBall(now) : null;
+    const others = game.play.players.filter((p, i) => i !== game.play.turn && !p.holed && p.onGreen).map((p) => p.at);
+    drawGreenView(hud, pt.view, now, {
+      ball: rolling ? rolling.at : me.at, aim: pt.stage === 'aim' || pt.stage === 'power' ? pt.aim : null,
+      others, dropped: rolling?.done && pt.roll.holed,
+    });
+  }
   drawHud(hud, W, H, { course: game.course, hole: game.hole, tee: TEE, weather: game.weather, wind: game.wind, windScreen: v.worldDirToScreen(game.wind.across, game.wind.along), standing: standings() });
+  if (pt) {
+    const d = dist(me.at, game.hole.pin);
+    const human = humanTurn();
+    drawPuttBar(hud, W, H, {
+      feet: feet(d), rise: puttRise(game.hole, me.at), range: pt.range, power: pt.power, target: d * 3 / pt.range,
+      stage: pt.stage, canPutt: human && (pt.stage === 'aim' || pt.stage === 'power'), canCancel: human && pt.stage === 'power', stroke: me.strokes + 1,
+      hint: !human ? `${who(me.golfer)} IS PUTTING` : pt.stage === 'aim' ? 'CLICK THE GREEN TO AIM, THEN PUTT' : pt.stage === 'power' ? 'CLICK TO STOP THE BAR' : '',
+    });
+  }
   const type = shotType(ui.shot);
   const max = Math.round(maxCarry(me.golfer, type, me.lie, game.hole));
   const aimYds = ui.aim ? Math.round(dist(me.at, ui.aim)) : 0;
   const slope = ui.aim ? Math.round(playsAs(game.hole, me.at, ui.aim)) - aimYds : 0; // + uphill
   const canHit = ui.phase === 'aim' && !!ui.aim && !ui.dragging && humanTurn();
-  drawShotBar(hud, W, H, {
+  if (!pt) drawShotBar(hud, W, H, {
     types: SHOT_TYPES, selected: ui.shot, max, aim: aimYds, slope, canHit,
     club: chooseClub(me.golfer, type, aimYds + slope || max, me.lie).toUpperCase(),
     lie: LIE_NAMES[me.lie] ?? me.lie.toUpperCase(), toPin: Math.round(toPin(game.play)), stroke: me.holed ? me.strokes : me.strokes + 1,
-    hint: !humanTurn() && ui.phase !== 'done' ? `${who(me.golfer)} IS PLAYING` : ui.phase === 'putting' ? 'PUTTING...' : ui.phase !== 'aim' ? '' : !ui.aim ? 'DRAG ON THE COURSE TO AIM' : ui.dragging ? 'LET GO TO SET THE AIM' : 'CHANGE SHOT OR DRAG AGAIN',
+    hint: !humanTurn() && ui.phase !== 'done' ? `${who(me.golfer)} IS PLAYING` : ui.phase !== 'aim' ? '' : !ui.aim ? 'DRAG ON THE COURSE TO AIM' : ui.dragging ? 'LET GO TO SET THE AIM' : 'CHANGE SHOT OR DRAG AGAIN',
   });
   drawViewButtons(hud, W);
   if (ui.banner && now < ui.banner.until) drawBanner(hud, W, ui.banner.text, ui.banner.sub);
@@ -3435,13 +3821,14 @@ const toYards = (e) => world.view.screenToWorld(e.clientX / scale() + Math.round
 const inside = (p, b) => p.x >= b.x && p.x < b.x + b.w && p.y >= b.y && p.y < b.y + b.h;
 
 canvas.addEventListener('mousedown', (e) => {
-  if (e.button === 2) { cancelAim(); return; }
+  if (e.button === 2) { cancelAim(); cancelPower(); return; }
   if (e.button !== 0) return;
   const p = toHud(e);
   const turn = viewButtons(display.W);
   if (inside(p, turn.left)) return turnView(-1);
   if (inside(p, turn.right)) return turnView(1);
   if (inside(p, turn.golfer)) return changeGolfer();
+  if (ui.phase === 'putting') return puttClick(p);
   if (p.y >= BAR_TOP(display.H)) {
     const b = shotButtons(display.H, SHOT_TYPES.length).findIndex((r) => inside(p, r));
     if (b >= 0) pickShot(SHOT_TYPES[b].key);
@@ -3454,12 +3841,30 @@ canvas.addEventListener('mousedown', (e) => {
   ui.dragging = true;
   ui.aim = clampAim(toYards(e));
 });
+// On the green: click or drag to aim, PUTT starts the power bar, and any click stops it.
+function puttClick(p) {
+  const pt = ui.putt;
+  if (!pt || !humanTurn()) return;
+  const now = performance.now();
+  const act = actionButtons(display.W, display.H);
+  if (inside(p, act.cancel)) return cancelPower();
+  if (pt.stage === 'power') return stopPower(now);
+  if (inside(p, act.hit)) return startPower(now);
+  if (pt.stage === 'aim' && p.y < BAR_TOP(display.H)) {
+    ui.dragging = true;
+    aimPutt(p);
+  }
+}
+
 addEventListener('mousemove', (e) => {
-  if (ui.dragging) ui.aim = clampAim(toYards(e));
+  if (!ui.dragging) return;
+  if (ui.phase === 'putting') { if (ui.putt?.stage === 'aim') aimPutt(toHud(e)); return; }
+  ui.aim = clampAim(toYards(e));
 });
 addEventListener('mouseup', (e) => {
   if (!ui.dragging || e.button !== 0) return;
   ui.dragging = false;
+  if (ui.phase === 'putting') return;
   // Letting go sets the aim; it's hit with the HIT button or space.
   if (ui.aim && dist(current(game.play).at, ui.aim) < 5) ui.aim = null;
 });
@@ -3471,8 +3876,13 @@ const PAN = { arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdow
 addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   if (k >= '1' && k <= '5') return pickShot(SHOT_TYPES[Number(k) - 1].key);
-  if (k === ' ') { e.preventDefault(); return humanTurn() && shoot(); }
-  if (k === 'escape') return cancelAim();
+  if (k === ' ') {
+    e.preventDefault();
+    if (!humanTurn()) return;
+    if (ui.phase === 'putting') return ui.putt?.stage === 'power' ? stopPower(performance.now()) : startPower(performance.now());
+    return shoot();
+  }
+  if (k === 'escape') { cancelPower(); return cancelAim(); }
   if (k === '+' || k === '=') return setZoom(display.zoom + 1);
   if (k === '-' || k === '_') return setZoom(display.zoom - 1);
   if (PAN[k] && display.zoom > 0) {
@@ -3503,11 +3913,27 @@ addEventListener('keydown', (e) => {
 let resizing;
 addEventListener('resize', () => {
   clearTimeout(resizing);
-  resizing = setTimeout(() => { measure(); buildWorld(); }, 150);
+  resizing = setTimeout(() => {
+    measure();
+    buildWorld();
+    if (ui.putt) ui.putt.view = greenFor(current(game.play).at);
+  }, 150);
 });
 
 // Lets the test tools play shots without a mouse.
-window.golf = { get game() { return game; }, get world() { return world; }, get round() { return round; }, ui, cam, display, shoot, clampAim, setZoom, turnView, changeGolfer };
+// autoPutt lines up and strikes the current putt as the computer golfer would.
+function autoPutt() {
+  const pt = ui.putt;
+  if (pt?.stage !== 'aim') return;
+  const me = current(game.play);
+  const plan = readPutt(rng, me.golfer, game.hole, me.at);
+  pt.aim = plan.aim;
+  const now = performance.now();
+  startPower(now);
+  pt.meterAt = now - plan.power * POWER_SWEEP;
+  stopPower(now);
+}
+window.golf = { get game() { return game; }, get world() { return world; }, get round() { return round; }, ui, cam, display, shoot, clampAim, setZoom, turnView, changeGolfer, autoPutt, greenFor };
 
 measure();
 loadHole();

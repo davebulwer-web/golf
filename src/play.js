@@ -2,7 +2,6 @@
 
 import { pointAt, surfaceAt, dist } from './course-generator.js';
 import { playShot, waterDrop } from './shots.js';
-import { putt } from './putting.js';
 
 // Start a hole with every golfer's ball on the given tee.
 export function startHole(hole, golfers, tee = 'white') {
@@ -53,15 +52,21 @@ export function settle(state, shot) {
   p.onGreen = p.lie === 'green';
 }
 
-// Roll the current player's next putt, without moving the ball yet.
-export const nextPutt = (state, rng) => putt(rng, current(state).golfer, current(state).at, state.hole.pin, state.hole);
-
-export function settlePutt(state, p) {
+// Count a putt and move the ball to where it stopped (it may run off the green;
+// into water, it costs a shot and is played again).
+export function settlePutt(state, roll) {
   const me = current(state);
   me.strokes += 1;
+  if (!roll.holed && surfaceAt(state.hole, roll.rest) === 'water') {
+    me.strokes += 1;
+    me.putts += 1;
+    return;
+  }
   me.putts += 1;
-  me.at = p.rest;
-  me.holed = p.holed;
+  me.at = roll.rest;
+  me.holed = roll.holed;
+  me.lie = roll.holed ? 'green' : surfaceAt(state.hole, roll.rest);
+  me.onGreen = me.lie === 'green';
 }
 
 // A round's scores for each golfer, hole by hole (null until played).
