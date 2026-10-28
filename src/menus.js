@@ -6,7 +6,8 @@
 import { drawText, textWidth } from './art.js';
 import { panel, GOLD } from './hud.js';
 import { drawDinky, golferFrame } from './dinky.js';
-import { LOOKS, SHIRT_COLOURS, SKILL_NAMES, WEEKS, startingSkills } from './career.js';
+import { STYLES } from './course-generator.js';
+import { LOOKS, SHIRT_COLOURS, SKILL_NAMES, WEEKS, startingSkills, courseStars } from './career.js';
 
 const DIM = '#c8c0e8', QUIET = '#8a80b0';
 const mid = (W, w) => Math.round((W - w) / 2);
@@ -167,8 +168,52 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
     const vs = r.vsScore == null ? '' : r.score < r.vsScore ? `  BEAT ${r.vs} ${r.vsScore}` : r.score > r.vsScore ? `  LOST TO ${r.vs} ${r.vsScore}` : `  TIED ${r.vs}`;
     drawText(ctx, `WK ${r.week}  ${r.score} (${toPar(r.score - r.par)})${vs}`, sx, ry + 11 + i * 9, '#ffffff', 1, null);
   });
-  if (c.round) drawText(ctx, `ROUND IN PROGRESS: ${c.round.hole - 1} HOLES PLAYED`, p.x + 16, p.y + p.h - 44, GOLD, 1, null);
+  if (c.round) drawText(ctx, `ROUND IN PROGRESS AT ${c.round.course.name}: ${c.round.hole - 1} PLAYED`, p.x + 16, p.y + p.h - 44, GOLD, 1, null);
 
   menuButton(ctx, L.menu, hover === 'menu');
   menuButton(ctx, L.play, hover === 'play');
+}
+
+// ---------- Where to play ----------
+
+// A card for each course you can play (home first), and a way back.
+export function coursesLayout(W, H, courses) {
+  const pw = 340, ch = 40, ph = 52 + courses.length * (ch + 6) + 28, px = mid(W, pw), py = mid(H, ph);
+  return {
+    panel: { x: px, y: py, w: pw, h: ph },
+    cards: courses.map((c, i) => ({ key: `course-${i}`, x: px + 16, y: py + 40 + i * (ch + 6), w: pw - 32, h: ch })),
+    back: { key: 'back', label: 'BACK', x: px + 16, y: py + ph - 28, w: 70, h: 18 },
+  };
+}
+
+// Difficulty as five little diamonds, the first `n` lit.
+function stars(ctx, x, y, n) {
+  for (let i = 0; i < 5; i++) {
+    ctx.fillStyle = i < n ? GOLD : '#3a2e60';
+    const cx = x + i * 8 + 3;
+    ctx.fillRect(cx - 1, y, 3, 1); ctx.fillRect(cx - 3, y + 1, 7, 3); ctx.fillRect(cx - 1, y + 4, 3, 1);
+    ctx.fillRect(cx, y - 1, 1, 1); ctx.fillRect(cx, y + 5, 1, 1);
+  }
+}
+
+export function drawCourses(ctx, W, H, L, { courses, hover }) {
+  const p = L.panel;
+  panel(ctx, p.x, p.y, p.w, p.h);
+  drawText(ctx, 'WHERE TO PLAY', p.x + 16, p.y + 12, GOLD, 2);
+  drawText(ctx, 'NINE HOLES AGAINST BERTIE, AT HOME OR AWAY', p.x + 16, p.y + 28, DIM, 1, null);
+  L.cards.forEach((b, i) => {
+    const c = courses[i], hot = hover === b.key;
+    ctx.fillStyle = hot ? '#4a3a8a' : '#2c2050';
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.fillStyle = hot ? GOLD : '#7a68c0';
+    ctx.fillRect(b.x, b.y, b.w, 1); ctx.fillRect(b.x, b.y + b.h - 1, b.w, 1);
+    ctx.fillRect(b.x, b.y, 1, b.h); ctx.fillRect(b.x + b.w - 1, b.y, 1, b.h);
+    drawText(ctx, c.name, b.x + 8, b.y + 7, hot ? GOLD : '#ffffff', 1, null);
+    const where = i === 0 ? 'HOME' : 'AWAY';
+    drawText(ctx, where, b.x + b.w - 8 - textWidth(where), b.y + 7, i === 0 ? GOLD : QUIET, 1, null);
+    drawText(ctx, `${STYLES[c.style].name.toUpperCase()}   PAR ${c.roundPar}   ${c.yards} YDS`, b.x + 8, b.y + 19, DIM, 1, null);
+    drawText(ctx, 'DIFFICULTY', b.x + 8, b.y + 29, QUIET, 1, null);
+    stars(ctx, b.x + 8 + textWidth('DIFFICULTY') + 6, b.y + 29, courseStars(c.rating));
+  });
+  menuButton(ctx, L.back, hover === 'back');
 }

@@ -17,8 +17,8 @@ import { planShot } from './ai.js';
 import { feet, puttRange, puttRise, readPutt, strike } from './putting.js';
 import { makeGreenView, drawGreenView } from './green-view.js';
 import { drawDinky, dinkySize, golferFrame, ballFrame, flagFrame, GOLFER_LOOKS, LIE_BANNERS, WATER_BANNER, OB_BANNER, scoreBanner } from './dinky.js';
-import { LOOKS, SHIRT_COLOURS, newCareer, careerGolfer, clubOpponent, finishRound, saveCareer, loadCareer } from './career.js';
-import { titleLayout, drawTitle, newCareerLayout, drawNewCareer, hubLayout, drawHub } from './menus.js';
+import { LOOKS, SHIRT_COLOURS, newCareer, clubCourses, careerGolfer, clubOpponent, finishRound, saveCareer, loadCareer } from './career.js';
+import { titleLayout, drawTitle, newCareerLayout, drawNewCareer, hubLayout, drawHub, coursesLayout, drawCourses } from './menus.js';
 
 const STYLE_KEYS = Object.keys(STYLES);
 const TEE = 'white';
@@ -48,11 +48,13 @@ const settings = {
   event: params.get('event') === '1',
   // The course's name, par and tees, and how many holes make the round.
   name: null, par: 72, length: 'standard', holes: 18,
+  tour: null, // a career tier's course: club and county ones have no signature doglegs
   career: false, // playing a round of the career
 };
 
 // Which screen is up: 'title', 'new' (starting a career), 'hub' (the
-// clubhouse between rounds) or 'play'. A course in the address goes straight to play.
+// clubhouse between rounds), 'courses' (picking where to play) or 'play'. A
+// course in the address goes straight to play.
 const app = {
   mode: ['style', 'seed', 'hole'].some((k) => params.has(k)) ? 'play' : 'title',
   hover: null, career: loadCareer(), draft: null,
@@ -177,13 +179,13 @@ function showMap(on) {
 }
 
 function loadHole() {
-  const course = buildCourse({ name: settings.name ?? `Course ${settings.seed}`, style: settings.style, par: settings.par, length: settings.length, seed: settings.seed });
+  const course = buildCourse({ name: settings.name ?? `Course ${settings.seed}`, style: settings.style, par: settings.par, length: settings.length, seed: settings.seed, tour: settings.tour });
   const hole = course.holes[settings.hole - 1];
   const weather = roundWeather(course);
   course.tournament = settings.event;
   game = { course, hole, weather, wind: holeWind(weather, hole), play: startHole(hole, golfers, TEE) };
   // Scores carry on from hole to hole on the same course.
-  const key = `${settings.style}:${settings.seed}:${settings.par}:${settings.length}:${settings.career}`;
+  const key = `${settings.style}:${settings.seed}:${settings.par}:${settings.length}:${settings.tour}:${settings.career}`;
   if (round?.key !== key) round = newRound(course, key, golfers);
   Object.assign(ui, { dragging: false, aim: null, phase: 'aim', anim: null, banner: null, card: false, cardAt: 0, pop: null, moods: [], putt: null });
   greenZoom(false);
@@ -531,7 +533,7 @@ function holeFinished() {
   ui.banner = { text: result, sub: last ? over : 'ENTER FOR THE NEXT HOLE', until: Infinity };
   // A career round is saved hole by hole, so it can be picked up again later.
   if (settings.career) {
-    app.career.round = { hole: game.hole.number + 1, scores: round.players.map((p) => p.scores.slice()), putts: round.players.map((p) => p.putts.slice()) };
+    app.career.round = { course: playing, hole: game.hole.number + 1, scores: round.players.map((p) => p.scores.slice()), putts: round.players.map((p) => p.putts.slice()) };
     saveCareer(app.career);
   }
 }
@@ -751,6 +753,7 @@ function renderMenu(now) {
   if (app.mode === 'title') drawTitle(hud, W, H, { buttons: titleLayout(W, H, !!app.career), hover, save: app.career });
   if (app.mode === 'new') drawNewCareer(hud, W, H, newCareerLayout(W, H), { draft: app.draft, hover, now, replaces: !!app.career });
   if (app.mode === 'hub') drawHub(hud, W, H, hubLayout(W, H, app.career), { career: app.career, hover, now });
+  if (app.mode === 'courses') drawCourses(hud, W, H, coursesLayout(W, H, clubCourses(app.career)), { courses: clubCourses(app.career), hover });
 }
 
 // The buttons on the screen that's up, as { key, x, y, w, h }.
@@ -759,6 +762,7 @@ function menuButtons() {
   if (app.mode === 'title') return titleLayout(W, H, !!app.career);
   if (app.mode === 'new') { const L = newCareerLayout(W, H); return [L.prev, L.next, ...L.shirts, L.back, L.start]; }
   if (app.mode === 'hub') { const L = hubLayout(W, H, app.career); return [L.play, L.menu]; }
+  if (app.mode === 'courses') { const L = coursesLayout(W, H, clubCourses(app.career)); return [...L.cards, L.back]; }
   return [];
 }
 
@@ -778,13 +782,20 @@ function menuAction(key) {
     return;
   }
   if (key.startsWith('shirt-')) { d.shirt = SHIRT_COLOURS[Number(key.slice(6))]; return; }
+  if (key === 'back' && app.mode === 'courses') return goHub();
   if (key === 'back' || key === 'menu') return showTitle();
   if (key === 'start' && d.name.trim()) {
     app.career = newCareer({ name: d.name.trim(), look: d.look, shirt: d.shirt });
     saveCareer(app.career);
     return goHub();
   }
-  if (key === 'play') return playCareerRound();
+  if (key === 'play') {
+    if (app.career.round) return playCareerRound();
+    app.mode = 'courses';
+    app.hover = 'course-0';
+    return;
+  }
+  if (key.startsWith('course-')) return playCareerRound(clubCourses(app.career)[Number(key.slice(7))]);
 }
 
 function menuKey(e) {
@@ -799,12 +810,13 @@ function menuKey(e) {
     if (k === 'Escape') return menuAction('back');
     return;
   }
+  if (app.mode === 'courses' && k === 'Escape') return menuAction('back');
   if (app.mode === 'hub') {
     if (k === 'Enter') return menuAction('play');
     if (k === 'Escape') return menuAction('menu');
     return;
   }
-  // The title: up and down pick a button, Enter presses it.
+  // The title and the course list: up and down pick a button, Enter presses it.
   const keys = menuButtons().map((b) => b.key);
   const i = keys.indexOf(app.hover);
   if (k === 'ArrowDown' || k === 'ArrowUp') { e.preventDefault(); app.hover = keys.at(((i < 0 ? 0 : i + (k === 'ArrowDown' ? 1 : -1)) + keys.length) % keys.length); }
@@ -816,9 +828,13 @@ function showTitle() {
   app.hover = app.career ? 'continue' : 'new';
 }
 
+// The course being shown or played, as its definition.
+let playing = null;
+
 // Show a course behind the menus (or play it): settings for the course, hole and round.
 function useCourse(course, hole, career) {
-  Object.assign(settings, { style: course.style, seed: course.seed, name: course.name ?? null, par: course.par ?? 72, length: course.length ?? 'standard', holes: course.holes ?? 18, hole, career, event: false });
+  playing = course;
+  Object.assign(settings, { style: course.style, seed: course.seed, name: course.name ?? null, par: course.par ?? 72, length: course.length ?? 'standard', tour: course.tour ?? null, holes: course.holes ?? 18, hole, career, event: false });
   golfers = career ? [careerGolfer(app.career), clubOpponent()] : [PLAYER, RIVAL];
   showMap(false);
   loadHole();
@@ -829,27 +845,27 @@ function goHub() {
   const c = app.career;
   if (!c) return showTitle();
   // A round whose last hole was played but not handed in yet.
-  if (c.round && c.round.hole > c.home.holes) return endCareerRound();
+  if (c.round && c.round.hole > c.round.course.holes) return endCareerRound();
   app.mode = 'hub';
   app.hover = 'play';
   useCourse(c.home, 1, true);
 }
 
-// Play (or carry on) a round on your home course.
-function playCareerRound() {
+// Play a round on one of your club's courses, or carry on the one in progress.
+function playCareerRound(course) {
   const c = app.career;
   app.mode = 'play';
   round = null;
-  useCourse(c.home, c.round?.hole ?? 1, true);
+  useCourse(c.round?.course ?? course, c.round?.hole ?? 1, true);
   if (c.round) round.players.forEach((p, i) => { p.scores = c.round.scores[i].slice(); p.putts = c.round.putts[i].slice(); });
 }
 
 // Hand in a finished career round: note it, move the week on, back to the clubhouse.
 function endCareerRound() {
   const c = app.career, saved = c.round;
-  const holes = c.home.holes, total = (a) => a.slice(0, holes).reduce((t, v) => t + (v ?? 0), 0);
-  const pars = round?.key?.endsWith(':true') ? round.pars : buildCourse({ ...c.home }, { layout: false }).holes.map((h) => h.par);
-  finishRound(c, { course: c.home.name, holes, score: total(saved.scores[0]), par: total(pars), vs: clubOpponent().name.toUpperCase(), vsScore: total(saved.scores[1]) });
+  const course = saved.course, holes = course.holes, total = (a) => a.slice(0, holes).reduce((t, v) => t + (v ?? 0), 0);
+  const pars = round?.key?.endsWith(':true') ? round.pars : buildCourse({ ...course }, { layout: false }).holes.map((h) => h.par);
+  finishRound(c, { course: course.name, holes, score: total(saved.scores[0]), par: total(pars), vs: clubOpponent().name.toUpperCase(), vsScore: total(saved.scores[1]) });
   saveCareer(c);
   goHub();
 }
