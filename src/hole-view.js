@@ -264,13 +264,17 @@ function paintGround(buf, W, H, style, g) {
 const dimmed = (c, f) => (c & 0xff000000) | (Math.min(255, ((c >>> 16) & 255) * f) << 16) | (Math.min(255, ((c >>> 8) & 255) * f) << 8) | Math.min(255, (c & 255) * f);
 
 // The furniture round the hole, as { at (yards), name, clear (yards kept free
-// of trees) }: a sign, bench, ball washer and bin by the back tees, behind
-// the white tees played from so they don't crowd the golfers, yardage posts at
-// the edge of the fairway, a rake by each bunker, and the clubhouse behind the
-// 1st tee.
+// of trees), face (the way it faces, for props drawn from four sides) }: a
+// sign, bench, ball washer and bin by the back tees, behind the white tees
+// played from so they don't crowd the golfers, all facing the tee; yardage
+// posts at the edge of the fairway, a rake by each bunker, and the clubhouse
+// behind the 1st tee, facing down the hole.
 function holeProps(hole) {
   const tee = Math.min(hole.tees.black + 4, hole.tees.white - 45);
-  const side = (s, lat, name, clear = 7) => ({ at: pointAt(hole.line, s, lat), name, clear });
+  const side = (s, lat, name, clear = 7) => {
+    const at = pointAt(hole.line, s, lat), mid = pointAt(hole.line, s, 0);
+    return { at, name, clear, face: { x: mid.x - at.x, y: mid.y - at.y } };
+  };
   const out = [
     side(tee, 12, 'hole-sign'), side(tee + 12, 13, 'bench'),
     side(tee + 2, -12, 'ball-washer'), side(tee + 9, -13, 'bin'),
@@ -278,11 +282,17 @@ function holeProps(hole) {
   const dry = (q) => !['bunker', 'water', 'sea', 'beach'].includes(surfaceAt(hole, q.at));
   for (const d of [100, 150, 200]) {
     const s = hole.line.length - d;
-    if (s > hole.tees.white + 60) out.push(side(s, -(hole.fwHalf + 4), `post-${d}`, 2));
+    if (s > hole.tees.white + 60) out.push({ ...side(s, -(hole.fwHalf + 4), `post-${d}`, 2), face: null });
   }
   // A rake beside each bunker.
-  for (const b of hole.bunkers) out.push({ at: { x: b.x + b.r * 1.1, y: b.y + b.r * 0.3 }, name: 'rake', clear: 2 });
-  if (hole.number === 1) out.push(side(hole.tees.black - 38, 0, 'clubhouse', 26));
+  for (const b of hole.bunkers) {
+    const a = Math.floor(hash(Math.round(b.x), Math.round(b.y), 41) * 4) * Math.PI / 2;
+    out.push({ at: { x: b.x + b.r * 1.1, y: b.y + b.r * 0.3 }, name: 'rake', clear: 2, face: { x: Math.cos(a), y: Math.sin(a) } });
+  }
+  if (hole.number === 1) {
+    const at = pointAt(hole.line, hole.tees.black - 38, 0), ahead = pointAt(hole.line, hole.tees.black, 0);
+    out.push({ at, name: 'clubhouse', clear: 26, face: { x: ahead.x - at.x, y: ahead.y - at.y } });
+  }
   return out.filter(dry);
 }
 
@@ -312,10 +322,20 @@ function paintScenery(buf, W, H, view, hole) {
   }
   for (const q of props) {
     const p = view.worldToScreen(q.at);
-    if (p.x > -60 && p.x < W + 60 && p.y > -2 && p.y < H + 40) items.push({ sprite: SPRITES[q.name], x: Math.round(p.x), y: Math.round(p.y) });
+    if (p.x > -60 && p.x < W + 60 && p.y > -2 && p.y < H + 40) items.push({ sprite: SPRITES[propView(view, q)], x: Math.round(p.x), y: Math.round(p.y) });
   }
   items.sort((a, b) => a.y - b.y || a.x - b.x);
   for (const it of items) blit(buf, W, H, it.sprite, it.x, it.y);
+}
+
+// Which drawing of a prop to use, from the way it faces on screen: towards
+// the viewer, its front; away, its back; facing left, its right side; facing
+// right, its left side. Screen heights are squashed by half, hence the 2.
+function propView(view, q) {
+  if (!q.face) return q.name;
+  const d = view.worldDirToScreen(q.face.x, q.face.y);
+  const side = Math.abs(d.x) > 2 * Math.abs(d.y) ? (d.x < 0 ? 'right' : 'left') : d.y > 0 ? 'front' : 'back';
+  return `${q.name}-${side}`;
 }
 
 // Out on the open grass, trees grow in scattered clumps.
