@@ -1,16 +1,17 @@
 // Sprites from the Dinky Tiny Golf pack by Mike Moore (www.pixelbitsnbytes.com):
-// the ball in flight, the flag and the result banners. Also the golfer, from
-// Dave's sheet. Until the images have loaded, callers fall back to the
-// placeholder art.
+// the ball in flight, the flag and a few result banners. Also the golfer and
+// the score and hazard pop-ups, from Dave's sheets. Until the images have
+// loaded, callers fall back to the placeholder art.
 
 import { DINKY_PNGS } from './dinky-assets.js';
 import { GOLFER_PNGS } from './golfer-assets.js';
+import { POPUP_PNGS } from './popup-assets.js';
 
 // Every golfer frame is cut the same size, with the middle of the feet here.
 const GOLFER_FEET = { x: 20, y: 36 };
 
 const images = {};
-for (const [name, url] of Object.entries({ ...DINKY_PNGS, ...GOLFER_PNGS })) {
+for (const [name, url] of Object.entries({ ...DINKY_PNGS, ...GOLFER_PNGS, ...POPUP_PNGS })) {
   const img = new Image();
   img.src = url;
   images[name] = img;
@@ -113,9 +114,11 @@ export const ballFrame = (h) => `ball${Math.max(0, Math.min(4, Math.round(h / 9)
 export const flagFrame = (now) => `flag${1 + (Math.floor(now / 160) % 4)}`;
 
 // Result banners: which picture goes with a lie after a shot, or a score on a hole.
-export const LIE_BANNERS = { fairway: 'txt-fairway', rough: 'txt-intherough', bunker: 'txt-bunker', green: 'txt-onthegreen' };
+export const LIE_BANNERS = { fairway: 'txt-fairway', rough: 'txt-intherough', bunker: 'pop-bunker', green: 'txt-onthegreen' };
+export const WATER_BANNER = 'pop-water', OB_BANNER = 'pop-ob';
 export function scoreBanner(strokes, par) {
-  if (strokes === 1) return ['txt-holeinone'];
+  if (strokes === 1) return ['pop-holeinone'];
   const d = strokes - par;
-  return d <= -2 ? ['txt-eagle'] : d === -1 ? ['txt-birdie'] : d === 0 ? ['txt-par'] : d === 1 ? ['txt-bogey'] : d === 2 ? ['txt-double', 'txt-bogey'] : [];
+  return d <= -3 ? ['pop-albatross'] : d === -2 ? ['pop-eagle'] : d === -1 ? ['pop-birdie'] : d === 0 ? ['pop-par']
+    : d === 1 ? ['pop-bogey'] : d === 2 ? ['pop-double'] : d === 3 ? ['pop-triple'] : [];
 }
