@@ -6,8 +6,8 @@
 
 import { makeRng, dist, surfaceAt, pointAt, STYLES } from './course-generator.js';
 import { buildCourse } from './course.js';
-import { layoutHole, shiftView, addSurroundings, drawHole, isOutOfBounds, courseHoles, courseView, piecePad, tournamentSites } from './hole-view.js';
-import { drawSprite } from './art.js';
+import { layoutHole, shiftView, addSurroundings, drawHole, isOutOfBounds, courseHoles, courseView, piecePad, tournamentSites, sceneryItems } from './hole-view.js';
+import { drawSprite, blit } from './art.js';
 import { drawHud, drawShotBar, drawPuttBar, drawBanner, drawFormNote, drawScorecard, shotButtons, actionButtons, viewButtons, drawViewButtons, drawHoleNumber, BAR_TOP } from './hud.js';
 import { roundWeather, holeWind } from './weather.js';
 import { SHOT_TYPES, shotType, maxCarry, chooseClub, shotSpread, flightPoint, clampToReach, playsAs } from './shots.js';
@@ -144,6 +144,41 @@ function piece(i, j) {
   c.width = PIECE; c.height = PIECE;
   c.getContext('2d').putImageData(img, 0, 0);
   world.pieces.set(key, c);
+  return c;
+}
+
+// The trees and furniture standing in front of a golfer whose feet are at
+// (x, y) on the course picture and who stands `h` pixels tall: what has to be
+// drawn again over them, so they're hidden behind it as the view turns.
+// Worked out once per spot.
+const FRONT_BOX = 48;
+function sceneryInFront(x, y, h) {
+  const key = `${Math.round(x)},${Math.round(y)}`;
+  world.front ??= new Map();
+  if (world.front.has(key)) return world.front.get(key);
+  const ox = Math.round(x) - FRONT_BOX / 2, oy = Math.round(y) - h;
+  const v = shiftView(world.view, -ox, -oy);
+  addSurroundings(v, game.course, game.hole.number - 1, FRONT_BOX, h, 1e6, piecePad(v.grid.cell));
+  const left = x - 12, right = x + 12, top = y - h;
+  const front = sceneryItems(FRONT_BOX, h, v, game.hole)
+    .map((it) => ({ ...it, x: it.x + ox, y: it.y + oy }))
+    .filter((it) => it.y > y && it.x - it.sprite.ax < right && it.x - it.sprite.ax + it.sprite.w > left && it.y - it.sprite.ay < y);
+  if (world.front.size > 200) world.front.clear();
+  world.front.set(key, front);
+  return front;
+}
+
+// A scenery sprite as a canvas, made the first time it's drawn this way.
+const spriteCanvases = new WeakMap();
+function spriteCanvas(sprite) {
+  let c = spriteCanvases.get(sprite);
+  if (c) return c;
+  c = document.createElement('canvas');
+  c.width = sprite.w; c.height = sprite.h;
+  const img = new ImageData(sprite.w, sprite.h);
+  blit(new Uint32Array(img.data.buffer), sprite.w, sprite.h, sprite, sprite.ax, sprite.ay);
+  c.getContext('2d').putImageData(img, 0, 0);
+  spriteCanvases.set(sprite, c);
   return c;
 }
 
@@ -684,7 +719,11 @@ function drawPlay(now) {
     const still = game.play.players.find((o) => !o.holed);
     const dir = mood ? (still ? -side(still.at) : 1) : side(target);
     const x = stand.x + (mood ? 10 : playing ? (onGreen ? -2 : -5) : -18) * dir;
-    items.push({ y: stand.y, draw: () => drawDinky(ctx, `${p.golfer.look ?? 'club'}/${frame}`, x, stand.y, p.golfer.shirt, false, dir < 0) || drawSprite(ctx, 'golfer', x, stand.y, { c: p.golfer.shirt }) });
+    items.push({ y: stand.y, draw: () => {
+      drawDinky(ctx, `${p.golfer.look ?? 'club'}/${frame}`, x, stand.y, p.golfer.shirt, false, dir < 0) || drawSprite(ctx, 'golfer', x, stand.y, { c: p.golfer.shirt });
+      // Trees and furniture in front of them hide them.
+      for (const it of sceneryInFront(x, stand.y, 34)) ctx.drawImage(spriteCanvas(it.sprite), it.x - it.sprite.ax, it.y - it.sprite.ay);
+    } });
     if (p.holed) return;
     const s = v.worldToScreen(ball), up = v.worldToScreen(ball, ball.z);
     items.push({ y: s.y + 0.5, draw: () => {
@@ -1199,7 +1238,7 @@ function autoPutt() {
   pt.meterAt = now - plan.power * POWER_SWEEP;
   stopPower(now);
 }
-window.golf = { get game() { return game; }, get world() { return world; }, get round() { return round; }, ui, cam, display, app, settings, shoot, clampAim, setZoom, turnView, changeGolfer, autoPutt, greenFor, toggleEvent, menuAction, menuButtonsForTest: () => menuButtons(), tournamentSites: () => tournamentSites(game.course) };
+window.golf = { get game() { return game; }, get world() { return world; }, get round() { return round; }, ui, cam, display, app, settings, shoot, clampAim, setZoom, turnView, changeGolfer, autoPutt, greenFor, toggleEvent, menuAction, menuButtonsForTest: () => menuButtons(), sceneryInFront, tournamentSites: () => tournamentSites(game.course) };
 
 measure();
 if (app.mode === 'title') {

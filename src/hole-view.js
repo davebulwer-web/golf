@@ -553,6 +553,13 @@ function eventsFor(course, index, others) {
 
 // Trees, bushes and cacti, and the hole's furniture, sorted back to front.
 function paintScenery(buf, W, H, view, hole) {
+  for (const it of sceneryItems(W, H, view, hole)) blit(buf, W, H, it.sprite, it.x, it.y);
+}
+
+// The scenery standing on a W x H picture of the view: { sprite, x, y } with
+// (x, y) where its foot is, back to front. The game draws these into the
+// course picture, and again over a golfer standing behind one.
+export function sceneryItems(W, H, view, hole) {
   const art = STYLE_ART[hole.style] ?? STYLE_ART.parkland;
   // On the whole-course map the woods are thinned and the furniture and
   // tournament buildings left out (they'd be far too big), so the holes show up.
@@ -584,7 +591,7 @@ function paintScenery(buf, W, H, view, hole) {
     if (p.x > -90 && p.x < W + 90 && p.y > -2 && p.y < H + 120) items.push({ sprite: SPRITES[propView(view, q)], x: Math.round(p.x), y: Math.round(p.y) });
   }
   items.sort((a, b) => a.y - b.y || a.x - b.x);
-  for (const it of items) blit(buf, W, H, it.sprite, it.x, it.y);
+  return items;
 }
 
 // Which drawing of a prop to use, from the way it faces on screen: towards
