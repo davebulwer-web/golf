@@ -114,6 +114,11 @@ export function finishRound(c, result) {
     m.money = Math.sign(m.lead) * m.stake;
     c.money += m.money;
   }
+  // An event pays out by finishing position; winning the big one is a title.
+  if (result.comp) {
+    c.money += result.comp.prize;
+    if (result.comp.title) c.titles = [...(c.titles ?? []), { season: c.season, title: result.comp.title }];
+  }
   c.history.unshift({ season: c.season, week: c.week, ...result });
   c.history = c.history.slice(0, 40);
   c.round = null;
