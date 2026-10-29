@@ -7,7 +7,8 @@ import { drawText, textWidth } from './art.js';
 import { panel, GOLD } from './hud.js';
 import { drawDinky, golferFrame } from './dinky.js';
 import { STYLES } from './course-generator.js';
-import { LOOKS, SHIRT_COLOURS, SKILL_NAMES, WEEKS, MEMBERS, STAKES, startingSkills, courseStars, memberGolfer, record } from './career.js';
+import { LOOKS, SHIRT_COLOURS, SKILL_NAMES, WEEKS, MEMBERS, STAKES, startingSkills, courseStars, memberGolfer, record, canPractise } from './career.js';
+import { DRILLS, BALLS } from './practice.js';
 
 const DIM = '#c8c0e8', QUIET = '#8a80b0';
 const mid = (W, w) => Math.round((W - w) / 2);
@@ -135,13 +136,14 @@ export function drawNewCareer(ctx, W, H, L, { draft, hover, now, replaces }) {
 // ---------- Clubhouse ----------
 
 export function hubLayout(W, H, career) {
-  const pw = 380, ph = 232, px = mid(W, pw), py = mid(H, ph);
+  const pw = 420, ph = 232, px = mid(W, pw), py = mid(H, ph);
   const play = career.round ? `CONTINUE ${career.round.match ? 'MATCH' : 'ROUND'}, HOLE ${career.round.hole}` : 'PRACTICE ROUND';
   return {
     panel: { x: px, y: py, w: pw, h: ph },
-    play: { key: 'play', label: play, x: px + pw - 156, y: py + ph - 30, w: 140, h: 18 },
-    match: { key: 'match', label: 'MONEY MATCH', x: px + pw - 282, y: py + ph - 30, w: 118, h: 18 },
-    menu: { key: 'menu', label: 'MENU', x: px + 16, y: py + ph - 30, w: 64, h: 18 },
+    play: { key: 'play', label: play, x: px + pw - 136, y: py + ph - 30, w: 120, h: 18 },
+    match: { key: 'match', label: 'MONEY MATCH', x: px + pw - 250, y: py + ph - 30, w: 108, h: 18 },
+    practice: { key: 'practice', label: 'PRACTICE', x: px + pw - 340, y: py + ph - 30, w: 84, h: 18 },
+    menu: { key: 'menu', label: 'MENU', x: px + 16, y: py + ph - 30, w: 56, h: 18 },
   };
 }
 
@@ -172,6 +174,11 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
   drawText(ctx, 'RECENT ROUNDS', sx, ry, DIM, 1, null);
   if (!c.history.length) drawText(ctx, 'NONE YET. PLAY NINE HOLES AT YOUR CLUB.', sx, ry + 11, QUIET, 1, null);
   c.history.slice(0, 5).forEach((r, i) => {
+    if (r.practice) {
+      const pr = r.practice;
+      drawText(ctx, `WK ${r.week}  PRACTICE: ${pr.name} ${pr.hits}/${pr.balls}  ${SKILL_NAMES[pr.skill]} +${pr.gain.toFixed(1)}`, sx, ry + 11 + i * 9, '#7ee07e', 1, null);
+      return;
+    }
     if (r.match) {
       const m = r.match, money = m.money > 0 ? `+£${m.money}` : m.money < 0 ? `-£${-m.money}` : '£0';
       const how = m.lead > 0 ? `BEAT ${r.vs}` : m.lead < 0 ? `LOST TO ${r.vs}` : `HALVED WITH ${r.vs}`;
@@ -186,7 +193,10 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
 
   menuButton(ctx, L.menu, hover === 'menu');
   menuButton(ctx, L.play, hover === 'play');
-  if (!c.round) menuButton(ctx, L.match, hover === 'match');
+  if (!c.round) {
+    menuButton(ctx, L.match, hover === 'match');
+    menuButton(ctx, L.practice, hover === 'practice');
+  }
 }
 
 // ---------- Where to play ----------
@@ -287,4 +297,35 @@ export function drawMembers(ctx, W, H, L, { career: c, pick, hover, now }) {
   else drawText(ctx, `WIN £${pick.stake} OR LOSE IT. YOU HAVE £${c.money}.`, L.stakes[0].x + 32, L.stakes[0].y - 10, QUIET, 1, null);
   menuButton(ctx, L.back, hover === 'back');
   menuButton(ctx, L.challenge, hover === 'challenge', !!pick.stake);
+}
+
+// ---------- Practice ground ----------
+
+export function drillsLayout(W, H) {
+  const pw = 360, ch = 30, ph = 50 + DRILLS.length * (ch + 4) + 30, px = mid(W, pw), py = mid(H, ph);
+  return {
+    panel: { x: px, y: py, w: pw, h: ph },
+    drills: DRILLS.map((d, i) => ({ key: `drill-${i}`, x: px + 12, y: py + 44 + i * (ch + 4), w: pw - 24, h: ch })),
+    back: { key: 'back', label: 'BACK', x: px + 12, y: py + ph - 26, w: 70, h: 18 },
+  };
+}
+
+export function drawDrills(ctx, W, H, L, { career: c, hover }) {
+  const p = L.panel, open = canPractise(c);
+  panel(ctx, p.x, p.y, p.w, p.h);
+  drawText(ctx, 'PRACTICE GROUND', p.x + 12, p.y + 12, GOLD, 2);
+  drawText(ctx, open ? `ONE FREE SESSION A WEEK, ${BALLS} BALLS. THE BETTER IT GOES, THE MORE IT HELPS.` : 'YOU HAVE PRACTISED THIS WEEK. PLAY A ROUND TO MOVE THE WEEK ON.', p.x + 12, p.y + 28, open ? DIM : '#f08a8a', 1, null);
+  L.drills.forEach((b, i) => {
+    const d = DRILLS[i], hot = open && hover === b.key;
+    ctx.fillStyle = !open ? '#241a40' : hot ? '#4a3a8a' : '#2c2050';
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.fillStyle = hot ? GOLD : open ? '#7a68c0' : '#3a2e60';
+    ctx.fillRect(b.x, b.y, b.w, 1); ctx.fillRect(b.x, b.y + b.h - 1, b.w, 1);
+    ctx.fillRect(b.x, b.y, 1, b.h); ctx.fillRect(b.x + b.w - 1, b.y, 1, b.h);
+    drawText(ctx, d.name, b.x + 8, b.y + 6, !open ? '#5a4a80' : hot ? GOLD : '#ffffff', 1, null);
+    const sk = `${SKILL_NAMES[d.skill]} ${Math.round(c.skills[d.skill])}`;
+    drawText(ctx, sk, b.x + b.w - 8 - textWidth(sk), b.y + 6, open ? GOLD : '#5a4a80', 1, null);
+    drawText(ctx, d.about, b.x + 8, b.y + 18, open ? QUIET : '#4a3e70', 1, null);
+  });
+  menuButton(ctx, L.back, hover === 'back');
 }
