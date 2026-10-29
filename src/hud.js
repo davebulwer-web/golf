@@ -81,6 +81,29 @@ export function drawViewButtons(ctx, W, onMap = false, event = false, showAll = 
   drawText(ctx, eventLabel, eventButton.x + Math.round((eventButton.w - textWidth(eventLabel)) / 2), eventButton.y + 4, event ? GOLD : '#f4f4f4', 1, null);
 }
 
+// The sound button, left of the turn buttons: a speaker with two waves when
+// loud, one when quiet and a cross when off.
+export const soundButton = (W) => ({ x: W - 91, y: 44, w: 27, h: 22 });
+
+export function drawSoundButton(ctx, W, level) {
+  const b = soundButton(W);
+  panel(ctx, b.x, b.y, b.w, b.h);
+  const x = b.x + 8, y = b.y + 4;
+  ctx.fillStyle = level === 'OFF' ? '#8a80b0' : '#f4f4f4';
+  ctx.fillRect(x, y + 2, 2, 3); // the speaker's back
+  for (let k = 0; k < 3; k++) ctx.fillRect(x + 2 + k, y + 2 - k, 1, 3 + 2 * k); // and its cone
+  if (level === 'OFF') {
+    ctx.fillStyle = '#e05a5a';
+    for (let k = 0; k < 5; k++) { ctx.fillRect(x + 7 + k, y + 1 + k, 1, 1); ctx.fillRect(x + 11 - k, y + 1 + k, 1, 1); }
+  } else {
+    for (let w = 0; w < (level === 'LOUD' ? 2 : 1); w++) {
+      const r = 3 + w * 3;
+      for (let a = -0.9; a <= 0.9; a += 0.15) ctx.fillRect(Math.round(x + 4 + Math.cos(a) * r), Math.round(y + 3 + Math.sin(a) * r), 1, 1);
+    }
+  }
+  drawText(ctx, 'V', b.x + Math.round((b.w - textWidth('V')) / 2), b.y + 14, '#c8c0e8', 1, null);
+}
+
 // A hole number on a little plate, centred at (x, y): gold for the hole being played.
 export function drawHoleNumber(ctx, x, y, n, current) {
   const s = String(n), w = textWidth(s) + 5;

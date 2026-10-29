@@ -24,10 +24,13 @@ Scoring is medal play. After each hole the scorecard shows the round so far for 
 
 Other keys: `N` / `P` jump to the next or previous hole (for testing; skipped holes stay blank on the card), `R` a new random course, `S` change course style. These are free play only. You can also pick a hole in the address bar, e.g. `golf.html?style=links&seed=7&hole=2`, which skips the title and goes straight to free play.
 
+The game has sound once you first click or press a key (browsers keep pages quiet until then): birdsong in the background, the crack of a driver, the click of an iron, softer chips, sand flying from a bunker, the ball bouncing, splashing into water or clattering into trees, the tap of a putt, the rattle of the ball dropping into the cup, applause for a birdie or better, the bag going onto each new tee and a club going into it at the pro shop. The speaker button left of the turn buttons (or `V`, anywhere but the name box) steps the volume through loud, quiet and off, and the browser remembers it. The sounds are from Gravity Sound's golf sound pack, a few takes of each, trimmed and squeezed by `tools/encode-sounds.sh` into `assets/sounds`.
+
 ## Working on it
 
 The game is plain JavaScript and a canvas, with no engine or libraries.
 
+- `src/sound.js`: the sounds, which takes of each and how loud, played through Web Audio, and the sound button's volume.
 - `src/course-generator.js`: the course generator (see `src/COURSE-GENERATOR.md`).
 - `src/career.js`: the career: your golfer, money, skills, week of the season and the round in progress, saved in the browser's storage.
 - `src/practice.js`: the practice ground's drills: where each ball is played from, how it's judged and what a session is worth.

@@ -8,7 +8,8 @@ import { makeRng, dist, surfaceAt, pointAt, STYLES } from './course-generator.js
 import { buildCourse } from './course.js';
 import { layoutHole, shiftView, addSurroundings, drawHole, isOutOfBounds, courseHoles, courseView, piecePad, tournamentSites, sceneryItems } from './hole-view.js';
 import { drawSprite, blit } from './art.js';
-import { drawHud, drawShotBar, drawPuttBar, drawBanner, drawFormNote, drawScorecard, shotButtons, actionButtons, viewButtons, drawViewButtons, drawHoleNumber, BAR_TOP } from './hud.js';
+import { drawHud, drawShotBar, drawPuttBar, drawBanner, drawFormNote, drawScorecard, shotButtons, actionButtons, viewButtons, drawViewButtons, soundButton, drawSoundButton, drawHoleNumber, BAR_TOP } from './hud.js';
+import { unlockSound, playSound, stepSoundLevel, soundLevelName } from './sound.js';
 import { roundWeather, holeWind } from './weather.js';
 import { SHOT_TYPES, shotType, maxCarry, chooseClub, shotSpread, flightPoint, clampToReach, playsAs, lieAt, lieReach, canPlay } from './shots.js';
 import { PLAYER, RIVAL } from './golfers.js';
@@ -234,6 +235,7 @@ function loadHole() {
   cam.manual = false;
   buildWorld();
   startTurn(performance.now());
+  if (app.mode === 'play') playSound('rattle'); // the bag going onto the next tee
   // Keep a free play address shareable where the page is allowed to change it.
   if (app.mode === 'play' && !settings.career) shareAddress();
 }
@@ -327,7 +329,7 @@ function shoot() {
   const shot = hit(game.play, rng, ui.aim, ui.shot, game.weather, game.wind, (p) => isOutOfBounds(world.view, p));
   const rollLen = pathLength(shot.path);
   const swingAt = performance.now();
-  ui.anim = { shot, swingAt, start: swingAt + SWING, flight: 700 + shot.carry * 4, roll: rollLen > 0.5 ? 250 + rollLen * 25 : 0 };
+  ui.anim = { shot, lie: current(game.play).lie, swingAt, start: swingAt + SWING, flight: 700 + shot.carry * 4, roll: rollLen > 0.5 ? 250 + rollLen * 25 : 0 };
   ui.phase = 'flight';
   ui.aim = null;
   ui.dragging = false;
@@ -350,6 +352,23 @@ function pickShot(key) {
   if (!humanTurn() || !canPlay(myLie(current(game.play)), key)) return;
   ui.shot = ui.humanShot = key;
   if (ui.aim) ui.aim = clampAim(ui.aim);
+}
+
+// The ball leaving the club: a driver's crack, an iron's click, a softer chip, or sand.
+function strikeSound(shot, lie) {
+  if (lie === 'bunker') return playSound('bunker');
+  if (/Driver|Wood/.test(shot.club)) return playSound('driver');
+  if (shot.type === 'lob' || shot.carry < 60) return playSound('chip', 0.6 + shot.carry / 150);
+  playSound('iron');
+}
+
+// The ball coming down: a splash, a clatter in the trees, a thud in sand or a bounce.
+function landingSound(shot) {
+  const on = shot.landedOn;
+  if (on === 'water') playSound('water');
+  else if (on === 'trees') playSound('tree');
+  else if (on === 'bunker') playSound('bunker', 0.4);
+  else playSound('bounce', on === 'green' ? 0.6 : Math.min(1, 0.4 + shot.carry / 250));
 }
 
 const pathLength = (path) => path.slice(1).reduce((t, p, i) => t + dist(p, path[i]), 0);
@@ -394,8 +413,11 @@ function update(now) {
   if (ui.phase === 'aim' && !humanTurn()) return updateComputer(now);
   const a = ui.anim;
   if (!a) return;
-  if (ui.phase === 'flight' && now - a.start >= a.flight) ui.phase = 'roll';
+  if (!a.struck && now >= a.start) { a.struck = true; strikeSound(a.shot, a.lie); }
+  if (ui.phase === 'flight' && now - a.start >= a.flight) { ui.phase = 'roll'; landingSound(a.shot); }
   if (ui.phase === 'roll' && now - a.start >= a.flight + a.roll) {
+    if (a.shot.holed) playSound('cup');
+    else if (a.shot.surface === 'water' && a.shot.landedOn !== 'water') playSound('water');
     const me = current(game.play), lie = me.lie;
     settle(game.play, a.shot);
     ui.anim = null;
@@ -453,6 +475,7 @@ function afterStroke(now, note) {
     round.players[game.play.turn].putts[game.hole.number - 1] = me.putts;
     const name = me.strokes === 1 ? 'HOLE IN ONE' : scoreName(me.strokes - game.hole.par);
     if (me.strokes < PICK_UP) note = `${who(me.golfer)}: ${name}! ${me.strokes} SHOTS`;
+    if (me.strokes < game.hole.par) playSound('clap', me.strokes === 1 ? 1 : 0.8, 0.6);
     const pics = scoreBanner(me.strokes, game.hole.par);
     if (pics.length) showPop(pics, now);
     ui.moods[game.play.turn] = { kind: me.strokes <= game.hole.par ? 'joy' : 'cry', at: now, until: now + 2800 };
@@ -511,6 +534,7 @@ function stopPower(now) {
   const me = current(game.play);
   pt.power = meter(now - pt.meterAt);
   pt.roll = strike(rng, me.golfer, game.hole, me.at, pt.aim, pt.power, pt.range);
+  playSound('putt', 0.5 + pt.power * 0.5);
   Object.assign(pt, { stage: 'roll', rollAt: now });
   ui.banner = null;
 }
@@ -561,6 +585,10 @@ function updatePutting(now) {
       stopPower(now);
     }
     return;
+  }
+  if (pt.stage === 'roll' && !pt.dropped && puttBall(now).done) {
+    pt.dropped = true;
+    if (pt.roll.holed) playSound('cup');
   }
   if (pt.stage !== 'roll' || !puttBall(now).done) return;
   // A moment to watch it drop, or to see where it finished.
@@ -825,6 +853,7 @@ function render(now) {
     hint: display.map ? 'CLICK THE MAP OR PRESS M TO GO BACK' : !humanTurn() && ui.phase !== 'done' ? `${who(me.golfer)} IS PLAYING` : ui.phase !== 'aim' ? '' : !ui.aim ? 'DRAG ON THE COURSE TO AIM' : ui.dragging ? 'LET GO TO SET THE AIM' : 'CHANGE SHOT OR DRAG AGAIN',
   });
   drawViewButtons(hud, W, display.map, settings.event, !settings.career);
+  drawSoundButton(hud, W, soundLevelName());
   // An event's leaderboard, top five and you.
   const board = settings.comp && !ui.card && !display.map && compBoard();
   if (board) drawLeaderboard(hud, W - 136, 104, 130, board, { title: settings.comp.rounds > 1 ? `LEADERBOARD R${settings.comp.round + 1}` : 'LEADERBOARD', max: 5, thru: round.players[0].scores.filter((v) => v != null).length });
@@ -925,6 +954,7 @@ function menuAction(key) {
     const c = app.career, item = shopItem(SLOTS[Number(key.slice(4))].key, c.tier);
     if (!buyKit(c, item.id)) { app.shopNote = { text: `NOT ENOUGH MONEY FOR ${item.name}. WIN SOME MATCHES FIRST.`, good: false }; return; }
     saveCareer(c);
+    playSound('club');
     app.shopNote = { text: `${item.name} IS IN YOUR BAG. -£${item.price}`, good: true };
     return;
   }
@@ -1188,6 +1218,7 @@ const inside = (p, b) => p.x >= b.x && p.x < b.x + b.w && p.y >= b.y && p.y < b.
 let scroll = null;
 
 canvas.addEventListener('mousedown', (e) => {
+  unlockSound();
   if (app.mode !== 'play') { if (e.button === 0) menuClick(toHud(e)); return; }
   if (e.button === 2 || e.button === 1) {
     e.preventDefault();
@@ -1197,6 +1228,7 @@ canvas.addEventListener('mousedown', (e) => {
   if (e.button !== 0) return;
   const p = toHud(e);
   const turn = viewButtons(display.W);
+  if (inside(p, soundButton(display.W))) return stepSoundLevel();
   if (inside(p, turn.left)) return turnView(-1);
   if (inside(p, turn.right)) return turnView(1);
   if (!settings.career && inside(p, turn.golfer)) return changeGolfer();
@@ -1266,6 +1298,8 @@ canvas.addEventListener('wheel', (e) => { e.preventDefault(); setZoom(display.zo
 const PAN = { arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] };
 
 addEventListener('keydown', (e) => {
+  unlockSound();
+  if (e.key.toLowerCase() === 'v' && app.mode !== 'new') return stepSoundLevel(); // V is a letter of your name there
   if (app.mode !== 'play') return menuKey(e);
   const k = e.key.toLowerCase();
   if (k >= '1' && k <= '5') return pickShot(SHOT_TYPES[Number(k) - 1].key);
