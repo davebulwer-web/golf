@@ -65,8 +65,8 @@ export function newCareer({ name, look, shirt }, rand = Math.random) {
 }
 
 // The courses you can play a round on: home first, then the away club courses,
-// or once you're playing county golf, the county's courses.
-export const clubCourses = (c) => [c.home, ...(c.tier === 'county' ? COURSE_LIST.county : c.away ?? [])];
+// or once you've moved up, your tier's courses.
+export const clubCourses = (c) => [c.home, ...(c.tier !== 'club' && COURSE_LIST[c.tier] ? COURSE_LIST[c.tier] : c.away ?? [])];
 
 // Your skills with your kit's boost on top.
 export function playingSkills(c) {
@@ -137,13 +137,13 @@ export function finishRound(c, result) {
     k.left -= 1;
     if (k.left <= 0) { c.worn.push(kitItem(k.id)?.name ?? slot); delete c.kit[slot]; }
   }
-  if (!result.comp) c.midweek = m ? 'match' : 'round';
+  if (!result.comp && !result.eventRound && !result.sim) c.midweek = m ? 'match' : 'round';
 }
 
 // ---------- Practice ----------
 // A practice session is one way to use the week's midweek slot; it's free.
 
-export const canPractise = (c) => !c.midweek;
+export const canPractise = (c) => !c.midweek && !c.event;
 
 // Note a practice session: the skill goes up by `gain`, and it goes in the history.
 export function recordPractice(c, { name, skill, hits, balls, gain }) {

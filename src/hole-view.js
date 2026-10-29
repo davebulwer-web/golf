@@ -494,12 +494,28 @@ function eventPlan(hole, extras, seed = 0) {
 
 const eventCache = new Map();
 
+// How dressed up a course is (`course.tournament`): 0 not at all; 1 a county
+// event's banners, flags and ropes; 2 the challenge tour's, with stands round
+// the closing greens, leaderboards, tents and the clubhouse set; 3 (or true)
+// everything, TV and all.
+export const dressingLevel = (course) => (course.tournament === true ? 3 : course.tournament || 0);
+const LEVEL_1 = ['banner', 'flag', 'feather', 'rope', 'signpost'];
+const LEVEL_2 = [...LEVEL_1, 'leaderboard', 'scoreboard', 'tent', 'barrier', 'picket', 'arch', 'marquee', 'trophy-board', 'toilet'];
+const STANDS = ['stand', 'covered-stand', 'long-stand'];
+function dressed(level, name, n) {
+  if (level >= 3) return true;
+  const kind = (k) => name === k || name.startsWith(`${k}-`);
+  if (level === 2 && STANDS.some(kind)) return n % 9 === 0 || n >= 16;
+  return (level === 2 ? LEVEL_2 : LEVEL_1).some(kind);
+}
+
 // The tournament stands and buildings for every hole of a course, each in its
 // own hole's yards like holeProps: { at, name, clear, face }. A building only
 // goes where all the ground it covers is open on every hole of the course, and
 // clear of the other buildings and each hole's own furniture.
 export function tournamentSites(course) {
-  const id = `${course.style}:${course.seed}:${course.par}:${course.length}`;
+  const level = dressingLevel(course);
+  const id = `${course.style}:${course.seed}:${course.par}:${course.length}:${level}`;
   if (eventCache.has(id)) return eventCache.get(id);
   const { places, coast } = courseMap(course);
   const boxes = course.holes.map((h) => holeBounds(h, 0));
@@ -518,6 +534,7 @@ export function tournamentSites(course) {
   const out = course.holes.map((h, i) => {
     const sites = [], groups = {};
     for (const want of eventPlan(h, extras.get(h.number), seed)) {
+      if (!dressed(level, want.name, h.number)) continue;
       const size = eventSize(want.name);
       const tried = want.group && want.group in groups ? [groups[want.group]] : want.spots.keys();
       for (const j of tried) {
