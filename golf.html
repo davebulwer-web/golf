@@ -3950,6 +3950,67 @@ function drillGain(hits, value) {
   return Math.round(base * (100 - value) / 55 * 10) / 10;
 }
 
+// ---- shop.js ----
+// The pro shop: kit bought with your winnings. Each piece adds a little to one
+// or two skills while it's in your bag, and wears out after a set number of
+// rounds, so money keeps mattering. You carry one piece for each slot; better
+// kit unlocks as you climb the tiers.
+
+const TIERS = ['club', 'county', 'challenge', 'tour', 'majors'];
+const TIER_NAMES = { club: 'CLUB', county: 'COUNTY', challenge: 'CHALLENGE TOUR', tour: 'TOUR', majors: 'MAJORS' };
+
+const SLOTS = [
+  { key: 'driver', name: 'DRIVER' },
+  { key: 'irons', name: 'IRONS' },
+  { key: 'wedge', name: 'WEDGE' },
+  { key: 'putter', name: 'PUTTER' },
+  { key: 'balls', name: 'BALLS' },
+];
+
+// One piece per slot per tier. `boost` is added to the skills; `rounds` is how
+// long it lasts.
+const KIT = [
+  { id: 'driver-1', slot: 'driver', tier: 'club', name: 'THE THUMPER', price: 40, rounds: 10, boost: { power: 2 } },
+  { id: 'irons-1', slot: 'irons', tier: 'club', name: 'TRUSTY BLADES', price: 45, rounds: 10, boost: { accuracy: 2 } },
+  { id: 'wedge-1', slot: 'wedge', tier: 'club', name: 'SANDY WEDGE', price: 30, rounds: 10, boost: { shortGame: 1, recovery: 2 } },
+  { id: 'putter-1', slot: 'putter', tier: 'club', name: 'OLD FAITHFUL', price: 35, rounds: 10, boost: { putting: 2 } },
+  { id: 'balls-1', slot: 'balls', tier: 'club', name: 'SLEEVE OF NEW BALLS', price: 12, rounds: 3, boost: { power: 1, shortGame: 1 } },
+
+  { id: 'driver-2', slot: 'driver', tier: 'county', name: 'BOOMSTICK 460', price: 120, rounds: 12, boost: { power: 4 } },
+  { id: 'irons-2', slot: 'irons', tier: 'county', name: 'LASER IRONS', price: 140, rounds: 12, boost: { accuracy: 4 } },
+  { id: 'wedge-2', slot: 'wedge', tier: 'county', name: 'BUNKER BUSTER', price: 90, rounds: 12, boost: { shortGame: 2, recovery: 3 } },
+  { id: 'putter-2', slot: 'putter', tier: 'county', name: 'THE SNAKE CHARMER', price: 110, rounds: 12, boost: { putting: 4 } },
+  { id: 'balls-2', slot: 'balls', tier: 'county', name: 'TOUR SPIN BALLS', price: 35, rounds: 3, boost: { power: 2, shortGame: 1 } },
+
+  { id: 'driver-3', slot: 'driver', tier: 'challenge', name: 'SKY SPLITTER', price: 350, rounds: 12, boost: { power: 6 } },
+  { id: 'irons-3', slot: 'irons', tier: 'challenge', name: 'FORGED PINSEEKERS', price: 400, rounds: 12, boost: { accuracy: 6 } },
+  { id: 'wedge-3', slot: 'wedge', tier: 'challenge', name: 'SPIN DOCTOR', price: 260, rounds: 12, boost: { shortGame: 4, recovery: 4 } },
+  { id: 'putter-3', slot: 'putter', tier: 'challenge', name: 'MALLET OF DOOM', price: 320, rounds: 12, boost: { putting: 6 } },
+  { id: 'balls-3', slot: 'balls', tier: 'challenge', name: 'PRO V-NINE', price: 90, rounds: 3, boost: { power: 2, accuracy: 1, shortGame: 2 } },
+
+  { id: 'driver-4', slot: 'driver', tier: 'tour', name: 'THE THUNDERCLAP', price: 1000, rounds: 15, boost: { power: 8 } },
+  { id: 'irons-4', slot: 'irons', tier: 'tour', name: 'TOUR BLADES', price: 1200, rounds: 15, boost: { accuracy: 8 } },
+  { id: 'wedge-4', slot: 'wedge', tier: 'tour', name: 'THE MAGICIAN', price: 800, rounds: 15, boost: { shortGame: 5, recovery: 6 } },
+  { id: 'putter-4', slot: 'putter', tier: 'tour', name: 'GOLDEN GLIDE', price: 950, rounds: 15, boost: { putting: 8 } },
+  { id: 'balls-4', slot: 'balls', tier: 'tour', name: 'MAJOR MARKS', price: 250, rounds: 3, boost: { power: 3, accuracy: 2, shortGame: 2 } },
+];
+const kitItem = (id) => KIT.find((k) => k.id === id);
+
+const tierAt = (tier) => Math.max(0, TIERS.indexOf(tier));
+// The best piece for a slot you can buy at your tier, and the next one up (locked).
+const shopItem = (slot, tier) => KIT.filter((k) => k.slot === slot && tierAt(k.tier) <= tierAt(tier)).at(-1);
+const nextItem = (slot, tier) => KIT.find((k) => k.slot === slot && tierAt(k.tier) > tierAt(tier));
+
+// What the kit in a bag ({ slot: { id, left } }) adds to each skill.
+function kitBoost(kit = {}) {
+  const boost = { power: 0, accuracy: 0, shortGame: 0, recovery: 0, putting: 0 };
+  for (const { id } of Object.values(kit)) for (const [k, v] of Object.entries(kitItem(id)?.boost ?? {})) boost[k] += v;
+  return boost;
+}
+
+// A boost as words: "POWER +2, SHORT GAME +1".
+const boostWords = (boost, names) => Object.entries(boost).map(([k, v]) => `${names[k]} +${v}`).join(', ');
+
 // ---- course-list.js ----
 // The career's courses, tier by tier, easiest first. Written by
 // tools/curate-courses.mjs: `rating` is how many shots over par a club-standard
@@ -4052,14 +4113,21 @@ function newCareer({ name, look, shirt }, rand = Math.random) {
     home, away: [take(), take()],
     round: null,   // a round in progress: { course, hole: next hole to play, scores, putts }
     history: [],   // rounds played, newest first
+    kit: {},       // what's in your bag from the pro shop: { slot: { id, left: rounds } }
   };
 }
 
 // The courses you can play a round on: home first, then the away courses.
 const clubCourses = (c) => [c.home, ...(c.away ?? [])];
 
-// Your golfer for a round, from the career.
-const careerGolfer = (c) => ({ name: c.name, look: c.look, shirt: c.shirt, skills: { ...c.skills } });
+// Your skills with your kit's boost on top.
+function playingSkills(c) {
+  const boost = kitBoost(c.kit);
+  return Object.fromEntries(Object.entries(c.skills).map(([k, v]) => [k, Math.min(99, v + boost[k])]));
+}
+
+// Your golfer for a round, from the career, with your kit.
+const careerGolfer = (c) => ({ name: c.name, look: c.look, shirt: c.shirt, skills: playingSkills(c) });
 
 // Who you play a practice round with: Bertie, at club level.
 const clubOpponent = () => ({ ...RIVAL, skills: { power: 50, accuracy: 46, shortGame: 47, recovery: 45, putting: 46 } });
@@ -4108,6 +4176,12 @@ function finishRound(c, result) {
   c.history.unshift({ season: c.season, week: c.week, ...result });
   c.history = c.history.slice(0, 40);
   c.round = null;
+  // Every round wears your kit; what's worn out leaves the bag.
+  c.worn = [];
+  for (const [slot, k] of Object.entries(c.kit ?? {})) {
+    k.left -= 1;
+    if (k.left <= 0) { c.worn.push(kitItem(k.id)?.name ?? slot); delete c.kit[slot]; }
+  }
   c.week += 1;
   if (c.week > WEEKS) { c.week = 1; c.season += 1; }
 }
@@ -4126,6 +4200,20 @@ function recordPractice(c, { name, skill, hits, balls, gain }) {
   c.history = c.history.slice(0, 40);
 }
 
+// ---------- The pro shop ----------
+
+// Buy a piece of kit: it goes in your bag in its slot, replacing what was there.
+function buyKit(c, id) {
+  const item = kitItem(id);
+  if (!item || c.money < item.price) return false;
+  c.money -= item.price;
+  c.kit = { ...c.kit, [item.slot]: { id, left: item.rounds } };
+  c.worn = (c.worn ?? []).filter((n) => n !== item.name);
+  c.history.unshift({ season: c.season, week: c.week, bought: { name: item.name, price: item.price } });
+  c.history = c.history.slice(0, 40);
+  return true;
+}
+
 // ---------- Saving ----------
 // Storage can be missing or refuse (private windows, sandboxed pages): then the
 // career just lasts until the page is closed.
@@ -4134,6 +4222,7 @@ function recordPractice(c, { name, skill, hits, balls, gain }) {
 // to a club course, finishing any round in progress where it was started.
 function upgrade(c) {
   if (c.round && !c.round.course) c.round.course = c.home;
+  c.kit ??= {};
   if (!c.home.id) {
     const club = COURSE_LIST.club;
     c.home = club[0];
@@ -4175,15 +4264,18 @@ function menuButton(ctx, b, hot, on = true) {
   drawText(ctx, b.label, b.x + Math.round((b.w - textWidth(b.label, scale)) / 2), b.y + Math.round((b.h - 5 * scale) / 2), color, scale, on ? '#1a1a2a' : null);
 }
 
-// A skill as a labelled bar, 0 to 100.
-function skillBar(ctx, x, y, name, value) {
+// A skill as a labelled bar, 0 to 100, with what your kit adds (`boost`) in blue.
+const KIT_BLUE = '#6ac8f0';
+function skillBar(ctx, x, y, name, value, boost = 0) {
   drawText(ctx, name, x, y, DIM, 1, null);
-  const bx = x + 46, bw = 80;
+  const bx = x + 46, bw = 80, all = Math.min(99, value + boost);
   ctx.fillStyle = '#1a1430';
   ctx.fillRect(bx, y, bw, 5);
+  ctx.fillStyle = KIT_BLUE;
+  ctx.fillRect(bx, y, Math.round(bw * all / 100), 5);
   ctx.fillStyle = value >= 60 ? '#5ac85a' : value >= 45 ? GOLD : '#e07a4a';
   ctx.fillRect(bx, y, Math.round(bw * value / 100), 5);
-  drawText(ctx, `${Math.round(value)}`, bx + bw + 5, y, '#ffffff', 1, null);
+  drawText(ctx, `${Math.round(all)}`, bx + bw + 5, y, boost ? KIT_BLUE : '#ffffff', 1, null);
 }
 
 // The golfer at twice size, feet at (x, y).
@@ -4286,13 +4378,14 @@ function drawNewCareer(ctx, W, H, L, { draft, hover, now, replaces }) {
 // ---------- Clubhouse ----------
 
 function hubLayout(W, H, career) {
-  const pw = 420, ph = 232, px = mid(W, pw), py = mid(H, ph);
+  const pw = 512, ph = 232, px = mid(W, pw), py = mid(H, ph);
   const play = career.round ? `CONTINUE ${career.round.match ? 'MATCH' : 'ROUND'}, HOLE ${career.round.hole}` : 'PRACTICE ROUND';
   return {
     panel: { x: px, y: py, w: pw, h: ph },
     play: { key: 'play', label: play, x: px + pw - 136, y: py + ph - 30, w: 120, h: 18 },
     match: { key: 'match', label: 'MONEY MATCH', x: px + pw - 250, y: py + ph - 30, w: 108, h: 18 },
     practice: { key: 'practice', label: 'PRACTICE', x: px + pw - 340, y: py + ph - 30, w: 84, h: 18 },
+    shop: { key: 'shop', label: 'PRO SHOP', x: px + pw - 430, y: py + ph - 30, w: 84, h: 18 },
     menu: { key: 'menu', label: 'MENU', x: px + 16, y: py + ph - 30, w: 56, h: 18 },
   };
 }
@@ -4309,10 +4402,11 @@ function drawHub(ctx, W, H, L, { career: c, hover, now }) {
   golferAt(ctx, c.look, c.shirt, p.x + 46, p.y + 112, now);
   drawText(ctx, c.name, p.x + 16, p.y + 120, '#ffffff', 1, null);
   drawText(ctx, `£${c.money}`, p.x + 16, p.y + 130, GOLD, 2);
-  const sx = p.x + 112, sy = p.y + 48;
+  const sx = p.x + 112, sy = p.y + 48, boost = kitBoost(c.kit);
   drawText(ctx, 'SKILLS', sx, sy - 6, DIM, 1, null);
+  if (Object.keys(c.kit ?? {}).length) drawText(ctx, 'BLUE: YOUR KIT', sx + 46, sy - 6, KIT_BLUE, 1, null);
   Object.entries(SKILL_NAMES).forEach(([k, name], i) => {
-    skillBar(ctx, sx, sy + 6 + i * 12, name, c.skills[k]);
+    skillBar(ctx, sx, sy + 6 + i * 12, name, c.skills[k], boost[k]);
     // How the last round's form moved it.
     const d = c.report?.change[k];
     if (d) drawText(ctx, `${d > 0 ? '+' : ''}${d.toFixed(1)}`, sx + 148, sy + 6 + i * 12, d > 0 ? '#7ee07e' : '#f08a8a', 1, null);
@@ -4324,6 +4418,10 @@ function drawHub(ctx, W, H, L, { career: c, hover, now }) {
   drawText(ctx, 'RECENT ROUNDS', sx, ry, DIM, 1, null);
   if (!c.history.length) drawText(ctx, 'NONE YET. PLAY NINE HOLES AT YOUR CLUB.', sx, ry + 11, QUIET, 1, null);
   c.history.slice(0, 5).forEach((r, i) => {
+    if (r.bought) {
+      drawText(ctx, `WK ${r.week}  PRO SHOP: ${r.bought.name}  -£${r.bought.price}`, sx, ry + 11 + i * 9, KIT_BLUE, 1, null);
+      return;
+    }
     if (r.practice) {
       const pr = r.practice;
       drawText(ctx, `WK ${r.week}  PRACTICE: ${pr.name} ${pr.hits}/${pr.balls}  ${SKILL_NAMES[pr.skill]} +${pr.gain.toFixed(1)}`, sx, ry + 11 + i * 9, '#7ee07e', 1, null);
@@ -4340,12 +4438,14 @@ function drawHub(ctx, W, H, L, { career: c, hover, now }) {
   });
   if (c.round?.match) drawText(ctx, `MATCH IN PROGRESS: ${c.round.vs.toUpperCase()} FOR £${c.round.match.stake}`, p.x + 16, p.y + p.h - 44, GOLD, 1, null);
   else if (c.round) drawText(ctx, `ROUND IN PROGRESS AT ${c.round.course.name}: ${c.round.hole - 1} PLAYED`, p.x + 16, p.y + p.h - 44, GOLD, 1, null);
+  else if (c.worn?.length) drawText(ctx, `WORN OUT: ${c.worn.join(', ')}. THE PRO SHOP HAS MORE.`, p.x + 16, p.y + p.h - 44, '#f08a8a', 1, null);
 
   menuButton(ctx, L.menu, hover === 'menu');
   menuButton(ctx, L.play, hover === 'play');
   if (!c.round) {
     menuButton(ctx, L.match, hover === 'match');
     menuButton(ctx, L.practice, hover === 'practice');
+    menuButton(ctx, L.shop, hover === 'shop');
   }
 }
 
@@ -4477,6 +4577,45 @@ function drawDrills(ctx, W, H, L, { career: c, hover }) {
     drawText(ctx, sk, b.x + b.w - 8 - textWidth(sk), b.y + 6, open ? GOLD : '#5a4a80', 1, null);
     drawText(ctx, d.about, b.x + 8, b.y + 18, open ? QUIET : '#4a3e70', 1, null);
   });
+  menuButton(ctx, L.back, hover === 'back');
+}
+
+// ---------- Pro shop ----------
+
+function shopLayout(W, H) {
+  const pw = 440, rh = 32, ph = 50 + SLOTS.length * (rh + 4) + 42, px = mid(W, pw), py = mid(H, ph);
+  return {
+    panel: { x: px, y: py, w: pw, h: ph },
+    rows: SLOTS.map((s, i) => ({ x: px + 12, y: py + 44 + i * (rh + 4), w: pw - 24, h: rh })),
+    buys: SLOTS.map((s, i) => ({ key: `buy-${i}`, x: px + pw - 82, y: py + 44 + i * (rh + 4) + 8, w: 62, h: 16 })),
+    back: { key: 'back', label: 'BACK', x: px + 12, y: py + ph - 26, w: 70, h: 18 },
+  };
+}
+
+function drawShop(ctx, W, H, L, { career: c, hover, note }) {
+  const p = L.panel;
+  panel(ctx, p.x, p.y, p.w, p.h);
+  drawText(ctx, 'PRO SHOP', p.x + 12, p.y + 12, GOLD, 2);
+  const cash = `£${c.money}`;
+  drawText(ctx, cash, p.x + p.w - 12 - textWidth(cash, 2), p.y + 12, GOLD, 2);
+  drawText(ctx, 'KIT ADDS TO YOUR SKILLS UNTIL IT WEARS OUT. ONE PIECE FOR EACH SLOT.', p.x + 12, p.y + 30, DIM, 1, null);
+  L.rows.forEach((b, i) => {
+    const slot = SLOTS[i], item = shopItem(slot.key, c.tier), have = c.kit?.[slot.key], owned = have && kitItem(have.id);
+    const afford = c.money >= item.price;
+    ctx.fillStyle = '#2c2050';
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    drawText(ctx, slot.name, b.x + 6, b.y + 5, QUIET, 1, null);
+    drawText(ctx, item.name, b.x + 50, b.y + 5, '#ffffff', 1, null);
+    drawText(ctx, `${boostWords(item.boost, SKILL_NAMES)}  FOR ${item.rounds} ROUNDS`, b.x + 50, b.y + 14, KIT_BLUE, 1, null);
+    const bag = owned ? `IN YOUR BAG: ${owned.name}, ${have.left} ROUND${have.left === 1 ? '' : 'S'} LEFT` : 'IN YOUR BAG: NOTHING SPECIAL';
+    drawText(ctx, bag, b.x + 50, b.y + 23, owned ? GOLD : '#5a4a80', 1, null);
+    const btn = L.buys[i];
+    menuButton(ctx, { ...btn, label: `${owned?.id === item.id ? 'NEW ' : ''}£${item.price}` }, hover === btn.key, afford);
+  });
+  // What the next tier up has in store.
+  const next = nextItem('driver', c.tier);
+  if (next) drawText(ctx, `BETTER KIT UNLOCKS AT ${TIER_NAMES[next.tier]} LEVEL.`, L.back.x + L.back.w + 10, L.back.y + 7, QUIET, 1, null);
+  if (note) drawText(ctx, note.text, p.x + 12, L.back.y - 12, note.good ? '#7ee07e' : '#f08a8a', 1, null);
   menuButton(ctx, L.back, hover === 'back');
 }
 
@@ -5247,6 +5386,7 @@ function renderMenu(now) {
   if (app.mode === 'new') drawNewCareer(hud, W, H, newCareerLayout(W, H), { draft: app.draft, hover, now, replaces: !!app.career });
   if (app.mode === 'hub') drawHub(hud, W, H, hubLayout(W, H, app.career), { career: app.career, hover, now });
   if (app.mode === 'drills') drawDrills(hud, W, H, drillsLayout(W, H), { career: app.career, hover });
+  if (app.mode === 'shop') drawShop(hud, W, H, shopLayout(W, H), { career: app.career, hover, note: app.shopNote });
   if (app.mode === 'members') drawMembers(hud, W, H, membersLayout(W, H), { career: app.career, pick: app.pick, hover, now });
   if (app.mode === 'courses') drawCourses(hud, W, H, coursesLayout(W, H, clubCourses(app.career)), { courses: clubCourses(app.career), hover });
 }
@@ -5256,7 +5396,8 @@ function menuButtons() {
   const { W, H } = display;
   if (app.mode === 'title') return titleLayout(W, H, !!app.career);
   if (app.mode === 'new') { const L = newCareerLayout(W, H); return [L.prev, L.next, ...L.shirts, L.back, L.start]; }
-  if (app.mode === 'hub') { const L = hubLayout(W, H, app.career); return app.career.round ? [L.play, L.menu] : [L.play, L.match, L.practice, L.menu]; }
+  if (app.mode === 'hub') { const L = hubLayout(W, H, app.career); return app.career.round ? [L.play, L.menu] : [L.play, L.match, L.practice, L.shop, L.menu]; }
+  if (app.mode === 'shop') { const L = shopLayout(W, H); return [...L.buys, L.back]; }
   if (app.mode === 'drills') { const L = drillsLayout(W, H); return [...(canPractise(app.career) ? L.drills : []), L.back]; }
   if (app.mode === 'members') { const L = membersLayout(W, H); return [...L.members, ...L.stakes, L.challenge, L.back]; }
   if (app.mode === 'courses') { const L = coursesLayout(W, H, clubCourses(app.career)); return [...L.cards, L.back]; }
@@ -5279,8 +5420,16 @@ function menuAction(key) {
     return;
   }
   if (key.startsWith('shirt-')) { d.shirt = SHIRT_COLOURS[Number(key.slice(6))]; return; }
-  if (key === 'back' && ['courses', 'members', 'drills'].includes(app.mode)) return goHub();
+  if (key === 'back' && ['courses', 'members', 'drills', 'shop'].includes(app.mode)) return goHub();
   if (key === 'practice') { app.mode = 'drills'; app.hover = canPractise(app.career) ? 'drill-0' : 'back'; return; }
+  if (key === 'shop') { app.mode = 'shop'; app.shopNote = null; app.hover = 'back'; return; }
+  if (key.startsWith('buy-')) {
+    const c = app.career, item = shopItem(SLOTS[Number(key.slice(4))].key, c.tier);
+    if (!buyKit(c, item.id)) { app.shopNote = { text: `NOT ENOUGH MONEY FOR ${item.name}. WIN SOME MATCHES FIRST.`, good: false }; return; }
+    saveCareer(c);
+    app.shopNote = { text: `${item.name} IS IN YOUR BAG. -£${item.price}`, good: true };
+    return;
+  }
   if (key.startsWith('drill-')) return startPractice(DRILLS[Number(key.slice(6))].key);
   if (key === 'back' || key === 'menu') return showTitle();
   if (key === 'start' && d.name.trim()) {
@@ -5319,7 +5468,7 @@ function menuKey(e) {
     if (k === 'Escape') return menuAction('back');
     return;
   }
-  if (['courses', 'members', 'drills'].includes(app.mode) && k === 'Escape') return menuAction('back');
+  if (['courses', 'members', 'drills', 'shop'].includes(app.mode) && k === 'Escape') return menuAction('back');
   if (app.mode === 'hub') {
     if (k === 'Enter') return menuAction('play');
     if (k === 'Escape') return menuAction('menu');

@@ -5,7 +5,7 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 
 // Dependencies first. Top-level names must be unique across these files.
-const ORDER = ['course-generator', 'course-map', 'terrain', 'course', 'tree-assets', 'prop-assets', 'event-assets', 'ground-assets', 'art', 'dinky-assets', 'golfer-assets', 'popup-assets', 'dinky', 'iso', 'weather', 'hole-view', 'hud', 'golfers', 'shots', 'putting', 'green-view', 'play', 'ai', 'form', 'practice', 'course-list', 'career', 'menus', 'main'];
+const ORDER = ['course-generator', 'course-map', 'terrain', 'course', 'tree-assets', 'prop-assets', 'event-assets', 'ground-assets', 'art', 'dinky-assets', 'golfer-assets', 'popup-assets', 'dinky', 'iso', 'weather', 'hole-view', 'hud', 'golfers', 'shots', 'putting', 'green-view', 'play', 'ai', 'form', 'practice', 'shop', 'course-list', 'career', 'menus', 'main'];
 
 const code = ORDER.map((name) => {
   const src = readFileSync(`src/${name}.js`, 'utf8')

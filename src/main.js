@@ -17,10 +17,11 @@ import { planShot } from './ai.js';
 import { feet, puttRange, puttRise, readPutt, strike } from './putting.js';
 import { makeGreenView, drawGreenView } from './green-view.js';
 import { drawDinky, dinkySize, golferFrame, ballFrame, flagFrame, GOLFER_LOOKS, LIE_BANNERS, WATER_BANNER, OB_BANNER, scoreBanner } from './dinky.js';
-import { LOOKS, SHIRT_COLOURS, SKILL_NAMES, newCareer, clubCourses, careerGolfer, clubOpponent, memberGolfer, MEMBERS, STAKES, finishRound, canPractise, recordPractice, saveCareer, loadCareer } from './career.js';
+import { LOOKS, SHIRT_COLOURS, SKILL_NAMES, newCareer, clubCourses, careerGolfer, clubOpponent, memberGolfer, MEMBERS, STAKES, finishRound, canPractise, recordPractice, buyKit, saveCareer, loadCareer } from './career.js';
 import { BALLS, DRILLS, drill, drillHole, drillSpot, drillResult, drillGain } from './practice.js';
 import { newForm, judgeShot, judgePutt, tally, applyForm } from './form.js';
-import { titleLayout, drawTitle, newCareerLayout, drawNewCareer, hubLayout, drawHub, coursesLayout, drawCourses, membersLayout, drawMembers, drillsLayout, drawDrills } from './menus.js';
+import { titleLayout, drawTitle, newCareerLayout, drawNewCareer, hubLayout, drawHub, coursesLayout, drawCourses, membersLayout, drawMembers, drillsLayout, drawDrills, shopLayout, drawShop } from './menus.js';
+import { SLOTS, shopItem } from './shop.js';
 
 const STYLE_KEYS = Object.keys(STYLES);
 const TEE = 'white';
@@ -781,6 +782,7 @@ function renderMenu(now) {
   if (app.mode === 'new') drawNewCareer(hud, W, H, newCareerLayout(W, H), { draft: app.draft, hover, now, replaces: !!app.career });
   if (app.mode === 'hub') drawHub(hud, W, H, hubLayout(W, H, app.career), { career: app.career, hover, now });
   if (app.mode === 'drills') drawDrills(hud, W, H, drillsLayout(W, H), { career: app.career, hover });
+  if (app.mode === 'shop') drawShop(hud, W, H, shopLayout(W, H), { career: app.career, hover, note: app.shopNote });
   if (app.mode === 'members') drawMembers(hud, W, H, membersLayout(W, H), { career: app.career, pick: app.pick, hover, now });
   if (app.mode === 'courses') drawCourses(hud, W, H, coursesLayout(W, H, clubCourses(app.career)), { courses: clubCourses(app.career), hover });
 }
@@ -790,7 +792,8 @@ function menuButtons() {
   const { W, H } = display;
   if (app.mode === 'title') return titleLayout(W, H, !!app.career);
   if (app.mode === 'new') { const L = newCareerLayout(W, H); return [L.prev, L.next, ...L.shirts, L.back, L.start]; }
-  if (app.mode === 'hub') { const L = hubLayout(W, H, app.career); return app.career.round ? [L.play, L.menu] : [L.play, L.match, L.practice, L.menu]; }
+  if (app.mode === 'hub') { const L = hubLayout(W, H, app.career); return app.career.round ? [L.play, L.menu] : [L.play, L.match, L.practice, L.shop, L.menu]; }
+  if (app.mode === 'shop') { const L = shopLayout(W, H); return [...L.buys, L.back]; }
   if (app.mode === 'drills') { const L = drillsLayout(W, H); return [...(canPractise(app.career) ? L.drills : []), L.back]; }
   if (app.mode === 'members') { const L = membersLayout(W, H); return [...L.members, ...L.stakes, L.challenge, L.back]; }
   if (app.mode === 'courses') { const L = coursesLayout(W, H, clubCourses(app.career)); return [...L.cards, L.back]; }
@@ -813,8 +816,16 @@ function menuAction(key) {
     return;
   }
   if (key.startsWith('shirt-')) { d.shirt = SHIRT_COLOURS[Number(key.slice(6))]; return; }
-  if (key === 'back' && ['courses', 'members', 'drills'].includes(app.mode)) return goHub();
+  if (key === 'back' && ['courses', 'members', 'drills', 'shop'].includes(app.mode)) return goHub();
   if (key === 'practice') { app.mode = 'drills'; app.hover = canPractise(app.career) ? 'drill-0' : 'back'; return; }
+  if (key === 'shop') { app.mode = 'shop'; app.shopNote = null; app.hover = 'back'; return; }
+  if (key.startsWith('buy-')) {
+    const c = app.career, item = shopItem(SLOTS[Number(key.slice(4))].key, c.tier);
+    if (!buyKit(c, item.id)) { app.shopNote = { text: `NOT ENOUGH MONEY FOR ${item.name}. WIN SOME MATCHES FIRST.`, good: false }; return; }
+    saveCareer(c);
+    app.shopNote = { text: `${item.name} IS IN YOUR BAG. -£${item.price}`, good: true };
+    return;
+  }
   if (key.startsWith('drill-')) return startPractice(DRILLS[Number(key.slice(6))].key);
   if (key === 'back' || key === 'menu') return showTitle();
   if (key === 'start' && d.name.trim()) {
@@ -853,7 +864,7 @@ function menuKey(e) {
     if (k === 'Escape') return menuAction('back');
     return;
   }
-  if (['courses', 'members', 'drills'].includes(app.mode) && k === 'Escape') return menuAction('back');
+  if (['courses', 'members', 'drills', 'shop'].includes(app.mode) && k === 'Escape') return menuAction('back');
   if (app.mode === 'hub') {
     if (k === 'Enter') return menuAction('play');
     if (k === 'Escape') return menuAction('menu');
