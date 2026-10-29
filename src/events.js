@@ -3,6 +3,8 @@
 // You play your round shot by shot with one playing partner drawn on the
 // course; everyone else's scores are worked out from their skills up front,
 // hole by hole, and shown as you reach each hole, so a big field costs nothing.
+// Tour events run over several rounds, one a day, with a cut halfway: only the
+// top of the field plays the weekend.
 
 import { makeRng } from './course-generator.js';
 import { MEMBERS, memberGolfer, WEEKS, VETERAN_SHIRT } from './career.js';
@@ -17,21 +19,39 @@ export const EVENTS = {
   championship: { kind: 'championship', name: 'CLUB CHAMPIONSHIP', holes: 18, fee: 10, prizes: [100, 50, 25], title: 'CLUB CHAMPION', big: true },
   open: { kind: 'open', name: 'OPEN', holes: 18, fee: 20, prizes: [150, 80, 40] },
   county: { kind: 'county', name: 'COUNTY CHAMPIONSHIP', holes: 18, fee: 30, prizes: [400, 200, 100], title: 'COUNTY CHAMPION', big: true },
+  challenge: { kind: 'challenge', name: 'CHALLENGE', holes: 18, rounds: 3, cut: 12, fee: 50,
+    prizes: [1000, 600, 400, 300, 250, 200, 160, 130, 110, 100] },
+  final: { kind: 'final', name: 'CHALLENGE TOUR FINAL', holes: 18, rounds: 4, cut: 12, fee: 80, title: 'CHALLENGE TOUR CHAMPION', big: true,
+    prizes: [3000, 1800, 1200, 900, 700, 600, 500, 400, 350, 300] },
+  tour: { kind: 'tour', name: 'CLASSIC', holes: 18, rounds: 4, cut: 16, fee: 200,
+    prizes: [10000, 6000, 4000, 3000, 2400, 2000, 1700, 1500, 1300, 1100, 1000, 900, 800, 700, 600] },
+  tourChamp: { kind: 'tourChamp', name: 'TOUR CHAMPIONSHIP', holes: 18, rounds: 4, cut: 16, fee: 300, title: 'TOUR CHAMPION', big: true,
+    prizes: [30000, 16000, 10000, 7000, 5500, 4500, 3800, 3200, 2800, 2400, 2100, 1900, 1700, 1500, 1300] },
 };
 // The tiers you can play so far, and where winning one takes you.
-export const NEXT_TIER = { club: 'county', county: 'challenge' };
-export const PLAYABLE_TIERS = ['club', 'county'];
+export const NEXT_TIER = { club: 'county', county: 'challenge', challenge: 'tour', tour: 'majors' };
+export const PLAYABLE_TIERS = ['club', 'county', 'challenge', 'tour'];
+// How much tournament dressing a tier's events get (see tournamentSites):
+// county banners and flags, stands at the closing holes on the challenge tour,
+// and everything, TV and all, on the main tour.
+export const DRESSING = { club: 0, county: 1, challenge: 2, tour: 3, majors: 3 };
+const TIER_OF = { rollup: 'club', medal: 'club', championship: 'club', open: 'county', county: 'county', challenge: 'challenge', final: 'challenge', tour: 'tour', tourChamp: 'tour' };
+export const eventTier = (ev) => TIER_OF[ev.kind] ?? 'club';
 
-// Where a county event is played: a different county course each week, the
-// hardest for the championship.
-const countyVenue = (week) => (week === WEEKS ? COURSE_LIST.county.at(-1) : COURSE_LIST.county[(week - 1) % (COURSE_LIST.county.length - 1)]);
-const placeName = (course) => course.name.replace(/ GOLF.*$/, '');
+// Where a county or tour event is played: a different course of the tier each
+// week, the hardest for the big one at the end.
+const venueFor = (tier, week) => {
+  const list = COURSE_LIST[tier];
+  return week === WEEKS ? list.at(-1) : list[(week - 1) % (list.length - 1)];
+};
+const placeName = (course) => course.name.replace(/ (GOLF|NATIONAL).*$/, '');
+const WEEKLY = { county: ['open', 'county', 'OPEN'], challenge: ['challenge', 'final', 'CHALLENGE'], tour: ['tour', 'tourChamp', 'CLASSIC'] };
 
 // The weekend event in a week: what it is and where (`venue`, a course).
 export function eventFor(c, week = c.week) {
-  if (c.tier === 'county') {
-    const venue = countyVenue(week);
-    return week === WEEKS ? { ...EVENTS.county, week, venue } : { ...EVENTS.open, name: `${placeName(venue)} OPEN`, week, venue };
+  if (WEEKLY[c.tier]) {
+    const [weekly, big, word] = WEEKLY[c.tier], venue = venueFor(c.tier, week);
+    return week === WEEKS ? { ...EVENTS[big], week, venue } : { ...EVENTS[weekly], name: `${placeName(venue)} ${word}`, week, venue };
   }
   const kind = week === WEEKS ? 'championship' : week % 3 === 0 ? 'medal' : 'rollup';
   return { ...EVENTS[kind], week, venue: c.home };
@@ -63,20 +83,55 @@ const COUNTY = [
   { id: 'hattie', name: 'Hattie Hazard', look: 'tall', shirt: '#2f9a4a', nerve: 0.7, skills: { power: 58, accuracy: 54, shortGame: 54, recovery: 56, putting: 56 } },
 ];
 
+// The tours: young pros on the challenge tour, the best in the game on the
+// main tour. Their skills are worked out from their names, around the tour's
+// standard, each with a strength; they wear the sharper looks and tour colours.
+const CHALLENGE_NAMES = ['Benny Backspin', 'Lars Lagputt', 'Tommy Twoputt', 'Gus Gimme', 'Dot Dogleg', 'Archie Albatross', 'Wes Waggle',
+  'Mo Mulligan', 'Freddie Flagstick', 'Lulu Lipout', 'Ricky Range', 'Skip Shankley', 'Kiki Carry', 'Bobby Bounce', 'Holly Hosel',
+  'Percy Pinhigh', 'Tess Topspin', 'Dicky Draw', 'Fiona Fade', 'Zak Zinger'];
+const TOUR_NAMES = ['Duke Driveway', 'Ace Archer', 'Sunny Sweetspot', 'Brooks Birdie', 'Ollie Overlap', 'Grace Greenside', 'Hank Hardpan',
+  'Rex Redzone', 'Ingrid Inswing', 'Clint Clubface', 'Pip Pinseeker', 'Monty Mallet', 'Jet Jansen', 'Nico Niblett', 'Bea Bogeyfree',
+  'Cal Cartpath', 'Rio Rollout', 'Stella Stinger', 'Hugo Hangtime', 'Dale Downhill', 'Mika Mashie', 'Lance Loft', 'Ruby Reload',
+  'Frankie Flop', 'Wally Wedgeworth', 'Suzy Spin', 'Theo Tapin', 'Nina Nineiron', 'Gil Greenreader', 'Kingsley Crown'];
+const PRO_LOOKS = ['athletic', 'tall', 'club'];
+const PRO_SHIRTS = ['#1e2a5a', '#e8e8f0', '#d85a9a', '#2fb0a0', '#2a2a30', '#c8a040', '#d03a2a', '#2f6fd6'];
+const SKILL_KEYS = ['power', 'accuracy', 'shortGame', 'recovery', 'putting'];
+function pros(names, tier, level) {
+  return names.map((name, i) => {
+    const r = makeRng(9001 + i * 131 + level * 7), best = SKILL_KEYS[i % 5];
+    // The last few names are the tour's stars, a little better than the rest.
+    const star = Math.max(0, i - names.length + 5);
+    const skills = Object.fromEntries(SKILL_KEYS.map((k) => [k, Math.round(level + star + (r.next() - 0.5) * 10 + (k === best ? 7 : 0))]));
+    return { id: `${tier}-${i}`, name, look: PRO_LOOKS[i % 3], shirt: PRO_SHIRTS[(i * 3) % PRO_SHIRTS.length], nerve: Math.round((0.2 + r.next() * 0.7) * 10) / 10, skills };
+  });
+}
+const CHALLENGE = pros(CHALLENGE_NAMES, 'challenge', 58);
+const TOUR = pros(TOUR_NAMES, 'tour', 66);
+
+// Your second rival turns up on the challenge tour, and like Vince keeps
+// ahead of you, by a bit more.
+function dexGolfer(c) {
+  const skills = Object.fromEntries(SKILL_KEYS.map((k) => [k, Math.max(60, Math.round(c.skills[k]) + 3)]));
+  return { id: 'dex', name: 'Dex Dashwood', look: 'athletic', shirt: '#2a2a30', ai: true, nerve: 0.8, rival: true, skills };
+}
+
 // Everyone who plays a tier's events (but you), as golfers. Club members and
 // county players have a look so they can be drawn as your playing partner;
 // the club regulars only ever appear on the leaderboard.
 export function fieldFor(c, tier = c.tier) {
   const vince = { id: 'vince', ...memberGolfer(c, 'vince') };
   if (tier === 'county') return [...COUNTY.map((g) => ({ ...g, shirt: g.shirt ?? VETERAN_SHIRT })), vince];
+  if (tier === 'challenge') return [...CHALLENGE, vince, dexGolfer(c)];
+  if (tier === 'tour' || tier === 'majors') return [...TOUR, vince, dexGolfer(c)];
   return [...MEMBERS.map((m) => ({ id: m.id, ...memberGolfer(c, m.id) })), ...REGULARS];
 }
 // One of them as a golfer to play alongside.
 export function fieldGolfer(c, id) {
-  const g = [...fieldFor(c, 'club'), ...fieldFor(c, 'county')].find((x) => x.id === id);
+  const g = everyone(c).find((x) => x.id === id);
   return { name: g.name, look: g.look, shirt: g.shirt, ai: true, nerve: g.nerve, skills: g.skills };
 }
-const nameOf = (c, id) => (id === 'you' ? c.name : [...fieldFor(c, 'club'), ...fieldFor(c, 'county')].find((x) => x.id === id)?.name ?? id);
+const everyone = (c) => ['club', 'county', 'challenge', 'tour'].flatMap((t) => fieldFor(c, t));
+const nameOf = (c, id) => (id === 'you' ? c.name : everyone(c).find((x) => x.id === id)?.name ?? id);
 
 // How many shots over par per hole a golfer averages, from the course's rating
 // (shots over par per nine for a skill-50 golfer; see tools/curate-courses.mjs)
@@ -97,48 +152,121 @@ function simScores(r, golfer, pars, rating) {
   return pars.map((par) => Math.max(par - 2, Math.min(par + 4, par + Math.round(mean + gauss(r) * sd))));
 }
 
-// Set up an event: your playing partner (drawn from those who can be drawn)
-// and the rest of the field's scores. `pars` are the holes' pars, `seed`
-// makes it repeatable.
+const sumOf = (a, from = 0, to = a.length) => a.slice(from, to).reduce((t, v) => t + (v ?? 0), 0);
+
+// Set up an event: everyone else's scores for every round, worked out up
+// front, and your playing partner for the first round (drawn from those who
+// can be drawn). `pars` are the holes' pars, `seed` makes it repeatable.
+// `round` is the round being played (from 0) and `mine` your finished rounds.
 export function newEvent(c, ev, course, pars, seed) {
-  const r = makeRng(seed), all = fieldFor(c);
-  const drawable = all.filter((g) => g.look);
-  const partner = drawable[r.int(0, drawable.length - 1)].id;
-  const field = all.filter((g) => g.id !== partner)
-    .map((g) => ({ id: g.id, name: g.name, scores: simScores(r, g, pars.slice(0, ev.holes), course.rating) }));
-  return { ...ev, partner, field };
+  const r = makeRng(seed), rounds = ev.rounds ?? 1, holes = pars.slice(0, ev.holes);
+  const field = fieldFor(c).map((g) => ({ id: g.id, name: g.name, drawable: !!g.look,
+    rounds: Array.from({ length: rounds }, () => simScores(r, g, holes, course.rating)) }));
+  const out = { ...ev, rounds, round: 0, mine: [], field, seed };
+  out.partner = drawPartner(out);
+  return out;
 }
 
-// An event you skipped: everyone's round worked out, best first.
-export function skippedEvent(c, ev, pars, seed) {
-  const r = makeRng(seed), holes = pars.slice(0, ev.holes), par = holes.reduce((t, v) => t + v, 0);
-  const rows = fieldFor(c).map((g) => ({ id: g.id, name: g.name, scores: simScores(r, g, holes, ev.venue.rating) }))
-    .map((p) => ({ ...p, total: p.scores.reduce((t, v) => t + v, 0), toPar: 0, tie: r.next() }));
-  rows.forEach((p) => { p.toPar = p.total - par; });
-  rows.sort((a, b) => a.total - b.total || a.tie - b.tie);
-  rows.forEach((p, i) => { p.pos = i + 1; });
-  return rows;
+// Who you play with this round: one of those still in it.
+function drawPartner(ev) {
+  const r = makeRng(ev.seed + 977 * (ev.round + 1)), pool = ev.field.filter((p) => p.drawable && !p.cut);
+  return pool[r.int(0, pool.length - 1)].id;
 }
 
-// The leaderboard after `thru` holes: everyone's total and score to par, best
-// first, ties split on the last three holes then the last one (countback).
-// `you` and `partner` are your group's scores.
+// Your round worked out instead of played, from your skills.
+export function simRound(ev, golfer, pars) {
+  return simScores(makeRng(ev.seed + 31 * (ev.round + 1) + 7), golfer, pars.slice(0, ev.holes), ev.venue.rating);
+}
+
+// Events saved before tours had one round, with the partner kept out of the field.
+function rounds(p) { return p.rounds ?? [p.scores]; }
+
+// The leaderboard after `thru` holes of the round being played: everyone still
+// in it, their total and score to par over the rounds so far, best first, ties
+// split on the last three holes then the last one (countback). `you` and
+// `partner` are your group's scores this round.
 export function leaderboard(ev, pars, thru, you, partner) {
-  const sum = (a, from, to) => a.slice(from, to).reduce((t, v) => t + (v ?? 0), 0);
-  const par = sum(pars, 0, thru);
+  const R = ev.round ?? 0, P = sumOf(pars, 0, ev.holes);
+  const prior = (rs) => rs.slice(0, R).reduce((t, x) => t + sumOf(x), 0);
+  const field = ev.field.filter((p) => !p.cut);
   const rows = [
-    { id: 'you', name: you.name, scores: you.scores, you: true },
-    { id: ev.partner, name: partner.name, scores: partner.scores },
-    ...ev.field,
-  ].map((p) => ({ ...p, total: sum(p.scores, 0, thru), last3: sum(p.scores, Math.max(0, thru - 3), thru), last: p.scores[thru - 1] ?? 0 }));
+    { id: 'you', name: you.name, prior: (ev.mine ?? []).reduce((t, x) => t + sumOf(x), 0), cur: you.scores, you: true },
+    ...(ev.field.some((p) => p.id === ev.partner) ? [] : [{ id: ev.partner, name: partner.name, prior: 0, cur: partner.scores }]),
+    ...field.map((p) => ({ id: p.id, name: p.name, prior: prior(rounds(p)), cur: p.id === ev.partner ? partner.scores : rounds(p)[R] })),
+  ].map((p) => ({ ...p, total: p.prior + sumOf(p.cur, 0, thru), last3: sumOf(p.cur, Math.max(0, thru - 3), thru), last: p.cur[thru - 1] ?? 0 }));
+  const par = R * P + sumOf(pars, 0, thru);
   rows.forEach((p) => { p.toPar = p.total - par; });
   rows.sort((a, b) => a.total - b.total || a.last3 - b.last3 || a.last - b.last || (b.you ? 1 : 0) - (a.you ? 1 : 0));
   rows.forEach((p, i) => { p.pos = i + 1; });
   return rows;
 }
 
+// Everyone's totals after `n` rounds (you too, if `mine` is given), best first.
+function standingsAfter(ev, n, mine) {
+  const row = (rs) => {
+    const last = rs[n - 1] ?? [];
+    return { total: rs.slice(0, n).reduce((t, x) => t + sumOf(x), 0), last: sumOf(last), last3: sumOf(last, Math.max(0, last.length - 3)), last1: last.at(-1) ?? 0 };
+  };
+  const rows = ev.field.filter((p) => !p.cut).map((p) => ({ id: p.id, name: p.name, ...row(rounds(p)) }));
+  if (mine) rows.push({ id: 'you', name: mine.name, you: true, ...row(mine.rounds) });
+  rows.sort((a, b) => a.total - b.total || a.last - b.last || a.last3 - b.last3 || a.last1 - b.last1 || (b.you ? 1 : 0) - (a.you ? 1 : 0));
+  return rows;
+}
+
+// Halfway through a longer event, the cut: the top `ev.cut` and anyone tied
+// with the last of them play on; the rest are marked `cut`. Returns whether you
+// made it (when you're in it).
+function makeCut(ev, mine) {
+  const rows = standingsAfter(ev, 2, mine), line = rows[Math.min(ev.cut, rows.length) - 1].total;
+  for (const p of ev.field) if (!p.cut && rows.find((x) => x.id === p.id).total > line) p.cut = true;
+  ev.cutLine = line - 2 * ev.parTotal;
+  return mine ? rows.find((x) => x.you).total <= line : true;
+}
+
+// A round of yours is in (`partnerScores` is your partner's, if they played it
+// on the course with you). Moves the event on a round, making the cut when
+// it's due, and says whether you have another round to play.
+export function finishEventRound(ev, pars, name, myScores, partnerScores) {
+  const holes = pars.slice(0, ev.holes);
+  ev.parTotal = sumOf(holes);
+  ev.mine = [...(ev.mine ?? []), myScores.slice(0, ev.holes)];
+  if (!ev.rounds) { ev.rounds = 1; ev.round = 0; ev.field = ev.field.map((p) => ({ ...p, rounds: rounds(p) })); ev.field.push({ id: ev.partner, name: ev.partnerName ?? '', rounds: [] }); }
+  const partner = ev.field.find((p) => p.id === ev.partner);
+  if (partner && partnerScores) partner.rounds[ev.round] = partnerScores.slice(0, ev.holes);
+  ev.round += 1;
+  if (ev.cut && ev.rounds > 2 && ev.round === 2) {
+    ev.cutMade = makeCut(ev, { name, rounds: ev.mine });
+    if (!ev.cutMade) return false;
+  }
+  if (ev.round >= ev.rounds) return false;
+  ev.partner = drawPartner(ev);
+  return true;
+}
+
+// The final results: those who played all the rounds by total (countback on
+// the last round), then those who missed the cut, with no position. You're in
+// it unless `name` is null (an event you skipped).
+export function finalBoard(ev, pars, name) {
+  const P = sumOf(pars, 0, ev.holes), mine = name ? { name, rounds: ev.mine } : null;
+  const made = standingsAfter(ev, ev.rounds, mine && ev.cutMade !== false ? mine : null);
+  made.forEach((p, i) => { p.pos = i + 1; p.toPar = p.total - ev.rounds * P; });
+  const missed = ev.field.filter((p) => p.cut).map((p) => ({ id: p.id, name: p.name, total: sumOf(p.rounds[0]) + sumOf(p.rounds[1]) }));
+  if (mine && ev.cutMade === false) missed.push({ id: 'you', name, you: true, total: sumOf(ev.mine[0]) + sumOf(ev.mine[1]) });
+  missed.sort((a, b) => a.total - b.total);
+  missed.forEach((p) => { p.pos = null; p.mc = true; p.toPar = p.total - 2 * P; });
+  return [...made, ...missed];
+}
+
+// An event you skipped: everyone's rounds worked out, cut and all.
+export function skippedEvent(c, ev, pars, seed) {
+  const out = newEvent(c, ev, ev.venue, pars, seed);
+  out.parTotal = sumOf(pars, 0, ev.holes);
+  if (out.cut && out.rounds > 2) makeCut(out, null);
+  return finalBoard(out, pars, null);
+}
+
 // What a finishing position wins.
-export const prizeFor = (ev, pos) => ev.prizes[pos - 1] ?? 0;
+export const prizeFor = (ev, pos) => (pos ? ev.prizes[pos - 1] ?? 0 : 0);
 
 // ---------- The season ----------
 

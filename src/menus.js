@@ -152,8 +152,11 @@ export function hubLayout(W, H, career) {
     // The week, in a card on the right: the midweek slot, the weekend event
     // (enter or skip it) and where you stand on the order of merit.
     card: { x: px + pw - 172, y: py + 40, w: 156, h: 96 },
-    event: { key: 'event', label: `ENTER £${eventFor(career).fee}`, x: px + pw - 164, y: py + 98, w: 84, h: 14 },
-    skip: { key: 'skip', label: 'SKIP', x: px + pw - 74, y: py + 98, w: 50, h: 14 },
+    // Partway through a longer event: play the next round, or work it out.
+    event: career.event ? { key: 'event-play', label: `PLAY ROUND ${career.event.round + 1}`, x: px + pw - 164, y: py + 98, w: 84, h: 14 }
+      : { key: 'event', label: `ENTER £${eventFor(career).fee}`, x: px + pw - 164, y: py + 98, w: 84, h: 14 },
+    skip: career.event ? { key: 'event-sim', label: 'SIM', x: px + pw - 74, y: py + 98, w: 50, h: 14 }
+      : { key: 'skip', label: 'SKIP', x: px + pw - 74, y: py + 98, w: 50, h: 14 },
     merit: { key: 'merit', label: 'TABLE', x: px + pw - 64, y: py + 118, w: 40, h: 12 },
     menu: { key: 'menu', label: 'MENU', x: px + 16, y: py + ph - 30, w: 56, h: 18 },
   };
@@ -198,8 +201,12 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
       return;
     }
     if (r.comp) {
-      const e = r.comp;
-      drawText(ctx, `WK ${r.week}  ${e.name}: ${ordinal(e.pos)} OF ${e.of} (${toPar(r.score - r.par)})${e.prize ? `  +£${e.prize}` : ''}`, sx, ry + 11 + i * 9, e.pos === 1 ? GOLD : '#ffffff', 1, null);
+      const e = r.comp, where = e.mc ? 'MISSED THE CUT' : `${ordinal(e.pos)} OF ${e.of} (${toPar(e.toPar ?? r.score - r.par)})`;
+      drawText(ctx, `WK ${r.week}  ${e.name}: ${where}${e.prize ? `  +£${e.prize}` : ''}`, sx, ry + 11 + i * 9, e.pos === 1 ? GOLD : e.mc ? '#f08a8a' : '#ffffff', 1, null);
+      return;
+    }
+    if (r.eventRound) {
+      drawText(ctx, `WK ${r.week}  ${r.eventRound.name} R${r.eventRound.round}: ${r.score} (${toPar(r.score - r.par)})${r.sim ? '  SIM' : ''}`, sx, ry + 11 + i * 9, DIM, 1, null);
       return;
     }
     if (r.practice) {
@@ -217,8 +224,23 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
     drawText(ctx, `WK ${r.week}  ${r.score} (${toPar(r.score - r.par)})${vs}`, sx, ry + 11 + i * 9, '#ffffff', 1, null);
   });
   // The week: midweek, then the weekend event, and the order of merit.
-  const ev = eventFor(c), cd = L.card;
-  if (!c.round) {
+  const ev = c.event ?? eventFor(c), cd = L.card;
+  if (!c.round && c.event) {
+    // An event under way: where you stand and the next round.
+    ctx.fillStyle = '#2c2050';
+    ctx.fillRect(cd.x, cd.y, cd.w, cd.h);
+    drawText(ctx, 'THIS WEEKEND', cd.x + 8, cd.y + 6, DIM, 1, null);
+    drawText(ctx, ev.name, cd.x + 8, cd.y + 16, GOLD, 1, null);
+    drawText(ctx, `ROUND ${ev.round + 1} OF ${ev.rounds} AT ${ev.venue.name.replace(/ (GOLF|NATIONAL).*$/, '')}`, cd.x + 8, cd.y + 26, '#ffffff', 1, null);
+    const stand = ev.round ? `YOU: ${ordinal(ev.lastPos)} AT ${toPar(ev.lastToPar)}` : 'NOT STARTED YET';
+    drawText(ctx, stand, cd.x + 8, cd.y + 36, ev.lastPos <= 3 ? '#7ee07e' : '#ffffff', 1, null);
+    const cut = ev.cutMade ? 'MADE THE CUT' : ev.cut && ev.rounds > 2 ? `CUT AFTER ROUND 2: TOP ${ev.cut}` : '';
+    if (cut) drawText(ctx, cut, cd.x + 8, cd.y + 46, ev.cutMade ? '#7ee07e' : QUIET, 1, null);
+    menuButton(ctx, L.event, hover === L.event.key);
+    menuButton(ctx, L.skip, hover === L.skip.key);
+    drawText(ctx, 'SIM: WORKED OUT FROM YOUR SKILLS', cd.x + 8, cd.y + 76, QUIET, 1, null);
+  }
+  if (!c.round && !c.event) {
     ctx.fillStyle = '#2c2050';
     ctx.fillRect(cd.x, cd.y, cd.w, cd.h);
     const done = { practice: 'PRACTISED', match: 'PLAYED A MONEY MATCH', round: 'PLAYED A PRACTICE ROUND' }[c.midweek];
@@ -242,11 +264,11 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
   else if (c.worn?.length) drawText(ctx, `WORN OUT: ${c.worn.join(', ')}. THE PRO SHOP HAS MORE.`, p.x + 16, p.y + p.h - 44, '#f08a8a', 1, null);
 
   menuButton(ctx, L.menu, hover === 'menu');
-  menuButton(ctx, L.play, hover === 'play', !!c.round || !c.midweek);
+  menuButton(ctx, L.play, hover === 'play', !!c.round || (!c.midweek && !c.event));
   if (!c.round) {
     // The midweek choices, greyed once you've used the week's slot.
-    menuButton(ctx, L.match, hover === 'match', !c.midweek);
-    menuButton(ctx, L.practice, hover === 'practice', !c.midweek);
+    menuButton(ctx, L.match, hover === 'match', !c.midweek && !c.event);
+    menuButton(ctx, L.practice, hover === 'practice', !c.midweek && !c.event);
     menuButton(ctx, L.shop, hover === 'shop');
   }
 }
@@ -445,6 +467,12 @@ export function drawLeaderboard(ctx, x, y, w, rows, { title, max = rows.length, 
 }
 
 // The final leaderboard after an event, with what you won.
+// The rows a results screen lists: the top twenty, and you if you're not among them.
+export function resultsShown(rows) {
+  const top = rows.slice(0, 20), me = rows.find((r) => r.you);
+  return me && !top.includes(me) ? [...top, me] : top;
+}
+
 export function resultsLayout(W, H, n) {
   const pw = 300, ph = 46 + n * 9 + 42, px = mid(W, pw), py = mid(H, ph);
   return {
@@ -453,19 +481,32 @@ export function resultsLayout(W, H, n) {
   };
 }
 
-export function drawResults(ctx, W, H, L, { results: res, hover }) {
+// An event's results, or the standings after a round of a longer one.
+export function drawResults(ctx, W, H, L, { results: res, rows, hover }) {
   const p = L.panel, me = res.rows.find((r) => r.you);
   panel(ctx, p.x, p.y, p.w, p.h);
-  drawText(ctx, res.name, p.x + 16, p.y + 12, GOLD, 2);
-  const line = me.pos === 1 ? `YOU WIN!${res.title ? ` ${res.title}.` : ''}` : `YOU FINISHED ${ordinal(me.pos)} OF ${res.rows.length}.`;
-  drawText(ctx, `${line}${res.prize ? ` PRIZE £${res.prize}.` : ''}`, p.x + 16, p.y + 30, me.pos <= 3 ? '#7ee07e' : DIM, 1, null);
-  res.rows.forEach((r, i) => {
-    const y = p.y + 46 + i * 9, colour = r.you ? GOLD : '#ffffff';
-    drawText(ctx, ordinal(r.pos), p.x + 16, y, r.you ? GOLD : QUIET, 1, null);
+  drawText(ctx, res.name, p.x + 16, p.y + 12, GOLD, textWidth(res.name, 2) <= p.w - 32 ? 2 : 1);
+  let line, good;
+  if (!res.final) {
+    const cut = res.cutMade ? ` MADE THE CUT AT ${toPar(res.cutLine)}.` : '';
+    line = `AFTER ROUND ${res.after} OF ${res.rounds}: ${ordinal(me.pos)} AT ${toPar(me.toPar)}.${cut}`;
+    good = me.pos <= 10;
+  } else if (me.mc) {
+    line = 'YOU MISSED THE CUT. BETTER LUCK NEXT WEEK.';
+    good = false;
+  } else {
+    line = me.pos === 1 ? `YOU WIN!${res.title ? ` ${res.title}.` : ''}` : `YOU FINISHED ${ordinal(me.pos)} OF ${res.rows.length}.`;
+    if (res.prize) line += ` PRIZE £${res.prize}.`;
+    good = me.pos <= 3;
+  }
+  drawText(ctx, line, p.x + 16, p.y + 30, good ? '#7ee07e' : DIM, 1, null);
+  rows.forEach((r, i) => {
+    const y = p.y + 46 + i * 9, colour = r.you ? GOLD : r.mc ? QUIET : '#ffffff';
+    drawText(ctx, r.mc ? 'MC' : ordinal(r.pos), p.x + 16, y, r.you ? GOLD : QUIET, 1, null);
     drawText(ctx, r.name.toUpperCase(), p.x + 46, y, colour, 1, null);
     drawText(ctx, `${r.total}`, p.x + 190, y, colour, 1, null);
     drawText(ctx, toPar(r.toPar), p.x + 216, y, r.toPar < 0 ? '#f08a8a' : colour, 1, null);
-    const prize = res.prizes[i];
+    const prize = res.final && r.pos ? res.prizes[r.pos - 1] : 0;
     if (prize) drawText(ctx, `£${prize}`, p.x + 250, y, '#7ee07e', 1, null);
   });
   menuButton(ctx, L.done, hover === 'done');
@@ -483,7 +524,7 @@ export function meritLayout(W, H, n, key = 'back') {
 }
 
 function meritRowsAt(ctx, p, rows, y) {
-  rows.forEach((r, i) => {
+  resultsShown(rows).forEach((r, i) => {
     const ry = y + i * 9, colour = r.you ? GOLD : '#ffffff';
     drawText(ctx, ordinal(r.pos), p.x + 16, ry, r.pos <= PROMOTED ? '#7ee07e' : r.you ? GOLD : QUIET, 1, null);
     drawText(ctx, r.name.toUpperCase(), p.x + 46, ry, colour, 1, null);
@@ -508,7 +549,7 @@ export function drawSeason(ctx, W, H, L, { season: s, career: c, hover }) {
   drawText(ctx, `SEASON ${s.season} IS OVER`, p.x + 16, p.y + 12, GOLD, 2);
   const how = s.champion ? `YOU WON THE BIG ONE AND FINISHED ${ordinal(s.pos)}.` : `YOU FINISHED ${ordinal(s.pos)} OF ${s.of} ON THE ORDER OF MERIT.`;
   const next = s.promoted ? `PROMOTED! NEXT SEASON IS ${up} GOLF. VINCE IS COMING TOO.`
-    : s.earned ? `YOU'VE EARNED A ${up} CARD. IT OPENS IN AN UPDATE SOON.`
+    : s.earned ? `YOU'VE EARNED A PLACE AT ${up} LEVEL. IT OPENS SOON.`
     : `ANOTHER SEASON AT ${TIER_NAMES[s.tier]} LEVEL. TOP ${PROMOTED} GO UP.`;
   drawText(ctx, how, p.x + 16, p.y + 32, DIM, 1, null);
   drawText(ctx, next, p.x + 16, p.y + 42, s.earned ? '#7ee07e' : '#ffffff', 1, null);
