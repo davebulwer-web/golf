@@ -4,6 +4,7 @@
 
 import { RIVAL } from './golfers.js';
 import { COURSE_LIST } from './course-list.js';
+import { kitItem, kitBoost } from './shop.js';
 
 const SAVE_KEY = 'pixel-golf.career';
 export const WEEKS = 12; // weeks in a season
@@ -57,14 +58,21 @@ export function newCareer({ name, look, shirt }, rand = Math.random) {
     home, away: [take(), take()],
     round: null,   // a round in progress: { course, hole: next hole to play, scores, putts }
     history: [],   // rounds played, newest first
+    kit: {},       // what's in your bag from the pro shop: { slot: { id, left: rounds } }
   };
 }
 
 // The courses you can play a round on: home first, then the away courses.
 export const clubCourses = (c) => [c.home, ...(c.away ?? [])];
 
-// Your golfer for a round, from the career.
-export const careerGolfer = (c) => ({ name: c.name, look: c.look, shirt: c.shirt, skills: { ...c.skills } });
+// Your skills with your kit's boost on top.
+export function playingSkills(c) {
+  const boost = kitBoost(c.kit);
+  return Object.fromEntries(Object.entries(c.skills).map(([k, v]) => [k, Math.min(99, v + boost[k])]));
+}
+
+// Your golfer for a round, from the career, with your kit.
+export const careerGolfer = (c) => ({ name: c.name, look: c.look, shirt: c.shirt, skills: playingSkills(c) });
 
 // Who you play a practice round with: Bertie, at club level.
 export const clubOpponent = () => ({ ...RIVAL, skills: { power: 50, accuracy: 46, shortGame: 47, recovery: 45, putting: 46 } });
@@ -110,11 +118,50 @@ export function finishRound(c, result) {
     m.money = Math.sign(m.lead) * m.stake;
     c.money += m.money;
   }
+  // An event pays out by finishing position; winning the big one is a title.
+  if (result.comp) {
+    c.money += result.comp.prize;
+    if (result.comp.title) c.titles = [...(c.titles ?? []), { season: c.season, title: result.comp.title }];
+  }
   c.history.unshift({ season: c.season, week: c.week, ...result });
   c.history = c.history.slice(0, 40);
   c.round = null;
+  // Every round wears your kit; what's worn out leaves the bag.
+  c.worn = [];
+  for (const [slot, k] of Object.entries(c.kit ?? {})) {
+    k.left -= 1;
+    if (k.left <= 0) { c.worn.push(kitItem(k.id)?.name ?? slot); delete c.kit[slot]; }
+  }
   c.week += 1;
   if (c.week > WEEKS) { c.week = 1; c.season += 1; }
+}
+
+// ---------- Practice ----------
+// One practice session a week (the week's midweek slot); it's free.
+
+const weekKey = (c) => `${c.season}:${c.week}`;
+export const canPractise = (c) => c.practised !== weekKey(c);
+
+// Note a practice session: the skill goes up by `gain`, and it goes in the history.
+export function recordPractice(c, { name, skill, hits, balls, gain }) {
+  c.skills[skill] = Math.min(99, Math.round((c.skills[skill] + gain) * 10) / 10);
+  c.practised = weekKey(c);
+  c.history.unshift({ season: c.season, week: c.week, practice: { name, skill, hits, balls, gain } });
+  c.history = c.history.slice(0, 40);
+}
+
+// ---------- The pro shop ----------
+
+// Buy a piece of kit: it goes in your bag in its slot, replacing what was there.
+export function buyKit(c, id) {
+  const item = kitItem(id);
+  if (!item || c.money < item.price) return false;
+  c.money -= item.price;
+  c.kit = { ...c.kit, [item.slot]: { id, left: item.rounds } };
+  c.worn = (c.worn ?? []).filter((n) => n !== item.name);
+  c.history.unshift({ season: c.season, week: c.week, bought: { name: item.name, price: item.price } });
+  c.history = c.history.slice(0, 40);
+  return true;
 }
 
 // ---------- Saving ----------
@@ -125,6 +172,7 @@ export function finishRound(c, result) {
 // to a club course, finishing any round in progress where it was started.
 function upgrade(c) {
   if (c.round && !c.round.course) c.round.course = c.home;
+  c.kit ??= {};
   if (!c.home.id) {
     const club = COURSE_LIST.club;
     c.home = club[0];

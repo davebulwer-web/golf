@@ -8,6 +8,10 @@ import { panel, GOLD } from './hud.js';
 import { drawDinky, golferFrame } from './dinky.js';
 import { STYLES } from './course-generator.js';
 import { LOOKS, ownShirt, SHIRT_COLOURS, SKILL_NAMES, WEEKS, MEMBERS, STAKES, startingSkills, courseStars, memberGolfer, record } from './career.js';
+import { LOOKS, SHIRT_COLOURS, SKILL_NAMES, WEEKS, MEMBERS, STAKES, startingSkills, courseStars, memberGolfer, record, canPractise } from './career.js';
+import { SLOTS, TIER_NAMES, kitItem, kitBoost, shopItem, nextItem, boostWords } from './shop.js';
+import { DRILLS, BALLS } from './practice.js';
+import { eventFor, nextEvent } from './events.js';
 
 const DIM = '#c8c0e8', QUIET = '#8a80b0';
 const mid = (W, w) => Math.round((W - w) / 2);
@@ -24,15 +28,18 @@ function menuButton(ctx, b, hot, on = true) {
   drawText(ctx, b.label, b.x + Math.round((b.w - textWidth(b.label, scale)) / 2), b.y + Math.round((b.h - 5 * scale) / 2), color, scale, on ? '#1a1a2a' : null);
 }
 
-// A skill as a labelled bar, 0 to 100.
-function skillBar(ctx, x, y, name, value) {
+// A skill as a labelled bar, 0 to 100, with what your kit adds (`boost`) in blue.
+const KIT_BLUE = '#6ac8f0';
+function skillBar(ctx, x, y, name, value, boost = 0) {
   drawText(ctx, name, x, y, DIM, 1, null);
-  const bx = x + 46, bw = 80;
+  const bx = x + 46, bw = 80, all = Math.min(99, value + boost);
   ctx.fillStyle = '#1a1430';
   ctx.fillRect(bx, y, bw, 5);
+  ctx.fillStyle = KIT_BLUE;
+  ctx.fillRect(bx, y, Math.round(bw * all / 100), 5);
   ctx.fillStyle = value >= 60 ? '#5ac85a' : value >= 45 ? GOLD : '#e07a4a';
   ctx.fillRect(bx, y, Math.round(bw * value / 100), 5);
-  drawText(ctx, `${Math.round(value)}`, bx + bw + 5, y, '#ffffff', 1, null);
+  drawText(ctx, `${Math.round(all)}`, bx + bw + 5, y, boost ? KIT_BLUE : '#ffffff', 1, null);
 }
 
 // The golfer at twice size, feet at (x, y).
@@ -135,16 +142,22 @@ export function drawNewCareer(ctx, W, H, L, { draft, hover, now, replaces }) {
 // ---------- Clubhouse ----------
 
 export function hubLayout(W, H, career) {
-  const pw = 380, ph = 232, px = mid(W, pw), py = mid(H, ph);
+  const pw = 512, ph = 232, px = mid(W, pw), py = mid(H, ph);
   const play = career.round ? `CONTINUE ${career.round.match ? 'MATCH' : 'ROUND'}, HOLE ${career.round.hole}` : 'PRACTICE ROUND';
   return {
     panel: { x: px, y: py, w: pw, h: ph },
-    play: { key: 'play', label: play, x: px + pw - 156, y: py + ph - 30, w: 140, h: 18 },
-    match: { key: 'match', label: 'MONEY MATCH', x: px + pw - 282, y: py + ph - 30, w: 118, h: 18 },
-    menu: { key: 'menu', label: 'MENU', x: px + 16, y: py + ph - 30, w: 64, h: 18 },
+    play: { key: 'play', label: play, x: px + pw - 136, y: py + ph - 30, w: 120, h: 18 },
+    match: { key: 'match', label: 'MONEY MATCH', x: px + pw - 250, y: py + ph - 30, w: 108, h: 18 },
+    practice: { key: 'practice', label: 'PRACTICE', x: px + pw - 340, y: py + ph - 30, w: 84, h: 18 },
+    shop: { key: 'shop', label: 'PRO SHOP', x: px + pw - 430, y: py + ph - 30, w: 84, h: 18 },
+    // This week's event, if there is one, in a card on the right.
+    card: { x: px + pw - 172, y: py + 44, w: 156, h: 74 },
+    event: !career.round && eventFor(career.week) ? { key: 'event', label: `ENTER £${eventFor(career.week).fee}`, x: px + pw - 164, y: py + 96, w: 140, h: 16 } : null,
+    menu: { key: 'menu', label: 'MENU', x: px + 16, y: py + ph - 30, w: 56, h: 18 },
   };
 }
 
+export const ordinal = (n) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'TH' : ['TH', 'ST', 'ND', 'RD'][n % 10] ?? 'TH'}`;
 const toPar = (d) => (d === 0 ? 'E' : d > 0 ? `+${d}` : `${d}`);
 
 export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
@@ -157,10 +170,12 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
   golferAt(ctx, c.look, c.shirt, p.x + 46, p.y + 112, now);
   drawText(ctx, c.name, p.x + 16, p.y + 120, '#ffffff', 1, null);
   drawText(ctx, `£${c.money}`, p.x + 16, p.y + 130, GOLD, 2);
-  const sx = p.x + 112, sy = p.y + 48;
+  (c.titles ?? []).slice(-3).forEach((t, i) => drawText(ctx, `${t.title} S${t.season}`, p.x + 16, p.y + 148 + i * 9, '#7ee07e', 1, null));
+  const sx = p.x + 112, sy = p.y + 48, boost = kitBoost(c.kit);
   drawText(ctx, 'SKILLS', sx, sy - 6, DIM, 1, null);
+  if (Object.keys(c.kit ?? {}).length) drawText(ctx, 'BLUE: YOUR KIT', sx + 46, sy - 6, KIT_BLUE, 1, null);
   Object.entries(SKILL_NAMES).forEach(([k, name], i) => {
-    skillBar(ctx, sx, sy + 6 + i * 12, name, c.skills[k]);
+    skillBar(ctx, sx, sy + 6 + i * 12, name, c.skills[k], boost[k]);
     // How the last round's form moved it.
     const d = c.report?.change[k];
     if (d) drawText(ctx, `${d > 0 ? '+' : ''}${d.toFixed(1)}`, sx + 148, sy + 6 + i * 12, d > 0 ? '#7ee07e' : '#f08a8a', 1, null);
@@ -172,6 +187,20 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
   drawText(ctx, 'RECENT ROUNDS', sx, ry, DIM, 1, null);
   if (!c.history.length) drawText(ctx, 'NONE YET. PLAY NINE HOLES AT YOUR CLUB.', sx, ry + 11, QUIET, 1, null);
   c.history.slice(0, 5).forEach((r, i) => {
+    if (r.bought) {
+      drawText(ctx, `WK ${r.week}  PRO SHOP: ${r.bought.name}  -£${r.bought.price}`, sx, ry + 11 + i * 9, KIT_BLUE, 1, null);
+      return;
+    }
+    if (r.comp) {
+      const e = r.comp;
+      drawText(ctx, `WK ${r.week}  ${e.name}: ${ordinal(e.pos)} OF ${e.of} (${toPar(r.score - r.par)})${e.prize ? `  +£${e.prize}` : ''}`, sx, ry + 11 + i * 9, e.pos === 1 ? GOLD : '#ffffff', 1, null);
+      return;
+    }
+    if (r.practice) {
+      const pr = r.practice;
+      drawText(ctx, `WK ${r.week}  PRACTICE: ${pr.name} ${pr.hits}/${pr.balls}  ${SKILL_NAMES[pr.skill]} +${pr.gain.toFixed(1)}`, sx, ry + 11 + i * 9, '#7ee07e', 1, null);
+      return;
+    }
     if (r.match) {
       const m = r.match, money = m.money > 0 ? `+£${m.money}` : m.money < 0 ? `-£${-m.money}` : '£0';
       const how = m.lead > 0 ? `BEAT ${r.vs}` : m.lead < 0 ? `LOST TO ${r.vs}` : `HALVED WITH ${r.vs}`;
@@ -181,12 +210,35 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
     const vs = r.vsScore == null ? '' : r.score < r.vsScore ? `  BEAT ${r.vs} ${r.vsScore}` : r.score > r.vsScore ? `  LOST TO ${r.vs} ${r.vsScore}` : `  TIED ${r.vs}`;
     drawText(ctx, `WK ${r.week}  ${r.score} (${toPar(r.score - r.par)})${vs}`, sx, ry + 11 + i * 9, '#ffffff', 1, null);
   });
+  // What's on: this week's event, or the next one.
+  const ev = eventFor(c.week), cd = L.card;
+  if (!c.round && (ev || nextEvent(c.week))) {
+    ctx.fillStyle = '#2c2050';
+    ctx.fillRect(cd.x, cd.y, cd.w, ev ? cd.h : 30);
+    if (ev) {
+      drawText(ctx, 'THIS WEEKEND', cd.x + 8, cd.y + 6, DIM, 1, null);
+      drawText(ctx, ev.name, cd.x + 8, cd.y + 16, GOLD, 1, null);
+      drawText(ctx, `${ev.holes} HOLES STROKE PLAY AT HOME`, cd.x + 8, cd.y + 26, '#ffffff', 1, null);
+      drawText(ctx, `PRIZES ${ev.prizes.map((v) => `£${v}`).join(' / ')}`, cd.x + 8, cd.y + 35, QUIET, 1, null);
+      if (L.event) menuButton(ctx, L.event, hover === 'event', c.money >= ev.fee);
+      if (c.money < ev.fee) drawText(ctx, `NEED £${ev.fee} TO ENTER`, cd.x + 8, cd.y + cd.h + 4, '#f08a8a', 1, null);
+    } else {
+      const nx = nextEvent(c.week);
+      drawText(ctx, 'NEXT EVENT', cd.x + 8, cd.y + 6, DIM, 1, null);
+      drawText(ctx, `${nx.name}, WEEK ${nx.week}`, cd.x + 8, cd.y + 17, GOLD, 1, null);
+    }
+  }
   if (c.round?.match) drawText(ctx, `MATCH IN PROGRESS: ${c.round.vs.toUpperCase()} FOR £${c.round.match.stake}`, p.x + 16, p.y + p.h - 44, GOLD, 1, null);
   else if (c.round) drawText(ctx, `ROUND IN PROGRESS AT ${c.round.course.name}: ${c.round.hole - 1} PLAYED`, p.x + 16, p.y + p.h - 44, GOLD, 1, null);
+  else if (c.worn?.length) drawText(ctx, `WORN OUT: ${c.worn.join(', ')}. THE PRO SHOP HAS MORE.`, p.x + 16, p.y + p.h - 44, '#f08a8a', 1, null);
 
   menuButton(ctx, L.menu, hover === 'menu');
   menuButton(ctx, L.play, hover === 'play');
-  if (!c.round) menuButton(ctx, L.match, hover === 'match');
+  if (!c.round) {
+    menuButton(ctx, L.match, hover === 'match');
+    menuButton(ctx, L.practice, hover === 'practice');
+    menuButton(ctx, L.shop, hover === 'shop');
+  }
 }
 
 // ---------- Where to play ----------
@@ -287,4 +339,124 @@ export function drawMembers(ctx, W, H, L, { career: c, pick, hover, now }) {
   else drawText(ctx, `WIN £${pick.stake} OR LOSE IT. YOU HAVE £${c.money}.`, L.stakes[0].x + 32, L.stakes[0].y - 10, QUIET, 1, null);
   menuButton(ctx, L.back, hover === 'back');
   menuButton(ctx, L.challenge, hover === 'challenge', !!pick.stake);
+}
+
+// ---------- Practice ground ----------
+
+export function drillsLayout(W, H) {
+  const pw = 360, ch = 30, ph = 50 + DRILLS.length * (ch + 4) + 30, px = mid(W, pw), py = mid(H, ph);
+  return {
+    panel: { x: px, y: py, w: pw, h: ph },
+    drills: DRILLS.map((d, i) => ({ key: `drill-${i}`, x: px + 12, y: py + 44 + i * (ch + 4), w: pw - 24, h: ch })),
+    back: { key: 'back', label: 'BACK', x: px + 12, y: py + ph - 26, w: 70, h: 18 },
+  };
+}
+
+export function drawDrills(ctx, W, H, L, { career: c, hover }) {
+  const p = L.panel, open = canPractise(c);
+  panel(ctx, p.x, p.y, p.w, p.h);
+  drawText(ctx, 'PRACTICE GROUND', p.x + 12, p.y + 12, GOLD, 2);
+  drawText(ctx, open ? `ONE FREE SESSION A WEEK, ${BALLS} BALLS. THE BETTER IT GOES, THE MORE IT HELPS.` : 'YOU HAVE PRACTISED THIS WEEK. PLAY A ROUND TO MOVE THE WEEK ON.', p.x + 12, p.y + 28, open ? DIM : '#f08a8a', 1, null);
+  L.drills.forEach((b, i) => {
+    const d = DRILLS[i], hot = open && hover === b.key;
+    ctx.fillStyle = !open ? '#241a40' : hot ? '#4a3a8a' : '#2c2050';
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.fillStyle = hot ? GOLD : open ? '#7a68c0' : '#3a2e60';
+    ctx.fillRect(b.x, b.y, b.w, 1); ctx.fillRect(b.x, b.y + b.h - 1, b.w, 1);
+    ctx.fillRect(b.x, b.y, 1, b.h); ctx.fillRect(b.x + b.w - 1, b.y, 1, b.h);
+    drawText(ctx, d.name, b.x + 8, b.y + 6, !open ? '#5a4a80' : hot ? GOLD : '#ffffff', 1, null);
+    const sk = `${SKILL_NAMES[d.skill]} ${Math.round(c.skills[d.skill])}`;
+    drawText(ctx, sk, b.x + b.w - 8 - textWidth(sk), b.y + 6, open ? GOLD : '#5a4a80', 1, null);
+    drawText(ctx, d.about, b.x + 8, b.y + 18, open ? QUIET : '#4a3e70', 1, null);
+  });
+  menuButton(ctx, L.back, hover === 'back');
+}
+
+// ---------- Pro shop ----------
+
+export function shopLayout(W, H) {
+  const pw = 440, rh = 32, ph = 50 + SLOTS.length * (rh + 4) + 42, px = mid(W, pw), py = mid(H, ph);
+  return {
+    panel: { x: px, y: py, w: pw, h: ph },
+    rows: SLOTS.map((s, i) => ({ x: px + 12, y: py + 44 + i * (rh + 4), w: pw - 24, h: rh })),
+    buys: SLOTS.map((s, i) => ({ key: `buy-${i}`, x: px + pw - 82, y: py + 44 + i * (rh + 4) + 8, w: 62, h: 16 })),
+    back: { key: 'back', label: 'BACK', x: px + 12, y: py + ph - 26, w: 70, h: 18 },
+  };
+}
+
+export function drawShop(ctx, W, H, L, { career: c, hover, note }) {
+  const p = L.panel;
+  panel(ctx, p.x, p.y, p.w, p.h);
+  drawText(ctx, 'PRO SHOP', p.x + 12, p.y + 12, GOLD, 2);
+  const cash = `£${c.money}`;
+  drawText(ctx, cash, p.x + p.w - 12 - textWidth(cash, 2), p.y + 12, GOLD, 2);
+  drawText(ctx, 'KIT ADDS TO YOUR SKILLS UNTIL IT WEARS OUT. ONE PIECE FOR EACH SLOT.', p.x + 12, p.y + 30, DIM, 1, null);
+  L.rows.forEach((b, i) => {
+    const slot = SLOTS[i], item = shopItem(slot.key, c.tier), have = c.kit?.[slot.key], owned = have && kitItem(have.id);
+    const afford = c.money >= item.price;
+    ctx.fillStyle = '#2c2050';
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    drawText(ctx, slot.name, b.x + 6, b.y + 5, QUIET, 1, null);
+    drawText(ctx, item.name, b.x + 50, b.y + 5, '#ffffff', 1, null);
+    drawText(ctx, `${boostWords(item.boost, SKILL_NAMES)}  FOR ${item.rounds} ROUNDS`, b.x + 50, b.y + 14, KIT_BLUE, 1, null);
+    const bag = owned ? `IN YOUR BAG: ${owned.name}, ${have.left} ROUND${have.left === 1 ? '' : 'S'} LEFT` : 'IN YOUR BAG: NOTHING SPECIAL';
+    drawText(ctx, bag, b.x + 50, b.y + 23, owned ? GOLD : '#5a4a80', 1, null);
+    const btn = L.buys[i];
+    menuButton(ctx, { ...btn, label: `${owned?.id === item.id ? 'NEW ' : ''}£${item.price}` }, hover === btn.key, afford);
+  });
+  // What the next tier up has in store.
+  const next = nextItem('driver', c.tier);
+  if (next) drawText(ctx, `BETTER KIT UNLOCKS AT ${TIER_NAMES[next.tier]} LEVEL.`, L.back.x + L.back.w + 10, L.back.y + 7, QUIET, 1, null);
+  if (note) drawText(ctx, note.text, p.x + 12, L.back.y - 12, note.good ? '#7ee07e' : '#f08a8a', 1, null);
+  menuButton(ctx, L.back, hover === 'back');
+}
+
+// ---------- Events ----------
+
+// A leaderboard: position, name, score to par and holes played. `rows` come
+// from leaderboard() in events.js; at most `max` are shown, plus yours if you're
+// further down.
+export function drawLeaderboard(ctx, x, y, w, rows, { title, max = rows.length, thru = null }) {
+  let shown = rows.slice(0, max);
+  const me = rows.find((r) => r.you);
+  if (me && !shown.includes(me)) shown = [...shown.slice(0, max - 1), me];
+  const h = 16 + shown.length * 9 + 4;
+  panel(ctx, x, y, w, h);
+  drawText(ctx, title, x + 6, y + 5, GOLD, 1, null);
+  if (thru != null) { const t = `THRU ${thru}`; drawText(ctx, t, x + w - 6 - textWidth(t), y + 5, QUIET, 1, null); }
+  shown.forEach((r, i) => {
+    const ty = y + 16 + i * 9, colour = r.you ? GOLD : '#ffffff';
+    drawText(ctx, `${r.pos}`, x + 6, ty, r.you ? GOLD : QUIET, 1, null);
+    drawText(ctx, r.name.toUpperCase(), x + 22, ty, colour, 1, null);
+    const tp = toPar(r.toPar);
+    drawText(ctx, tp, x + w - 6 - textWidth(tp), ty, r.toPar < 0 ? '#f08a8a' : colour, 1, null);
+  });
+  return h;
+}
+
+// The final leaderboard after an event, with what you won.
+export function resultsLayout(W, H, n) {
+  const pw = 300, ph = 46 + n * 9 + 42, px = mid(W, pw), py = mid(H, ph);
+  return {
+    panel: { x: px, y: py, w: pw, h: ph },
+    done: { key: 'done', label: 'BACK TO THE CLUBHOUSE', x: px + pw - 186, y: py + ph - 28, w: 170, h: 18 },
+  };
+}
+
+export function drawResults(ctx, W, H, L, { results: res, hover }) {
+  const p = L.panel, me = res.rows.find((r) => r.you);
+  panel(ctx, p.x, p.y, p.w, p.h);
+  drawText(ctx, res.name, p.x + 16, p.y + 12, GOLD, 2);
+  const line = me.pos === 1 ? `YOU WIN!${res.title ? ` ${res.title}.` : ''}` : `YOU FINISHED ${ordinal(me.pos)} OF ${res.rows.length}.`;
+  drawText(ctx, `${line}${res.prize ? ` PRIZE £${res.prize}.` : ''}`, p.x + 16, p.y + 30, me.pos <= 3 ? '#7ee07e' : DIM, 1, null);
+  res.rows.forEach((r, i) => {
+    const y = p.y + 46 + i * 9, colour = r.you ? GOLD : '#ffffff';
+    drawText(ctx, ordinal(r.pos), p.x + 16, y, r.you ? GOLD : QUIET, 1, null);
+    drawText(ctx, r.name.toUpperCase(), p.x + 46, y, colour, 1, null);
+    drawText(ctx, `${r.total}`, p.x + 190, y, colour, 1, null);
+    drawText(ctx, toPar(r.toPar), p.x + 216, y, r.toPar < 0 ? '#f08a8a' : colour, 1, null);
+    const prize = res.prizes[i];
+    if (prize) drawText(ctx, `£${prize}`, p.x + 250, y, '#7ee07e', 1, null);
+  });
+  menuButton(ctx, L.done, hover === 'done');
 }
