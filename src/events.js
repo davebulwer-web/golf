@@ -7,7 +7,7 @@
 // top of the field plays the weekend.
 
 import { makeRng } from './course-generator.js';
-import { MEMBERS, memberGolfer, WEEKS, VETERAN_SHIRT } from './career.js';
+import { MEMBERS, memberGolfer, WEEKS, VETERAN_SHIRT, clubCourses, playingSkills } from './career.js';
 import { COURSE_LIST } from './course-list.js';
 
 // What's on each weekend, tier by tier. Every week has an event you can enter
@@ -28,14 +28,24 @@ export const EVENTS = {
   tourChamp: { kind: 'tourChamp', name: 'TOUR CHAMPIONSHIP', holes: 18, rounds: 4, cut: 16, fee: 300, title: 'TOUR CHAMPION', big: true,
     prizes: [30000, 16000, 10000, 7000, 5500, 4500, 3800, 3200, 2800, 2400, 2100, 1900, 1700, 1500, 1300] },
 };
-// The tiers you can play so far, and where winning one takes you.
+// The four majors, one a quarter at the top level, on the majors' own courses.
+// Between them the best players keep playing the tour's classics.
+export const MAJORS = [
+  { kind: 'major', name: 'THE AZALEA INVITATIONAL', short: 'AZALEA' },
+  { kind: 'major', name: 'THE NATIONAL OPEN', short: 'NATIONAL OPEN' },
+  { kind: 'major', name: 'THE LINKS CHAMPIONSHIP', short: 'LINKS' },
+  { kind: 'major', name: 'THE PLAYERS CROWN', short: 'PLAYERS CROWN' },
+].map((m) => ({ ...m, holes: 18, rounds: 4, cut: 16, fee: 500, big: true, major: true, title: `${m.short} CHAMPION`,
+  prizes: [50000, 28000, 18000, 13000, 10000, 8500, 7300, 6200, 5300, 4600, 4000, 3500, 3100, 2700, 2400] }));
+// The tiers, and where winning one takes you; the majors are the top.
 export const NEXT_TIER = { club: 'county', county: 'challenge', challenge: 'tour', tour: 'majors' };
-export const PLAYABLE_TIERS = ['club', 'county', 'challenge', 'tour'];
+export const PLAYABLE_TIERS = ['club', 'county', 'challenge', 'tour', 'majors'];
 // How much tournament dressing a tier's events get (see tournamentSites):
 // county banners and flags, stands at the closing holes on the challenge tour,
-// and everything, TV and all, on the main tour.
-export const DRESSING = { club: 0, county: 1, challenge: 2, tour: 3, majors: 3 };
-const TIER_OF = { rollup: 'club', medal: 'club', championship: 'club', open: 'county', county: 'county', challenge: 'challenge', final: 'challenge', tour: 'tour', tourChamp: 'tour' };
+// everything, TV and all, on the main tour, and the presentation stage too
+// at a major.
+export const DRESSING = { club: 0, county: 1, challenge: 2, tour: 3, majors: 4 };
+const TIER_OF = { rollup: 'club', medal: 'club', championship: 'club', open: 'county', county: 'county', challenge: 'challenge', final: 'challenge', tour: 'tour', tourChamp: 'tour', major: 'majors' };
 export const eventTier = (ev) => TIER_OF[ev.kind] ?? 'club';
 
 // Where a county or tour event is played: a different course of the tier each
@@ -48,7 +58,14 @@ const placeName = (course) => course.name.replace(/ (GOLF|NATIONAL).*$/, '');
 const WEEKLY = { county: ['open', 'county', 'OPEN'], challenge: ['challenge', 'final', 'CHALLENGE'], tour: ['tour', 'tourChamp', 'CLASSIC'] };
 
 // The weekend event in a week: what it is and where (`venue`, a course).
+export const MAJOR_WEEKS = [3, 6, 9, 12];
 export function eventFor(c, week = c.week) {
+  if (c.tier === 'majors') {
+    const m = MAJOR_WEEKS.indexOf(week);
+    if (m >= 0) return { ...MAJORS[m], week, venue: COURSE_LIST.majors[m] };
+    const venue = venueFor('tour', week);
+    return { ...EVENTS.tour, name: `${placeName(venue)} CLASSIC`, week, venue };
+  }
   if (WEEKLY[c.tier]) {
     const [weekly, big, word] = WEEKLY[c.tier], venue = venueFor(c.tier, week);
     return week === WEEKS ? { ...EVENTS[big], week, venue } : { ...EVENTS[weekly], name: `${placeName(venue)} ${word}`, week, venue };
@@ -107,6 +124,8 @@ function pros(names, tier, level) {
 }
 const CHALLENGE = pros(CHALLENGE_NAMES, 'challenge', 58);
 const TOUR = pros(TOUR_NAMES, 'tour', 66);
+// At the top the same faces, a few years on and a few points better.
+const ELITE = pros(TOUR_NAMES, 'tour', 70);
 
 // Your second rival turns up on the challenge tour, and like Vince keeps
 // ahead of you, by a bit more.
@@ -122,7 +141,8 @@ export function fieldFor(c, tier = c.tier) {
   const vince = { id: 'vince', ...memberGolfer(c, 'vince') };
   if (tier === 'county') return [...COUNTY.map((g) => ({ ...g, shirt: g.shirt ?? VETERAN_SHIRT })), vince];
   if (tier === 'challenge') return [...CHALLENGE, vince, dexGolfer(c)];
-  if (tier === 'tour' || tier === 'majors') return [...TOUR, vince, dexGolfer(c)];
+  if (tier === 'tour') return [...TOUR, vince, dexGolfer(c)];
+  if (tier === 'majors') return [...ELITE, vince, dexGolfer(c)];
   return [...MEMBERS.map((m) => ({ id: m.id, ...memberGolfer(c, m.id) })), ...REGULARS];
 }
 // One of them as a golfer to play alongside.
@@ -130,7 +150,7 @@ export function fieldGolfer(c, id) {
   const g = everyone(c).find((x) => x.id === id);
   return { name: g.name, look: g.look, shirt: g.shirt, ai: true, nerve: g.nerve, skills: g.skills };
 }
-const everyone = (c) => ['club', 'county', 'challenge', 'tour'].flatMap((t) => fieldFor(c, t));
+const everyone = (c) => ['club', 'county', 'challenge', c.tier === 'majors' ? 'majors' : 'tour'].flatMap((t) => fieldFor(c, t));
 const nameOf = (c, id) => (id === 'you' ? c.name : everyone(c).find((x) => x.id === id)?.name ?? id);
 
 // How many shots over par per hole a golfer averages, from the course's rating
@@ -303,9 +323,84 @@ export function endWeek(c) {
   const champion = (c.titles ?? []).some((t) => t.season === c.season && t.title === big.title);
   const up = NEXT_TIER[c.tier], earned = !!up && (pos <= PROMOTED || champion);
   const promoted = earned && PLAYABLE_TIERS.includes(up);
-  c.lastSeason = { season: c.season, tier: c.tier, pos, of: table.length, champion, earned, promoted, to: up, table: table.map(({ name, pts, pos: n, you }) => ({ name, pts, pos: n, you })), seen: false };
+  // At the top there's nowhere to go: the best of the year is player of the year.
+  const best = !up && pos === 1;
+  if (best) c.titles = [...(c.titles ?? []), { season: c.season, title: 'PLAYER OF THE YEAR' }];
+  const rivals = table.filter((p) => RIVALS[p.id]).map((p) => ({ name: p.name, pos: p.pos }));
+  c.lastSeason = { season: c.season, tier: c.tier, pos, of: table.length, champion, earned, promoted, best, to: up, rivals, table: table.map(({ name, pts, pos: n, you }) => ({ name, pts, pos: n, you })), seen: false };
+  c.seasons = [...(c.seasons ?? []), { season: c.season, tier: c.tier, pos, promoted }];
   if (promoted) c.tier = up;
   c.season += 1;
   c.week = 1;
   c.merit = {};
+}
+
+// ---------- Rivals and the record ----------
+
+// Your rivals: Vince from the start, Dex from the challenge tour.
+export const RIVALS = { vince: 'VINCE', dex: 'DEX' };
+
+// What an event's final board means for the rivalry: who finished ahead of
+// whom (when you both played), and news when a rival wins one, above all one
+// you missed. Returns the news lines.
+export function eventStory(c, ev, rows) {
+  const me = rows.find((r) => r.you), news = [];
+  c.rivals ??= {};
+  for (const id of Object.keys(RIVALS)) {
+    const r = rows.find((x) => x.id === id);
+    if (!r) continue;
+    if (r.pos === 1) news.push(`${r.name.toUpperCase()} WON ${ev.name.startsWith('THE ') ? '' : 'THE '}${ev.name}${me ? '' : ' WITHOUT YOU THERE'}`);
+    if (!me) continue;
+    const h = (c.rivals[id] ??= { ahead: 0, behind: 0 });
+    const place = (x) => x.pos ?? 999 + x.total; // a missed cut is behind anyone who made it
+    if (place(me) < place(r)) h.ahead += 1; else h.behind += 1;
+  }
+  return news;
+}
+
+// Note a finished event of yours in the career record.
+export function recordEvent(c, ev, comp) {
+  const s = (c.stats ??= {});
+  const add = (k, n = 1) => { s[k] = (s[k] ?? 0) + n; };
+  add('events');
+  if (comp.pos === 1) add('wins');
+  if (comp.pos && comp.pos <= 3) add('top3');
+  if (comp.mc) add('missed');
+  add('prizeMoney', comp.prize);
+  if (comp.pos === 1 && ev.major) add('majors');
+}
+
+// ---------- Midweek challenges ----------
+
+// A one-off challenge for the week's midweek slot: nine holes on one of your
+// courses, playing with Bertie as your marker, for a prize that grows with
+// the tier. Beat a score, make some birdies, or keep a clean card.
+const CHALLENGE_PRIZE = { club: 15, county: 40, challenge: 150, tour: 600, majors: 1500 };
+const toParWords = (d) => (d === 0 ? 'LEVEL PAR' : d > 0 ? `${d} OVER` : `${-d} UNDER`);
+export function challengeFor(c) {
+  const r = makeRng(c.season * 1009 + c.week * 37 + 11);
+  const courses = clubCourses(c), course = courses[r.int(0, courses.length - 1)];
+  const where = course.id === c.home.id ? 'AT HOME' : `AT ${placeName(course)}`;
+  const kind = ['break', 'birdies', 'clean'][r.int(0, 2)];
+  const prize = CHALLENGE_PRIZE[c.tier] ?? 15;
+  const ch = { kind, prize, where, course: { ...course, holes: 9 } };
+  if (kind === 'break') {
+    // A little better than you'd expect to manage there.
+    ch.target = Math.round(holeMean(course.rating, playingSkills(c)) * 9 - 0.6);
+    ch.text = `${toParWords(ch.target)} OR BETTER`;
+  } else if (kind === 'birdies') {
+    ch.target = { club: 1, county: 1, challenge: 2, tour: 2, majors: 3 }[c.tier] ?? 1;
+    ch.text = ch.target === 1 ? 'MAKE A BIRDIE' : `MAKE ${ch.target} BIRDIES`;
+  } else {
+    ch.text = 'NO DOUBLE BOGEYS';
+  }
+  return ch;
+}
+
+// Whether a card (`scores` on `pars`) meets a challenge.
+export function challengeMet(ch, scores, pars) {
+  const holes = pars.slice(0, 9).map((par, i) => scores[i] - par);
+  if (ch.kind === 'break') return holes.reduce((t, d) => t + d, 0) <= ch.target;
+  if (ch.kind === 'birdies') return holes.filter((d) => d < 0).length >= ch.target;
+  return holes.every((d) => d < 2);
 }

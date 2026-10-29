@@ -462,6 +462,8 @@ function eventPlan(hole, extras, seed = 0) {
   if (n === 18 || extras.has('cameraman')) add('cameraman', [byGreen(-r - 4, r + 6), byGreen(-r - 4, -r - 6), byGreen(0, r + 7), byGreen(0, -r - 7)], toGreen);
   if (extras.has('camera-platform')) add('camera-platform', [byGreen(-r - 10, r + 16), byGreen(-r - 10, -r - 16), byGreen(r + 10, r + 14)], toGreen);
   if (extras.has('commentary')) add('commentary', [byGreen(-r - 18, r + 14), byGreen(-r - 18, -r - 14), byGreen(r + 14, -r - 6)], toGreen);
+  // At a major, the presentation stage behind the last green.
+  if (n === 18) add('stage', [byGreen(r + 40, 0), byGreen(-r - 50, r + 34), byGreen(-r - 50, -r - 34), byGreen(r + 30, r + 30)], toGreen);
   if (n === 18) add('crane', [byGreen(r + 26, r + 10), byGreen(r + 26, -r - 10), byGreen(-r - 14, r + 16)], toGreen);
   if (extras.has('compound')) {
     // Each piece tries the same places round its yard, so they keep together.
@@ -497,12 +499,13 @@ const eventCache = new Map();
 // How dressed up a course is (`course.tournament`): 0 not at all; 1 a county
 // event's banners, flags and ropes; 2 the challenge tour's, with stands round
 // the closing greens, leaderboards, tents and the clubhouse set; 3 (or true)
-// everything, TV and all.
+// everything, TV and all; 4 a major's, with the presentation stage as well.
 export const dressingLevel = (course) => (course.tournament === true ? 3 : course.tournament || 0);
 const LEVEL_1 = ['banner', 'flag', 'feather', 'rope', 'signpost'];
 const LEVEL_2 = [...LEVEL_1, 'leaderboard', 'scoreboard', 'tent', 'barrier', 'picket', 'arch', 'marquee', 'trophy-board', 'toilet'];
 const STANDS = ['stand', 'covered-stand', 'long-stand'];
 function dressed(level, name, n) {
+  if (name === 'stage') return level >= 4;
   if (level >= 3) return true;
   const kind = (k) => name === k || name.startsWith(`${k}-`);
   if (level === 2 && STANDS.some(kind)) return n % 9 === 0 || n >= 16;

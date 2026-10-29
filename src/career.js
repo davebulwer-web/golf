@@ -137,7 +137,14 @@ export function finishRound(c, result) {
     k.left -= 1;
     if (k.left <= 0) { c.worn.push(kitItem(k.id)?.name ?? slot); delete c.kit[slot]; }
   }
-  if (!result.comp && !result.eventRound && !result.sim) c.midweek = m ? 'match' : 'round';
+  // A midweek challenge pays out if you did it.
+  if (result.challenge?.met) c.money += result.challenge.prize;
+  if (!result.comp && !result.eventRound && !result.sim) c.midweek = result.challenge ? 'challenge' : m ? 'match' : 'round';
+  // Your best rounds, nine and eighteen holes, for the career record.
+  if (!result.sim && !m && (result.holes === 9 || result.holes === 18) && result.par) {
+    const best = ((c.stats ??= {}).best ??= {}), d = result.score - result.par, was = best[result.holes];
+    if (!was || d < was.toPar) best[result.holes] = { toPar: d, score: result.score, course: result.course, season: c.season };
+  }
 }
 
 // ---------- Practice ----------
