@@ -30,6 +30,7 @@ const SHIRTS = {
   casual: { is: (r, g, b) => b >= r + 15 && b >= g + 50, light: (r, g, b) => b / 230, above: 33 }, // lilac (her shoes too, so only above row 33)
   tall: { is: (r, g, b) => g >= r + 40 && g >= b + 20, light: (r, g) => g / 150 },               // green
   veteran: null, // a beige jumper, too like the trousers and skin to pick out: keeps his own colours
+  andy: null,    // a white shirt and tie, too like his skin and the club to pick out: keeps his own
 };
 // Every golfer look there are sprites for.
 export const GOLFER_LOOKS = Object.keys(SHIRTS);
