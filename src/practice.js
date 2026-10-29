@@ -17,18 +17,44 @@ export const DRILLS = [
 ];
 export const drill = (key) => DRILLS.find((d) => d.key === key);
 
-// The hole a drill is played on: for driving, the longest of the first nine
-// that runs straight from the tee for 250 yards; otherwise the first par 4
-// (one with a greenside bunker for escapes).
-export function drillHole(course, key) {
-  const nine = course.holes.slice(0, 9);
-  if (key === 'drive') {
-    const straight = nine.filter((h) => h.par > 3 && h.line.segs[0].len >= 250);
-    return (straight.length ? straight : nine).reduce((a, b) => (b.length > a.length ? b : a)).number;
+// How much trouble lies between `from` and `to` yards short of the green, out to
+// `wide` yards either side of the line: water counts most, then sand and waste,
+// then trees. Sampled every 8 yards along and 6 across.
+const HAZARD_COST = { water: 12, sea: 12, waste: 3, bunker: 2, trees: 1, copse: 1 };
+function trouble(hole, from, to, wide) {
+  const len = hole.line.length;
+  let t = 0;
+  for (let d = from; d <= to; d += 8) {
+    for (let lat = -wide; lat <= wide; lat += 6) t += HAZARD_COST[surfaceAt(hole, pointAt(hole.line, len - d, lat))] ?? 0;
   }
-  const fours = nine.filter((h) => h.par === 4);
-  if (key === 'escape') return (fours.find((h) => h.bunkers.some((b) => b.greenside)) ?? fours[0] ?? nine[0]).number;
-  return (fours[0] ?? nine[0]).number;
+  return t;
+}
+
+// The hole a drill is played on: the one of all eighteen that gives the drill a
+// fair go. Driving wants a long, straight opening with nothing in the landing
+// zone (170 to 270 yards off the tee); escapes need a greenside bunker; the approach
+// and pitching drills want a green with no water guarding it; putts any green.
+export function drillHole(course, key, tee = 'white') {
+  const holes = course.holes;
+  const best = (list, score) => list.reduce((a, b) => (score(b) < score(a) ? b : a)).number;
+  if (key === 'drive') {
+    // The landing zone, 170 to 270 yards from the tee, and how far the hole
+    // runs straight before it bends.
+    const land = (h) => {
+      const len = h.line.length, from = h.tees[tee] ?? 0;
+      const bend = Math.max(0, from + 260 - h.line.segs[0].len);
+      return trouble(h, len - from - 270, len - from - 170, h.fwHalf + 12) + bend * 0.4;
+    };
+    return best(holes.filter((h) => h.par > 3 && h.line.length - (h.tees[tee] ?? 0) >= 300), land);
+  }
+  const fours = holes.filter((h) => h.par === 4);
+  if (key === 'escape') {
+    const sandy = fours.filter((h) => h.bunkers.some((b) => b.greenside));
+    return best(sandy.length ? sandy : fours, (h) => trouble(h, 0, 130, h.fwHalf + h.roughW));
+  }
+  if (key === 'target') return best(fours, (h) => trouble(h, -10, 175, 18));
+  if (key === 'chip') return best(fours, (h) => trouble(h, -10, 75, 20));
+  return fours[0].number;
 }
 
 // Where ball `i` (0 to 4) of a drill is played from: { at, lie }.
