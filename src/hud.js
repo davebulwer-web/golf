@@ -143,7 +143,8 @@ export function drawShotBar(ctx, W, H, info) {
   const top = BAR_TOP(H);
   panel(ctx, 6, top, W - 12, BAR_H);
   shotButtons(H, info.types.length).forEach((b, i) => {
-    const t = info.types[i], on = t.key === info.selected;
+    const t = info.types[i], on = t.key === info.selected, ok = !info.allowed || info.allowed.includes(t.key);
+    ctx.globalAlpha = ok ? 1 : 0.35; // shots the lie won't allow are greyed out
     ctx.fillStyle = on ? '#6a56b8' : '#2c2050';
     ctx.fillRect(b.x, b.y, b.w, b.h);
     ctx.fillStyle = on ? GOLD : '#5a4a90';
@@ -157,6 +158,7 @@ export function drawShotBar(ctx, W, H, info) {
     ctx.fillStyle = '#7a9a4a';
     ctx.fillRect(b.x + 4, b.y + 21, b.w - 8, 1);
     drawText(ctx, `${i + 1} ${t.name}`, b.x + Math.round((b.w - textWidth(`${i + 1} ${t.name}`)) / 2), b.y + 25, on ? '#ffffff' : '#c8c0e8', 1, null);
+    ctx.globalAlpha = 1;
   });
 
   const x = 12 + info.types.length * 46 + 10;

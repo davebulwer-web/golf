@@ -39,7 +39,7 @@ The game is plain JavaScript and a canvas, with no engine or libraries.
 - `src/course.js`: the game's tweaks to the generator: more doglegs and extra hazards, on their own random stream.
 - `src/course-map.js`: lays the 18 holes out on one map (where each hole sits and which way it faces) and the coastline for seaside courses.
 - `src/terrain.js`: hills and slopes: rolling ground over the whole course map, shaped on each hole (flat tees, tilted greens, smooth fairways, lakes in hollows).
-- `src/shots.js`: the five shot types, reach (allowing for uphill and downhill), club choice, scatter, wind, roll down slopes and water drops.
+- `src/shots.js`: the five shot types, reach (allowing for uphill and downhill), lies, club choice, scatter, wind, roll down slopes and water drops. Each lie (`LIES`) gives a range of a full shot's distance and widens the scatter: first cut of rough (within 4 yards of short grass) 85–95%, deep rough 60–75%, waste ground 75–90%, a fairway bunker 70–85%, a greenside bunker 45–60% and the trees 30–50% (a runner punched out gets a quarter more, up to 75%). Where in the range is down to how the ball sits, the same for the same spot, and the recovery skill wins back up to a third of what's lost. The shot bar shows the lie and the percentage you'll get. As in Sim Golf, some lies limit your shots: no runner from deep rough or a fairway bunker, normal or lob only from a greenside bunker, and runner or lob only from the trees; the others are greyed out.
 - `src/golfers.js`: golfers and their skills.
 - `src/ai.js`: how the computer golfer chooses its shot.
 - `src/putting.js`: the ball rolling on the green (slope, friction, dropping in or lipping out), striking a putt with the power bar, and the computer's read of a putt.
