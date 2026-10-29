@@ -59,11 +59,14 @@ export function newCareer({ name, look, shirt }, rand = Math.random) {
     round: null,   // a round in progress: { course, hole: next hole to play, scores, putts }
     history: [],   // rounds played, newest first
     kit: {},       // what's in your bag from the pro shop: { slot: { id, left: rounds } }
+    midweek: null, // what you did with this week's midweek slot: 'practice', 'match' or 'round'
+    merit: {},     // this season's order of merit points: { you | player id: points }
   };
 }
 
-// The courses you can play a round on: home first, then the away courses.
-export const clubCourses = (c) => [c.home, ...(c.away ?? [])];
+// The courses you can play a round on: home first, then the away club courses,
+// or once you're playing county golf, the county's courses.
+export const clubCourses = (c) => [c.home, ...(c.tier === 'county' ? COURSE_LIST.county : c.away ?? [])];
 
 // Your skills with your kit's boost on top.
 export function playingSkills(c) {
@@ -107,7 +110,9 @@ export function memberGolfer(c, id) {
 // Your matches against each member: { won, lost, halved }.
 export const record = (c, id) => c.members?.[id] ?? { won: 0, lost: 0, halved: 0 };
 
-// Record a finished round and move the week on. A money match (`result.match`,
+// Record a finished round. A midweek round (a practice round or a money match)
+// uses up the week's midweek slot; the weekend event moves the week on (see
+// endWeek in events.js). A money match (`result.match`,
 // with `lead` from your side) pays out its stake and goes on your record.
 export function finishRound(c, result) {
   const m = result.match;
@@ -132,20 +137,18 @@ export function finishRound(c, result) {
     k.left -= 1;
     if (k.left <= 0) { c.worn.push(kitItem(k.id)?.name ?? slot); delete c.kit[slot]; }
   }
-  c.week += 1;
-  if (c.week > WEEKS) { c.week = 1; c.season += 1; }
+  if (!result.comp) c.midweek = m ? 'match' : 'round';
 }
 
 // ---------- Practice ----------
-// One practice session a week (the week's midweek slot); it's free.
+// A practice session is one way to use the week's midweek slot; it's free.
 
-const weekKey = (c) => `${c.season}:${c.week}`;
-export const canPractise = (c) => c.practised !== weekKey(c);
+export const canPractise = (c) => !c.midweek;
 
 // Note a practice session: the skill goes up by `gain`, and it goes in the history.
 export function recordPractice(c, { name, skill, hits, balls, gain }) {
   c.skills[skill] = Math.min(99, Math.round((c.skills[skill] + gain) * 10) / 10);
-  c.practised = weekKey(c);
+  c.midweek = 'practice';
   c.history.unshift({ season: c.season, week: c.week, practice: { name, skill, hits, balls, gain } });
   c.history = c.history.slice(0, 40);
 }
@@ -173,6 +176,8 @@ export function buyKit(c, id) {
 function upgrade(c) {
   if (c.round && !c.round.course) c.round.course = c.home;
   c.kit ??= {};
+  c.merit ??= {};
+  if (c.midweek === undefined) c.midweek = c.practised === `${c.season}:${c.week}` ? 'practice' : null;
   if (!c.home.id) {
     const club = COURSE_LIST.club;
     c.home = club[0];

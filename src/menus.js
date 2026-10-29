@@ -10,7 +10,7 @@ import { STYLES } from './course-generator.js';
 import { LOOKS, ownShirt, SHIRT_COLOURS, SKILL_NAMES, WEEKS, MEMBERS, STAKES, startingSkills, courseStars, memberGolfer, record, canPractise } from './career.js';
 import { SLOTS, TIER_NAMES, kitItem, kitBoost, shopItem, nextItem, boostWords } from './shop.js';
 import { DRILLS, BALLS } from './practice.js';
-import { eventFor, nextEvent } from './events.js';
+import { eventFor, meritTable, PROMOTED } from './events.js';
 
 const DIM = '#c8c0e8', QUIET = '#8a80b0';
 const mid = (W, w) => Math.round((W - w) / 2);
@@ -141,7 +141,7 @@ export function drawNewCareer(ctx, W, H, L, { draft, hover, now, replaces }) {
 // ---------- Clubhouse ----------
 
 export function hubLayout(W, H, career) {
-  const pw = 512, ph = 232, px = mid(W, pw), py = mid(H, ph);
+  const pw = 512, ph = 252, px = mid(W, pw), py = mid(H, ph);
   const play = career.round ? `CONTINUE ${career.round.match ? 'MATCH' : 'ROUND'}, HOLE ${career.round.hole}` : 'PRACTICE ROUND';
   return {
     panel: { x: px, y: py, w: pw, h: ph },
@@ -149,9 +149,12 @@ export function hubLayout(W, H, career) {
     match: { key: 'match', label: 'MONEY MATCH', x: px + pw - 250, y: py + ph - 30, w: 108, h: 18 },
     practice: { key: 'practice', label: 'PRACTICE', x: px + pw - 340, y: py + ph - 30, w: 84, h: 18 },
     shop: { key: 'shop', label: 'PRO SHOP', x: px + pw - 430, y: py + ph - 30, w: 84, h: 18 },
-    // This week's event, if there is one, in a card on the right.
-    card: { x: px + pw - 172, y: py + 44, w: 156, h: 74 },
-    event: !career.round && eventFor(career.week) ? { key: 'event', label: `ENTER £${eventFor(career.week).fee}`, x: px + pw - 164, y: py + 96, w: 140, h: 16 } : null,
+    // The week, in a card on the right: the midweek slot, the weekend event
+    // (enter or skip it) and where you stand on the order of merit.
+    card: { x: px + pw - 172, y: py + 40, w: 156, h: 96 },
+    event: { key: 'event', label: `ENTER £${eventFor(career).fee}`, x: px + pw - 164, y: py + 98, w: 84, h: 14 },
+    skip: { key: 'skip', label: 'SKIP', x: px + pw - 74, y: py + 98, w: 50, h: 14 },
+    merit: { key: 'merit', label: 'TABLE', x: px + pw - 64, y: py + 118, w: 40, h: 12 },
     menu: { key: 'menu', label: 'MENU', x: px + 16, y: py + ph - 30, w: 56, h: 18 },
   };
 }
@@ -163,7 +166,7 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
   const p = L.panel;
   panel(ctx, p.x, p.y, p.w, p.h);
   drawText(ctx, c.home.name, p.x + 16, p.y + 12, GOLD, 2);
-  drawText(ctx, `SEASON ${c.season}   WEEK ${c.week} OF ${WEEKS}   CLUB LEVEL`, p.x + 16, p.y + 28, DIM, 1, null);
+  drawText(ctx, `SEASON ${c.season}   WEEK ${c.week} OF ${WEEKS}   ${TIER_NAMES[c.tier]} LEVEL`, p.x + 16, p.y + 28, DIM, 1, null);
 
   // You, your money and your skills.
   golferAt(ctx, c.look, c.shirt, p.x + 46, p.y + 112, now);
@@ -182,10 +185,14 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
   if (c.report) drawText(ctx, `LAST ROUND: ${c.report.good} GOOD SHOTS, ${c.report.bad} BAD`, sx, sy + 66, QUIET, 1, null);
 
   // Recent rounds.
-  const ry = p.y + 128;
+  const ry = p.y + 144;
   drawText(ctx, 'RECENT ROUNDS', sx, ry, DIM, 1, null);
   if (!c.history.length) drawText(ctx, 'NONE YET. PLAY NINE HOLES AT YOUR CLUB.', sx, ry + 11, QUIET, 1, null);
   c.history.slice(0, 5).forEach((r, i) => {
+    if (r.skipped) {
+      drawText(ctx, `WK ${r.week}  SKIPPED ${r.skipped.name}. ${r.skipped.winner.toUpperCase()} WON`, sx, ry + 11 + i * 9, QUIET, 1, null);
+      return;
+    }
     if (r.bought) {
       drawText(ctx, `WK ${r.week}  PRO SHOP: ${r.bought.name}  -£${r.bought.price}`, sx, ry + 11 + i * 9, KIT_BLUE, 1, null);
       return;
@@ -209,33 +216,37 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
     const vs = r.vsScore == null ? '' : r.score < r.vsScore ? `  BEAT ${r.vs} ${r.vsScore}` : r.score > r.vsScore ? `  LOST TO ${r.vs} ${r.vsScore}` : `  TIED ${r.vs}`;
     drawText(ctx, `WK ${r.week}  ${r.score} (${toPar(r.score - r.par)})${vs}`, sx, ry + 11 + i * 9, '#ffffff', 1, null);
   });
-  // What's on: this week's event, or the next one.
-  const ev = eventFor(c.week), cd = L.card;
-  if (!c.round && (ev || nextEvent(c.week))) {
+  // The week: midweek, then the weekend event, and the order of merit.
+  const ev = eventFor(c), cd = L.card;
+  if (!c.round) {
     ctx.fillStyle = '#2c2050';
-    ctx.fillRect(cd.x, cd.y, cd.w, ev ? cd.h : 30);
-    if (ev) {
-      drawText(ctx, 'THIS WEEKEND', cd.x + 8, cd.y + 6, DIM, 1, null);
-      drawText(ctx, ev.name, cd.x + 8, cd.y + 16, GOLD, 1, null);
-      drawText(ctx, `${ev.holes} HOLES STROKE PLAY AT HOME`, cd.x + 8, cd.y + 26, '#ffffff', 1, null);
-      drawText(ctx, `PRIZES ${ev.prizes.map((v) => `£${v}`).join(' / ')}`, cd.x + 8, cd.y + 35, QUIET, 1, null);
-      if (L.event) menuButton(ctx, L.event, hover === 'event', c.money >= ev.fee);
-      if (c.money < ev.fee) drawText(ctx, `NEED £${ev.fee} TO ENTER`, cd.x + 8, cd.y + cd.h + 4, '#f08a8a', 1, null);
-    } else {
-      const nx = nextEvent(c.week);
-      drawText(ctx, 'NEXT EVENT', cd.x + 8, cd.y + 6, DIM, 1, null);
-      drawText(ctx, `${nx.name}, WEEK ${nx.week}`, cd.x + 8, cd.y + 17, GOLD, 1, null);
-    }
+    ctx.fillRect(cd.x, cd.y, cd.w, cd.h);
+    const done = { practice: 'PRACTISED', match: 'PLAYED A MONEY MATCH', round: 'PLAYED A PRACTICE ROUND' }[c.midweek];
+    drawText(ctx, done ? `MIDWEEK: ${done}` : 'MIDWEEK: PICK ONE BELOW', cd.x + 8, cd.y + 6, done ? QUIET : '#7ee07e', 1, null);
+    drawText(ctx, 'THIS WEEKEND', cd.x + 8, cd.y + 19, DIM, 1, null);
+    drawText(ctx, ev.name, cd.x + 8, cd.y + 29, GOLD, 1, null);
+    const where = ev.venue.id === c.home.id ? 'AT HOME' : `AT ${ev.venue.name.replace(/ GOLF.*$/, '')}`;
+    drawText(ctx, `${ev.holes} HOLES ${where}`, cd.x + 8, cd.y + 39, '#ffffff', 1, null);
+    drawText(ctx, `PRIZES ${ev.prizes.map((v) => `£${v}`).join(' / ')}`, cd.x + 8, cd.y + 48, QUIET, 1, null);
+    menuButton(ctx, L.event, hover === 'event', c.money >= ev.fee);
+    menuButton(ctx, L.skip, hover === 'skip');
+    const me = meritTable(c).find((r) => r.you);
+    drawText(ctx, 'ORDER OF MERIT', cd.x + 8, cd.y + 76, DIM, 1, null);
+    if (me.pts) drawText(ctx, `${ordinal(me.pos)}, ${me.pts} PTS`, cd.x + 8, cd.y + 85, me.pos <= PROMOTED ? '#7ee07e' : '#ffffff', 1, null);
+    else drawText(ctx, 'NO POINTS YET', cd.x + 8, cd.y + 85, QUIET, 1, null);
+    menuButton(ctx, L.merit, hover === 'merit');
+    if (c.money < ev.fee) drawText(ctx, `NEED £${ev.fee} TO ENTER`, cd.x + 8, cd.y + cd.h + 3, '#f08a8a', 1, null);
   }
   if (c.round?.match) drawText(ctx, `MATCH IN PROGRESS: ${c.round.vs.toUpperCase()} FOR £${c.round.match.stake}`, p.x + 16, p.y + p.h - 44, GOLD, 1, null);
   else if (c.round) drawText(ctx, `ROUND IN PROGRESS AT ${c.round.course.name}: ${c.round.hole - 1} PLAYED`, p.x + 16, p.y + p.h - 44, GOLD, 1, null);
   else if (c.worn?.length) drawText(ctx, `WORN OUT: ${c.worn.join(', ')}. THE PRO SHOP HAS MORE.`, p.x + 16, p.y + p.h - 44, '#f08a8a', 1, null);
 
   menuButton(ctx, L.menu, hover === 'menu');
-  menuButton(ctx, L.play, hover === 'play');
+  menuButton(ctx, L.play, hover === 'play', !!c.round || !c.midweek);
   if (!c.round) {
-    menuButton(ctx, L.match, hover === 'match');
-    menuButton(ctx, L.practice, hover === 'practice');
+    // The midweek choices, greyed once you've used the week's slot.
+    menuButton(ctx, L.match, hover === 'match', !c.midweek);
+    menuButton(ctx, L.practice, hover === 'practice', !c.midweek);
     menuButton(ctx, L.shop, hover === 'shop');
   }
 }
@@ -355,7 +366,7 @@ export function drawDrills(ctx, W, H, L, { career: c, hover }) {
   const p = L.panel, open = canPractise(c);
   panel(ctx, p.x, p.y, p.w, p.h);
   drawText(ctx, 'PRACTICE GROUND', p.x + 12, p.y + 12, GOLD, 2);
-  drawText(ctx, open ? `ONE FREE SESSION A WEEK, ${BALLS} BALLS. THE BETTER IT GOES, THE MORE IT HELPS.` : 'YOU HAVE PRACTISED THIS WEEK. PLAY A ROUND TO MOVE THE WEEK ON.', p.x + 12, p.y + 28, open ? DIM : '#f08a8a', 1, null);
+  drawText(ctx, open ? `ONE FREE SESSION A WEEK, ${BALLS} BALLS. THE BETTER IT GOES, THE MORE IT HELPS.` : 'MIDWEEK IS USED UP. PLAY OR SKIP THE WEEKEND EVENT TO MOVE THE WEEK ON.', p.x + 12, p.y + 28, open ? DIM : '#f08a8a', 1, null);
   L.drills.forEach((b, i) => {
     const d = DRILLS[i], hot = open && hover === b.key;
     ctx.fillStyle = !open ? '#241a40' : hot ? '#4a3a8a' : '#2c2050';
@@ -458,4 +469,49 @@ export function drawResults(ctx, W, H, L, { results: res, hover }) {
     if (prize) drawText(ctx, `£${prize}`, p.x + 250, y, '#7ee07e', 1, null);
   });
   menuButton(ctx, L.done, hover === 'done');
+}
+
+// ---------- The season ----------
+
+// The order of merit as a table, or how the season ended with the final one.
+export function meritLayout(W, H, n, key = 'back') {
+  const pw = 300, ph = 64 + n * 9 + 34, px = mid(W, pw), py = mid(H, ph);
+  return {
+    panel: { x: px, y: py, w: pw, h: ph },
+    back: { key, label: key === 'back' ? 'BACK' : 'ON TO NEXT SEASON', x: px + pw - (key === 'back' ? 76 : 156), y: py + ph - 28, w: key === 'back' ? 60 : 140, h: 18 },
+  };
+}
+
+function meritRowsAt(ctx, p, rows, y) {
+  rows.forEach((r, i) => {
+    const ry = y + i * 9, colour = r.you ? GOLD : '#ffffff';
+    drawText(ctx, ordinal(r.pos), p.x + 16, ry, r.pos <= PROMOTED ? '#7ee07e' : r.you ? GOLD : QUIET, 1, null);
+    drawText(ctx, r.name.toUpperCase(), p.x + 46, ry, colour, 1, null);
+    const pts = `${r.pts} PTS`;
+    drawText(ctx, pts, p.x + p.w - 16 - textWidth(pts), ry, colour, 1, null);
+  });
+}
+
+export function drawMerit(ctx, W, H, L, { title, rows, career: c, hover }) {
+  const p = L.panel;
+  panel(ctx, p.x, p.y, p.w, p.h);
+  drawText(ctx, title, p.x + 16, p.y + 12, GOLD, 1, null);
+  drawText(ctx, `WEEK ${c.week} OF ${WEEKS}. POINTS FOR A TOP TEN FINISH,`, p.x + 16, p.y + 26, DIM, 1, null);
+  drawText(ctx, `DOUBLE IN WEEK ${WEEKS}. THE TOP ${PROMOTED} GO UP A LEVEL.`, p.x + 16, p.y + 35, DIM, 1, null);
+  meritRowsAt(ctx, p, rows, p.y + 54);
+  menuButton(ctx, L.back, hover === 'back');
+}
+
+export function drawSeason(ctx, W, H, L, { season: s, career: c, hover }) {
+  const p = L.panel, up = TIER_NAMES[s.to];
+  panel(ctx, p.x, p.y, p.w, p.h);
+  drawText(ctx, `SEASON ${s.season} IS OVER`, p.x + 16, p.y + 12, GOLD, 2);
+  const how = s.champion ? `YOU WON THE BIG ONE AND FINISHED ${ordinal(s.pos)}.` : `YOU FINISHED ${ordinal(s.pos)} OF ${s.of} ON THE ORDER OF MERIT.`;
+  const next = s.promoted ? `PROMOTED! NEXT SEASON IS ${up} GOLF. VINCE IS COMING TOO.`
+    : s.earned ? `YOU'VE EARNED A ${up} CARD. IT OPENS IN AN UPDATE SOON.`
+    : `ANOTHER SEASON AT ${TIER_NAMES[s.tier]} LEVEL. TOP ${PROMOTED} GO UP.`;
+  drawText(ctx, how, p.x + 16, p.y + 32, DIM, 1, null);
+  drawText(ctx, next, p.x + 16, p.y + 42, s.earned ? '#7ee07e' : '#ffffff', 1, null);
+  meritRowsAt(ctx, p, s.table, p.y + 58);
+  menuButton(ctx, L.back, hover === 'carry-on');
 }

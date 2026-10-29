@@ -20,8 +20,8 @@ import { drawDinky, dinkySize, golferFrame, ballFrame, flagFrame, GOLFER_LOOKS, 
 import { LOOKS, SHIRT_COLOURS, SKILL_NAMES, newCareer, clubCourses, careerGolfer, clubOpponent, memberGolfer, MEMBERS, STAKES, finishRound, canPractise, recordPractice, buyKit, saveCareer, loadCareer } from './career.js';
 import { BALLS, DRILLS, drill, drillHole, drillSpot, drillResult, drillGain } from './practice.js';
 import { newForm, judgeShot, judgePutt, tally, applyForm } from './form.js';
-import { titleLayout, drawTitle, newCareerLayout, drawNewCareer, hubLayout, drawHub, coursesLayout, drawCourses, membersLayout, drawMembers, drillsLayout, drawDrills, shopLayout, drawShop, drawLeaderboard, resultsLayout, drawResults, ordinal } from './menus.js';
-import { eventFor, newEvent, leaderboard, prizeFor } from './events.js';
+import { titleLayout, drawTitle, newCareerLayout, drawNewCareer, hubLayout, drawHub, coursesLayout, drawCourses, membersLayout, drawMembers, drillsLayout, drawDrills, shopLayout, drawShop, drawLeaderboard, resultsLayout, drawResults, meritLayout, drawMerit, drawSeason, ordinal } from './menus.js';
+import { eventFor, newEvent, skippedEvent, leaderboard, prizeFor, fieldGolfer, addMerit, meritTable, endWeek } from './events.js';
 import { SLOTS, shopItem } from './shop.js';
 
 const STYLE_KEYS = Object.keys(STYLES);
@@ -864,17 +864,28 @@ function renderMenu(now) {
   if (app.mode === 'hub') drawHub(hud, W, H, hubLayout(W, H, app.career), { career: app.career, hover, now });
   if (app.mode === 'drills') drawDrills(hud, W, H, drillsLayout(W, H), { career: app.career, hover });
   if (app.mode === 'results') drawResults(hud, W, H, resultsLayout(W, H, app.results.rows.length), { results: app.results, hover });
+  if (app.mode === 'merit') drawMerit(hud, W, H, meritLayout(W, H, meritRows().length), { title: `ORDER OF MERIT, SEASON ${app.career.season}`, rows: meritRows(), career: app.career, hover });
+  if (app.mode === 'season') drawSeason(hud, W, H, meritLayout(W, H, app.career.lastSeason.table.length, 'carry-on'), { season: app.career.lastSeason, career: app.career, hover });
   if (app.mode === 'shop') drawShop(hud, W, H, shopLayout(W, H), { career: app.career, hover, note: app.shopNote });
   if (app.mode === 'members') drawMembers(hud, W, H, membersLayout(W, H), { career: app.career, pick: app.pick, hover, now });
   if (app.mode === 'courses') drawCourses(hud, W, H, coursesLayout(W, H, clubCourses(app.career)), { courses: clubCourses(app.career), hover });
 }
+
+// This season's order of merit.
+const meritRows = () => meritTable(app.career);
 
 // The buttons on the screen that's up, as { key, x, y, w, h }.
 function menuButtons() {
   const { W, H } = display;
   if (app.mode === 'title') return titleLayout(W, H, !!app.career);
   if (app.mode === 'new') { const L = newCareerLayout(W, H); return [L.prev, L.next, ...L.shirts, L.back, L.start]; }
-  if (app.mode === 'hub') { const L = hubLayout(W, H, app.career); return app.career.round ? [L.play, L.menu] : [L.play, L.match, L.practice, L.shop, L.menu, ...(L.event ? [L.event] : [])]; }
+  if (app.mode === 'hub') {
+    const c = app.career, L = hubLayout(W, H, c);
+    if (c.round) return [L.play, L.menu];
+    return [...(c.midweek ? [] : [L.play, L.match, L.practice]), L.shop, L.menu, ...(c.money >= eventFor(c).fee ? [L.event] : []), L.skip, L.merit];
+  }
+  if (app.mode === 'merit') return [meritLayout(W, H, meritRows().length).back];
+  if (app.mode === 'season') return [meritLayout(W, H, app.career.lastSeason.table.length, 'carry-on').back];
   if (app.mode === 'results') return [resultsLayout(W, H, app.results.rows.length).done];
   if (app.mode === 'shop') { const L = shopLayout(W, H); return [...L.buys, L.back]; }
   if (app.mode === 'drills') { const L = drillsLayout(W, H); return [...(canPractise(app.career) ? L.drills : []), L.back]; }
@@ -899,9 +910,12 @@ function menuAction(key) {
     return;
   }
   if (key.startsWith('shirt-')) { d.shirt = SHIRT_COLOURS[Number(key.slice(6))]; return; }
-  if (key === 'back' && ['courses', 'members', 'drills', 'shop'].includes(app.mode)) return goHub();
+  if (key === 'back' && ['courses', 'members', 'drills', 'shop', 'merit'].includes(app.mode)) return goHub();
   if (key === 'practice') { app.mode = 'drills'; app.hover = canPractise(app.career) ? 'drill-0' : 'back'; return; }
   if (key === 'event') return startEvent();
+  if (key === 'skip') return skipEvent();
+  if (key === 'merit') { app.mode = 'merit'; app.hover = 'back'; return; }
+  if (key === 'carry-on') { app.career.lastSeason.seen = true; saveCareer(app.career); return goHub(); }
   if (key === 'done') return goHub();
   if (key === 'shop') { app.mode = 'shop'; app.shopNote = null; app.hover = 'back'; return; }
   if (key.startsWith('buy-')) {
@@ -920,11 +934,13 @@ function menuAction(key) {
   }
   if (key === 'play') {
     if (app.career.round) return playCareerRound();
+    if (app.career.midweek) return;
     app.mode = 'courses';
     app.hover = 'course-0';
     return;
   }
   if (key === 'match') {
+    if (app.career.midweek) return;
     app.mode = 'members';
     const stake = STAKES.filter((v) => v <= app.career.money).at(-1) ?? null;
     app.pick = { member: app.pick?.member ?? MEMBERS[0].id, stake: stake && Math.min(stake, app.pick?.stake ?? STAKES[0]) };
@@ -949,7 +965,7 @@ function menuKey(e) {
     if (k === 'Escape') return menuAction('back');
     return;
   }
-  if (['courses', 'members', 'drills', 'shop'].includes(app.mode) && k === 'Escape') return menuAction('back');
+  if (['courses', 'members', 'drills', 'shop', 'merit'].includes(app.mode) && k === 'Escape') return menuAction('back');
   if (app.mode === 'hub') {
     if (k === 'Enter') return menuAction('play');
     if (k === 'Escape') return menuAction('menu');
@@ -978,7 +994,7 @@ function useCourse(course, hole, career, match = null, practice = null, comp = n
   settings.comp = comp;
   settings.practice = practice;
   Object.assign(settings, { style: course.style, seed: course.seed, name: course.name ?? null, par: course.par ?? 72, length: course.length ?? 'standard', tour: course.tour ?? null, holes: course.holes ?? 18, hole, career, event: false });
-  golfers = !career ? [PLAYER, RIVAL] : practice ? [careerGolfer(app.career)] : [careerGolfer(app.career), match ? memberGolfer(app.career, match.member) : comp ? memberGolfer(app.career, comp.partner) : clubOpponent()];
+  golfers = !career ? [PLAYER, RIVAL] : practice ? [careerGolfer(app.career)] : [careerGolfer(app.career), match ? memberGolfer(app.career, match.member) : comp ? fieldGolfer(app.career, comp.partner) : clubOpponent()];
   showMap(false);
   loadHole();
 }
@@ -989,8 +1005,9 @@ function goHub() {
   if (!c) return showTitle();
   // A round whose last hole was played but not handed in yet.
   if (c.round && c.round.hole > c.round.course.holes) return endCareerRound();
-  app.mode = 'hub';
-  app.hover = 'play';
+  // A season just ended: how it went, before the new one starts.
+  app.mode = c.lastSeason && !c.lastSeason.seen ? 'season' : 'hub';
+  app.hover = app.mode === 'season' ? 'carry-on' : 'play';
   // Back to your own zoom after a drill zoomed in.
   if (settings.practice) setZoom(settings.practice.zoom);
   useCourse(c.home, 1, true);
@@ -1016,14 +1033,17 @@ function endCareerRound() {
   const good = Object.values(saved.form ?? {}).reduce((t, [g]) => t + g, 0), bad = Object.values(saved.form ?? {}).reduce((t, [, b]) => t + b, 0);
   c.report = { change: applyForm(c.skills, saved.form ?? newForm()), good, bad };
   // An event: the final leaderboard and what you won.
-  let comp = null;
+  let comp = null, rows = null;
   if (saved.comp) {
-    const ev = saved.comp, rows = leaderboard(ev, pars, holes, { name: c.name, scores: saved.scores[0] }, { name: saved.vs, scores: saved.scores[1] });
+    const ev = saved.comp;
+    rows = leaderboard(ev, pars, holes, { name: c.name, scores: saved.scores[0] }, { name: saved.vs, scores: saved.scores[1] });
     const pos = rows.find((x) => x.you).pos, prize = prizeFor(ev, pos);
     comp = { name: ev.name, pos, of: rows.length, prize, winner: rows[0].name, title: pos === 1 ? ev.title ?? null : null };
     app.results = { name: ev.name, title: ev.title, prize, prizes: ev.prizes, rows };
   }
   finishRound(c, { course: course.name, holes, score: total(saved.scores[0]), par: total(pars), vs: (saved.vs ?? clubOpponent().name).toUpperCase(), vsScore: total(saved.scores[1]), match, comp });
+  // The weekend event's done: points on the order of merit, and on to next week.
+  if (comp) { addMerit(c, saved.comp, rows); endWeek(c); }
   saveCareer(c);
   if (!comp) return goHub();
   app.mode = 'results';
@@ -1031,16 +1051,33 @@ function endCareerRound() {
   useCourse(c.home, 1, true);
 }
 
+// The pars of an event's holes, and the seed that settles everyone else's scores.
+const eventPars = (ev) => buildCourse({ ...ev.venue }, { layout: false }).holes.map((h) => h.par).slice(0, ev.holes);
+const eventSeed = (c, ev) => (c.season * 100 + c.week) * 7919 + ev.venue.seed;
+
 // Enter this week's event: pay the entry and tee off with your partner.
 function startEvent() {
-  const c = app.career, ev = eventFor(c.week);
-  if (!ev || c.round || c.money < ev.fee) return;
+  const c = app.career, ev = eventFor(c);
+  if (c.round || c.money < ev.fee) return;
   c.money -= ev.fee;
-  const course = { ...c.home, holes: ev.holes };
-  const pars = buildCourse({ ...course }, { layout: false }).holes.map((h) => h.par);
-  const comp = newEvent(c, ev, course, pars, (c.season * 100 + c.week) * 7919 + course.seed);
+  const course = { ...ev.venue, holes: ev.holes };
+  const pars = eventPars(ev);
+  const comp = newEvent(c, ev, course, pars, eventSeed(c, ev));
   playCareerRound(course, null, comp);
   saveRound(1); // the entry's paid: the round is yours to finish
+}
+
+// Skip this weekend's event: it's played without you, and the week moves on.
+function skipEvent() {
+  const c = app.career, ev = eventFor(c);
+  if (c.round) return;
+  const rows = skippedEvent(c, ev, eventPars(ev), eventSeed(c, ev));
+  addMerit(c, ev, rows);
+  c.history.unshift({ season: c.season, week: c.week, skipped: { name: ev.name, winner: rows[0].name } });
+  c.history = c.history.slice(0, 40);
+  endWeek(c);
+  saveCareer(c);
+  goHub();
 }
 
 // ---------- Practice ground ----------
