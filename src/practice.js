@@ -9,10 +9,10 @@ import { feet } from './putting.js';
 export const BALLS = 5;
 
 export const DRILLS = [
-  { key: 'drive', skill: 'power', name: 'LONG DRIVE', about: 'FIVE DRIVES. KEEP THEM IN PLAY, AND HIT THEM A LONG WAY.' },
-  { key: 'target', skill: 'accuracy', name: 'TARGET GREENS', about: 'FIVE APPROACHES FROM 140 TO 170 YARDS. HIT THE GREEN.' },
-  { key: 'chip', skill: 'shortGame', name: 'CHIP TO THE CIRCLE', about: 'FIVE PITCHES FROM 30 TO 70 YARDS. FINISH WITHIN 3 YARDS.' },
-  { key: 'escape', skill: 'recovery', name: 'ESCAPE ARTIST', about: 'FIVE BALLS IN SAND AND ROUGH. GET THEM ON THE GREEN.' },
+  { key: 'drive', skill: 'power', name: 'LONG DRIVE', aim: 'DRIVE DOWN THE FAIRWAY', about: 'FIVE DRIVES. KEEP THEM IN PLAY, AND HIT THEM A LONG WAY.' },
+  { key: 'target', skill: 'accuracy', name: 'TARGET GREENS', aim: 'HIT THE GREEN WITH THE TARGET FLAG', about: 'FIVE APPROACHES FROM 140 TO 170 YARDS. HIT THE GREEN.' },
+  { key: 'chip', skill: 'shortGame', name: 'CHIP TO THE CIRCLE', aim: 'CHIP INTO THE CIRCLE ROUND THE TARGET FLAG', about: 'FIVE PITCHES FROM 30 TO 70 YARDS. FINISH WITHIN 3 YARDS.' },
+  { key: 'escape', skill: 'recovery', name: 'ESCAPE ARTIST', aim: 'GET IT ON THE GREEN WITH THE TARGET FLAG', about: 'FIVE BALLS IN SAND AND ROUGH. GET THEM ON THE GREEN.' },
   { key: 'putt', skill: 'putting', name: 'PUTTING CHALLENGE', about: 'FIVE PUTTS FROM 6 TO 30 FEET. HOLE THEM.' },
 ];
 export const drill = (key) => DRILLS.find((d) => d.key === key);

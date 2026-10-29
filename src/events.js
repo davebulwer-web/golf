@@ -88,16 +88,16 @@ const REGULARS = [
 const COUNTY = [
   { id: 'lofty', name: 'Lofty Lewis', look: 'tall', shirt: '#2f6fd6', nerve: 0.7, skills: { power: 66, accuracy: 50, shortGame: 50, recovery: 52, putting: 52 } },
   { id: 'sandy', name: 'Sandy Banks', look: 'casual', shirt: '#e0a020', nerve: 0.4, skills: { power: 50, accuracy: 54, shortGame: 60, recovery: 62, putting: 54 } },
-  { id: 'rory', name: 'Rory Rough', look: 'athletic', shirt: '#d03a2a', nerve: 0.8, skills: { power: 60, accuracy: 48, shortGame: 54, recovery: 60, putting: 50 } },
+  { id: 'rory', name: 'Rory Rough', look: 'club', shirt: '#d03a2a', nerve: 0.8, skills: { power: 60, accuracy: 48, shortGame: 54, recovery: 60, putting: 50 } },
   { id: 'max', name: 'Max Yardage', look: 'heavy', shirt: '#8a4ad0', nerve: 0.6, skills: { power: 68, accuracy: 50, shortGame: 48, recovery: 50, putting: 50 } },
-  { id: 'penny', name: 'Penny Pitchmark', look: 'club', shirt: '#2f9a4a', nerve: 0.3, skills: { power: 48, accuracy: 60, shortGame: 58, recovery: 52, putting: 60 } },
+  { id: 'penny', name: 'Penny Pitchmark', look: 'casual', shirt: '#2f9a4a', nerve: 0.3, skills: { power: 48, accuracy: 60, shortGame: 58, recovery: 52, putting: 60 } },
   { id: 'barry', name: 'Barry Bunker', look: 'heavy', shirt: '#e8e8f0', nerve: 0.5, skills: { power: 54, accuracy: 50, shortGame: 58, recovery: 58, putting: 50 } },
   { id: 'ivy', name: 'Ivy Irons', look: 'athletic', shirt: '#e8e8f0', nerve: 0.4, skills: { power: 52, accuracy: 64, shortGame: 54, recovery: 50, putting: 54 } },
   { id: 'cleek', name: 'Colonel Cleek', look: 'veteran', shirt: null, nerve: 0.2, skills: { power: 44, accuracy: 60, shortGame: 58, recovery: 50, putting: 64 } },
   { id: 'ron', name: 'Big Ron Rollins', look: 'heavy', shirt: '#d03a2a', nerve: 0.9, skills: { power: 70, accuracy: 44, shortGame: 46, recovery: 54, putting: 48 } },
-  { id: 'fran', name: 'Fairway Fran', look: 'club', shirt: '#e0a020', nerve: 0.3, skills: { power: 50, accuracy: 62, shortGame: 52, recovery: 48, putting: 56 } },
-  { id: 'kenny', name: 'Kenny Kickback', look: 'casual', shirt: '#2f6fd6', nerve: 0.6, skills: { power: 54, accuracy: 52, shortGame: 62, recovery: 54, putting: 58 } },
-  { id: 'hattie', name: 'Hattie Hazard', look: 'tall', shirt: '#2f9a4a', nerve: 0.7, skills: { power: 58, accuracy: 54, shortGame: 54, recovery: 56, putting: 56 } },
+  { id: 'fran', name: 'Fairway Fran', look: 'athletic', shirt: '#e0a020', nerve: 0.3, skills: { power: 50, accuracy: 62, shortGame: 52, recovery: 48, putting: 56 } },
+  { id: 'kenny', name: 'Kenny Kickback', look: 'heavy', shirt: '#2f6fd6', nerve: 0.6, skills: { power: 54, accuracy: 52, shortGame: 62, recovery: 54, putting: 58 } },
+  { id: 'hattie', name: 'Hattie Hazard', look: 'casual', shirt: '#2f9a4a', nerve: 0.7, skills: { power: 58, accuracy: 54, shortGame: 54, recovery: 56, putting: 56 } },
 ];
 
 // The tours: young pros on the challenge tour, the best in the game on the
@@ -110,7 +110,12 @@ const TOUR_NAMES = ['Duke Driveway', 'Ace Archer', 'Sunny Sweetspot', 'Brooks Bi
   'Rex Redzone', 'Ingrid Inswing', 'Clint Clubface', 'Pip Pinseeker', 'Monty Mallet', 'Jet Jansen', 'Nico Niblett', 'Bea Bogeyfree',
   'Cal Cartpath', 'Rio Rollout', 'Stella Stinger', 'Hugo Hangtime', 'Dale Downhill', 'Mika Mashie', 'Lance Loft', 'Ruby Reload',
   'Frankie Flop', 'Wally Wedgeworth', 'Suzy Spin', 'Theo Tapin', 'Nina Nineiron', 'Gil Greenreader', 'Kingsley Crown'];
-const PRO_LOOKS = ['athletic', 'tall', 'club'];
+// The athletic and casual sheets are women golfers, so the pros' looks go by
+// their names.
+const WOMEN = new Set(['Dot', 'Lulu', 'Kiki', 'Holly', 'Tess', 'Fiona', 'Sunny', 'Grace', 'Ingrid', 'Bea', 'Stella', 'Mika',
+  'Ruby', 'Suzy', 'Nina']);
+const PRO_LOOKS = ['tall', 'club'];
+const proLook = (name, i) => (WOMEN.has(name.split(' ')[0]) ? 'athletic' : PRO_LOOKS[i % 2]);
 const PRO_SHIRTS = ['#1e2a5a', '#e8e8f0', '#d85a9a', '#2fb0a0', '#2a2a30', '#c8a040', '#d03a2a', '#2f6fd6'];
 const SKILL_KEYS = ['power', 'accuracy', 'shortGame', 'recovery', 'putting'];
 function pros(names, tier, level) {
@@ -119,7 +124,7 @@ function pros(names, tier, level) {
     // The last few names are the tour's stars, a little better than the rest.
     const star = Math.max(0, i - names.length + 5);
     const skills = Object.fromEntries(SKILL_KEYS.map((k) => [k, Math.round(level + star + (r.next() - 0.5) * 10 + (k === best ? 7 : 0))]));
-    return { id: `${tier}-${i}`, name, look: PRO_LOOKS[i % 3], shirt: PRO_SHIRTS[(i * 3) % PRO_SHIRTS.length], nerve: Math.round((0.2 + r.next() * 0.7) * 10) / 10, skills };
+    return { id: `${tier}-${i}`, name, look: proLook(name, i), shirt: PRO_SHIRTS[(i * 3) % PRO_SHIRTS.length], nerve: Math.round((0.2 + r.next() * 0.7) * 10) / 10, skills };
   });
 }
 const CHALLENGE = pros(CHALLENGE_NAMES, 'challenge', 58);
@@ -131,7 +136,7 @@ const ELITE = pros(TOUR_NAMES, 'tour', 70);
 // ahead of you, by a bit more.
 function dexGolfer(c) {
   const skills = Object.fromEntries(SKILL_KEYS.map((k) => [k, Math.max(60, Math.round(c.skills[k]) + 3)]));
-  return { id: 'dex', name: 'Dex Dashwood', look: 'athletic', shirt: '#2a2a30', ai: true, nerve: 0.8, rival: true, skills };
+  return { id: 'dex', name: 'Dex Dashwood', look: 'tall', shirt: '#2a2a30', ai: true, nerve: 0.8, rival: true, skills };
 }
 
 // Everyone who plays a tier's events (but you), as golfers. Club members and

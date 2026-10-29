@@ -3962,10 +3962,10 @@ function applyForm(skills, form) {
 const BALLS = 5;
 
 const DRILLS = [
-  { key: 'drive', skill: 'power', name: 'LONG DRIVE', about: 'FIVE DRIVES. KEEP THEM IN PLAY, AND HIT THEM A LONG WAY.' },
-  { key: 'target', skill: 'accuracy', name: 'TARGET GREENS', about: 'FIVE APPROACHES FROM 140 TO 170 YARDS. HIT THE GREEN.' },
-  { key: 'chip', skill: 'shortGame', name: 'CHIP TO THE CIRCLE', about: 'FIVE PITCHES FROM 30 TO 70 YARDS. FINISH WITHIN 3 YARDS.' },
-  { key: 'escape', skill: 'recovery', name: 'ESCAPE ARTIST', about: 'FIVE BALLS IN SAND AND ROUGH. GET THEM ON THE GREEN.' },
+  { key: 'drive', skill: 'power', name: 'LONG DRIVE', aim: 'DRIVE DOWN THE FAIRWAY', about: 'FIVE DRIVES. KEEP THEM IN PLAY, AND HIT THEM A LONG WAY.' },
+  { key: 'target', skill: 'accuracy', name: 'TARGET GREENS', aim: 'HIT THE GREEN WITH THE TARGET FLAG', about: 'FIVE APPROACHES FROM 140 TO 170 YARDS. HIT THE GREEN.' },
+  { key: 'chip', skill: 'shortGame', name: 'CHIP TO THE CIRCLE', aim: 'CHIP INTO THE CIRCLE ROUND THE TARGET FLAG', about: 'FIVE PITCHES FROM 30 TO 70 YARDS. FINISH WITHIN 3 YARDS.' },
+  { key: 'escape', skill: 'recovery', name: 'ESCAPE ARTIST', aim: 'GET IT ON THE GREEN WITH THE TARGET FLAG', about: 'FIVE BALLS IN SAND AND ROUGH. GET THEM ON THE GREEN.' },
   { key: 'putt', skill: 'putting', name: 'PUTTING CHALLENGE', about: 'FIVE PUTTS FROM 6 TO 30 FEET. HOLE THEM.' },
 ];
 const drill = (key) => DRILLS.find((d) => d.key === key);
@@ -4274,7 +4274,7 @@ const MEMBERS = [
     skills: { power: 36, accuracy: 54, shortGame: 50, recovery: 44, putting: 58 } },
   { id: 'sal', name: 'Swift Sal', look: 'athletic', shirt: '#2f9a4a', nerve: 0.6, about: 'CLUB CHAMPION TWO YEARS RUNNING.',
     skills: { power: 52, accuracy: 52, shortGame: 50, recovery: 50, putting: 48 } },
-  { id: 'chip', name: 'Chippy Pete', look: 'casual', shirt: '#e8e8f0', nerve: 0.4, about: 'MISSES GREENS, THEN CHIPS IN.',
+  { id: 'chip', name: 'Chippy Pete', look: 'club', shirt: '#e8e8f0', nerve: 0.4, about: 'MISSES GREENS, THEN CHIPS IN.',
     skills: { power: 40, accuracy: 42, shortGame: 60, recovery: 52, putting: 50 } },
   { id: 'vince', name: 'Vince Vallance', look: 'club', shirt: '#8a4ad0', nerve: 0.7, rival: true, about: 'YOUR RIVAL. ALWAYS ONE STEP AHEAD.',
     skills: { power: 47, accuracy: 47, shortGame: 47, recovery: 44, putting: 47 } },
@@ -4474,16 +4474,16 @@ const REGULARS = [
 const COUNTY = [
   { id: 'lofty', name: 'Lofty Lewis', look: 'tall', shirt: '#2f6fd6', nerve: 0.7, skills: { power: 66, accuracy: 50, shortGame: 50, recovery: 52, putting: 52 } },
   { id: 'sandy', name: 'Sandy Banks', look: 'casual', shirt: '#e0a020', nerve: 0.4, skills: { power: 50, accuracy: 54, shortGame: 60, recovery: 62, putting: 54 } },
-  { id: 'rory', name: 'Rory Rough', look: 'athletic', shirt: '#d03a2a', nerve: 0.8, skills: { power: 60, accuracy: 48, shortGame: 54, recovery: 60, putting: 50 } },
+  { id: 'rory', name: 'Rory Rough', look: 'club', shirt: '#d03a2a', nerve: 0.8, skills: { power: 60, accuracy: 48, shortGame: 54, recovery: 60, putting: 50 } },
   { id: 'max', name: 'Max Yardage', look: 'heavy', shirt: '#8a4ad0', nerve: 0.6, skills: { power: 68, accuracy: 50, shortGame: 48, recovery: 50, putting: 50 } },
-  { id: 'penny', name: 'Penny Pitchmark', look: 'club', shirt: '#2f9a4a', nerve: 0.3, skills: { power: 48, accuracy: 60, shortGame: 58, recovery: 52, putting: 60 } },
+  { id: 'penny', name: 'Penny Pitchmark', look: 'casual', shirt: '#2f9a4a', nerve: 0.3, skills: { power: 48, accuracy: 60, shortGame: 58, recovery: 52, putting: 60 } },
   { id: 'barry', name: 'Barry Bunker', look: 'heavy', shirt: '#e8e8f0', nerve: 0.5, skills: { power: 54, accuracy: 50, shortGame: 58, recovery: 58, putting: 50 } },
   { id: 'ivy', name: 'Ivy Irons', look: 'athletic', shirt: '#e8e8f0', nerve: 0.4, skills: { power: 52, accuracy: 64, shortGame: 54, recovery: 50, putting: 54 } },
   { id: 'cleek', name: 'Colonel Cleek', look: 'veteran', shirt: null, nerve: 0.2, skills: { power: 44, accuracy: 60, shortGame: 58, recovery: 50, putting: 64 } },
   { id: 'ron', name: 'Big Ron Rollins', look: 'heavy', shirt: '#d03a2a', nerve: 0.9, skills: { power: 70, accuracy: 44, shortGame: 46, recovery: 54, putting: 48 } },
-  { id: 'fran', name: 'Fairway Fran', look: 'club', shirt: '#e0a020', nerve: 0.3, skills: { power: 50, accuracy: 62, shortGame: 52, recovery: 48, putting: 56 } },
-  { id: 'kenny', name: 'Kenny Kickback', look: 'casual', shirt: '#2f6fd6', nerve: 0.6, skills: { power: 54, accuracy: 52, shortGame: 62, recovery: 54, putting: 58 } },
-  { id: 'hattie', name: 'Hattie Hazard', look: 'tall', shirt: '#2f9a4a', nerve: 0.7, skills: { power: 58, accuracy: 54, shortGame: 54, recovery: 56, putting: 56 } },
+  { id: 'fran', name: 'Fairway Fran', look: 'athletic', shirt: '#e0a020', nerve: 0.3, skills: { power: 50, accuracy: 62, shortGame: 52, recovery: 48, putting: 56 } },
+  { id: 'kenny', name: 'Kenny Kickback', look: 'heavy', shirt: '#2f6fd6', nerve: 0.6, skills: { power: 54, accuracy: 52, shortGame: 62, recovery: 54, putting: 58 } },
+  { id: 'hattie', name: 'Hattie Hazard', look: 'casual', shirt: '#2f9a4a', nerve: 0.7, skills: { power: 58, accuracy: 54, shortGame: 54, recovery: 56, putting: 56 } },
 ];
 
 // The tours: young pros on the challenge tour, the best in the game on the
@@ -4496,7 +4496,12 @@ const TOUR_NAMES = ['Duke Driveway', 'Ace Archer', 'Sunny Sweetspot', 'Brooks Bi
   'Rex Redzone', 'Ingrid Inswing', 'Clint Clubface', 'Pip Pinseeker', 'Monty Mallet', 'Jet Jansen', 'Nico Niblett', 'Bea Bogeyfree',
   'Cal Cartpath', 'Rio Rollout', 'Stella Stinger', 'Hugo Hangtime', 'Dale Downhill', 'Mika Mashie', 'Lance Loft', 'Ruby Reload',
   'Frankie Flop', 'Wally Wedgeworth', 'Suzy Spin', 'Theo Tapin', 'Nina Nineiron', 'Gil Greenreader', 'Kingsley Crown'];
-const PRO_LOOKS = ['athletic', 'tall', 'club'];
+// The athletic and casual sheets are women golfers, so the pros' looks go by
+// their names.
+const WOMEN = new Set(['Dot', 'Lulu', 'Kiki', 'Holly', 'Tess', 'Fiona', 'Sunny', 'Grace', 'Ingrid', 'Bea', 'Stella', 'Mika',
+  'Ruby', 'Suzy', 'Nina']);
+const PRO_LOOKS = ['tall', 'club'];
+const proLook = (name, i) => (WOMEN.has(name.split(' ')[0]) ? 'athletic' : PRO_LOOKS[i % 2]);
 const PRO_SHIRTS = ['#1e2a5a', '#e8e8f0', '#d85a9a', '#2fb0a0', '#2a2a30', '#c8a040', '#d03a2a', '#2f6fd6'];
 const SKILL_KEYS = ['power', 'accuracy', 'shortGame', 'recovery', 'putting'];
 function pros(names, tier, level) {
@@ -4505,7 +4510,7 @@ function pros(names, tier, level) {
     // The last few names are the tour's stars, a little better than the rest.
     const star = Math.max(0, i - names.length + 5);
     const skills = Object.fromEntries(SKILL_KEYS.map((k) => [k, Math.round(level + star + (r.next() - 0.5) * 10 + (k === best ? 7 : 0))]));
-    return { id: `${tier}-${i}`, name, look: PRO_LOOKS[i % 3], shirt: PRO_SHIRTS[(i * 3) % PRO_SHIRTS.length], nerve: Math.round((0.2 + r.next() * 0.7) * 10) / 10, skills };
+    return { id: `${tier}-${i}`, name, look: proLook(name, i), shirt: PRO_SHIRTS[(i * 3) % PRO_SHIRTS.length], nerve: Math.round((0.2 + r.next() * 0.7) * 10) / 10, skills };
   });
 }
 const CHALLENGE = pros(CHALLENGE_NAMES, 'challenge', 58);
@@ -4517,7 +4522,7 @@ const ELITE = pros(TOUR_NAMES, 'tour', 70);
 // ahead of you, by a bit more.
 function dexGolfer(c) {
   const skills = Object.fromEntries(SKILL_KEYS.map((k) => [k, Math.max(60, Math.round(c.skills[k]) + 3)]));
-  return { id: 'dex', name: 'Dex Dashwood', look: 'athletic', shirt: '#2a2a30', ai: true, nerve: 0.8, rival: true, skills };
+  return { id: 'dex', name: 'Dex Dashwood', look: 'tall', shirt: '#2a2a30', ai: true, nerve: 0.8, rival: true, skills };
 }
 
 // Everyone who plays a tier's events (but you), as golfers. Club members and
@@ -5893,12 +5898,12 @@ function afterStroke(now, note) {
   startTurn(now, note);
 }
 
-function startTurn(now, note) {
+function startTurn(now, note, sub) {
   game.play.turn = nextTurn(game.play);
   const me = current(game.play);
   Object.assign(ui, { anim: null, aim: null, dragging: false, aiPlanned: false });
   const turn = me.onGreen ? (me.golfer.ai ? `${who(me.golfer)} TO PUTT` : 'YOUR PUTT') : yourTurn(me.golfer);
-  ui.banner = note ? { text: note, sub: turn, until: now + 2200 } : { text: turn, until: now + 1200 };
+  ui.banner = note ? { text: note, sub: sub ?? turn, until: now + 2200 } : { text: turn, until: now + 1200 };
   if (me.onGreen) {
     showMap(false);
     ui.phase = 'putting';
@@ -6127,6 +6132,7 @@ function drawPlay(now) {
   ctx.setTransform(1, 0, 0, 1, -Math.round(cam.x), -Math.round(cam.y));
   drawCourse();
 
+  if (settings.practice) drawDrillTarget();
   if (ui.phase === 'aim' && ui.aim) drawAim();
 
   // Each golfer stands beside their ball (or where they played from while it's
@@ -6138,6 +6144,8 @@ function drawPlay(now) {
   // one being played.
   const pins = world.holes.map((o) => o.toHere(o.hole.pin));
   pins.forEach((pin, i) => {
+    // A drill has one flag to aim at, so the other holes' are left out.
+    if (settings.practice && i > 0) return;
     const at = v.worldToScreen(pin);
     items.push({ y: at.y, draw: () => drawSprite(ctx, flagFrame(now, i > 0), at.x, at.y) });
   });
@@ -6183,8 +6191,25 @@ function drawPlay(now) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
-// Every hole's number, over its flag and by its back tee.
+// The chipping drill's circle: three yards round the hole, where a ball has
+// to finish to count.
+function drawDrillTarget() {
+  if (settings.practice.key !== 'chip') return;
+  const v = world.view, pin = game.hole.pin;
+  ctx.fillStyle = '#f2c93a';
+  for (let k = 0; k < 24; k++) {
+    const a = k / 24 * Math.PI * 2, s = v.worldToScreen({ x: pin.x + Math.cos(a) * 3, y: pin.y + Math.sin(a) * 3 });
+    ctx.fillRect(Math.round(s.x) - 1, Math.round(s.y), 2, 1);
+  }
+}
+
+// Every hole's number, over its flag and by its back tee. In a drill, just
+// TARGET over the flag being played to.
 function drawHoleNumbers(v, flagHeight) {
+  if (settings.practice) {
+    const o = world.holes[0], pin = v.worldToScreen(o.toHere(o.hole.pin));
+    return drawHoleNumber(ctx, pin.x + 1, pin.y - 32 + flagHeight, 'TARGET', true);
+  }
   for (const [i, o] of world.holes.entries()) {
     const pin = v.worldToScreen(o.toHere(o.hole.pin));
     const tee = v.worldToScreen(o.toHere(pointAt(o.hole.line, o.hole.tees.black)));
@@ -6608,7 +6633,7 @@ function practiceBall(now) {
   Object.assign(me, { at, lie, strokes: 0, putts: 0, holed: false, onGreen: lie === 'green' });
   // Closer in for the short shots, so the ball and the green read well.
   if (pr.ball === 0) setZoom(pr.key === 'chip' ? 2 : pr.key === 'escape' ? 1 : 0);
-  startTurn(now, `${drill(pr.key).name}: BALL ${pr.ball + 1} OF ${BALLS}`);
+  startTurn(now, `${drill(pr.key).name}: BALL ${pr.ball + 1} OF ${BALLS}`, drill(pr.key).aim);
   aimCamera(true);
 }
 

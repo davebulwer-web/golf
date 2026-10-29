@@ -473,12 +473,12 @@ function afterStroke(now, note) {
   startTurn(now, note);
 }
 
-function startTurn(now, note) {
+function startTurn(now, note, sub) {
   game.play.turn = nextTurn(game.play);
   const me = current(game.play);
   Object.assign(ui, { anim: null, aim: null, dragging: false, aiPlanned: false });
   const turn = me.onGreen ? (me.golfer.ai ? `${who(me.golfer)} TO PUTT` : 'YOUR PUTT') : yourTurn(me.golfer);
-  ui.banner = note ? { text: note, sub: turn, until: now + 2200 } : { text: turn, until: now + 1200 };
+  ui.banner = note ? { text: note, sub: sub ?? turn, until: now + 2200 } : { text: turn, until: now + 1200 };
   if (me.onGreen) {
     showMap(false);
     ui.phase = 'putting';
@@ -707,6 +707,7 @@ function drawPlay(now) {
   ctx.setTransform(1, 0, 0, 1, -Math.round(cam.x), -Math.round(cam.y));
   drawCourse();
 
+  if (settings.practice) drawDrillTarget();
   if (ui.phase === 'aim' && ui.aim) drawAim();
 
   // Each golfer stands beside their ball (or where they played from while it's
@@ -718,6 +719,8 @@ function drawPlay(now) {
   // one being played.
   const pins = world.holes.map((o) => o.toHere(o.hole.pin));
   pins.forEach((pin, i) => {
+    // A drill has one flag to aim at, so the other holes' are left out.
+    if (settings.practice && i > 0) return;
     const at = v.worldToScreen(pin);
     items.push({ y: at.y, draw: () => drawSprite(ctx, flagFrame(now, i > 0), at.x, at.y) });
   });
@@ -763,8 +766,25 @@ function drawPlay(now) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
-// Every hole's number, over its flag and by its back tee.
+// The chipping drill's circle: three yards round the hole, where a ball has
+// to finish to count.
+function drawDrillTarget() {
+  if (settings.practice.key !== 'chip') return;
+  const v = world.view, pin = game.hole.pin;
+  ctx.fillStyle = '#f2c93a';
+  for (let k = 0; k < 24; k++) {
+    const a = k / 24 * Math.PI * 2, s = v.worldToScreen({ x: pin.x + Math.cos(a) * 3, y: pin.y + Math.sin(a) * 3 });
+    ctx.fillRect(Math.round(s.x) - 1, Math.round(s.y), 2, 1);
+  }
+}
+
+// Every hole's number, over its flag and by its back tee. In a drill, just
+// TARGET over the flag being played to.
 function drawHoleNumbers(v, flagHeight) {
+  if (settings.practice) {
+    const o = world.holes[0], pin = v.worldToScreen(o.toHere(o.hole.pin));
+    return drawHoleNumber(ctx, pin.x + 1, pin.y - 32 + flagHeight, 'TARGET', true);
+  }
   for (const [i, o] of world.holes.entries()) {
     const pin = v.worldToScreen(o.toHere(o.hole.pin));
     const tee = v.worldToScreen(o.toHere(pointAt(o.hole.line, o.hole.tees.black)));
@@ -1188,7 +1208,7 @@ function practiceBall(now) {
   Object.assign(me, { at, lie, strokes: 0, putts: 0, holed: false, onGreen: lie === 'green' });
   // Closer in for the short shots, so the ball and the green read well.
   if (pr.ball === 0) setZoom(pr.key === 'chip' ? 2 : pr.key === 'escape' ? 1 : 0);
-  startTurn(now, `${drill(pr.key).name}: BALL ${pr.ball + 1} OF ${BALLS}`);
+  startTurn(now, `${drill(pr.key).name}: BALL ${pr.ball + 1} OF ${BALLS}`, drill(pr.key).aim);
   aimCamera(true);
 }
 
