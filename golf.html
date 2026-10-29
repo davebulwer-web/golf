@@ -4173,6 +4173,11 @@ function finishRound(c, result) {
     m.money = Math.sign(m.lead) * m.stake;
     c.money += m.money;
   }
+  // An event pays out by finishing position; winning the big one is a title.
+  if (result.comp) {
+    c.money += result.comp.prize;
+    if (result.comp.title) c.titles = [...(c.titles ?? []), { season: c.season, title: result.comp.title }];
+  }
   c.history.unshift({ season: c.season, week: c.week, ...result });
   c.history = c.history.slice(0, 40);
   c.round = null;
@@ -4241,6 +4246,87 @@ function loadCareer() {
     return c?.version === 1 ? upgrade(c) : null;
   } catch { return null; }
 }
+
+// ---- events.js ----
+// Stroke-play events: a field of club golfers, a leaderboard and prize money.
+// You play your round shot by shot with one playing partner drawn on the
+// course; everyone else's scores are worked out from their skills up front,
+// hole by hole, and shown as you reach each hole, so a big field costs nothing.
+
+
+// What's on at the club, by week of the season.
+const CLUB_EVENTS = {
+  medal: { kind: 'medal', name: 'MONTHLY MEDAL', holes: 9, fee: 5, prizes: [40, 20, 10] },
+  championship: { kind: 'championship', name: 'CLUB CHAMPIONSHIP', holes: 18, fee: 10, prizes: [100, 50, 25], title: 'CLUB CHAMPION' },
+};
+const SCHEDULE = { 3: 'medal', 6: 'medal', 9: 'medal', 12: 'championship' };
+
+// The event in a week (or null), and the next one from a week on.
+const eventFor = (week) => (SCHEDULE[week] ? { ...CLUB_EVENTS[SCHEDULE[week]], week } : null);
+function nextEvent(week) {
+  const w = Object.keys(SCHEDULE).map(Number).find((x) => x >= week);
+  return w ? eventFor(w) : null;
+}
+
+// The rest of the club: they turn up to events but don't play money matches.
+const REGULARS = [
+  { id: 'hank', name: 'Hacker Hank', nerve: 0.8, skills: { power: 48, accuracy: 36, shortGame: 38, recovery: 44, putting: 40 } },
+  { id: 'polly', name: 'Polly Putts', nerve: 0.3, skills: { power: 36, accuracy: 44, shortGame: 46, recovery: 40, putting: 56 } },
+  { id: 'crumb', name: 'Captain Crumb', nerve: 0.4, skills: { power: 42, accuracy: 46, shortGame: 44, recovery: 42, putting: 44 } },
+  { id: 'wendy', name: 'Wobbly Wendy', nerve: 0.6, skills: { power: 40, accuracy: 40, shortGame: 42, recovery: 38, putting: 42 } },
+  { id: 'nigel', name: 'Nigel Niblick', nerve: 0.5, skills: { power: 44, accuracy: 48, shortGame: 50, recovery: 46, putting: 46 } },
+  { id: 'doris', name: 'Doris Divot', nerve: 0.2, skills: { power: 34, accuracy: 50, shortGame: 48, recovery: 42, putting: 50 } },
+];
+
+// How many shots over par per hole a golfer averages, from the course's rating
+// (shots over par per nine for a skill-50 golfer; see tools/curate-courses.mjs)
+// and their skills: each skill point is worth about a sixth of a shot per nine
+// (measured by playing the computer golfer at skills 35, 50 and 65).
+const PER_POINT = 1 / 6;
+function holeMean(rating, skills) {
+  const avg = Object.values(skills).reduce((t, v) => t + v, 0) / 5;
+  return (rating + PER_POINT * (50 - avg)) / 9;
+}
+
+const gauss = (r) => Math.sqrt(-2 * Math.log(1 - r.next())) * Math.cos(2 * Math.PI * r.next());
+
+// One golfer's scores on the holes (pars), worked out from their skills. Bold
+// golfers have more birdies and more blow-ups.
+function simScores(r, golfer, pars, rating) {
+  const mean = holeMean(rating, golfer.skills), sd = 0.6 + 0.4 * (golfer.nerve ?? 0.5);
+  return pars.map((par) => Math.max(par - 2, Math.min(par + 4, par + Math.round(mean + gauss(r) * sd))));
+}
+
+// Set up an event: your playing partner (one of the members, drawn) and the
+// rest of the field's scores. `pars` are the holes' pars, `seed` makes it repeatable.
+function newEvent(c, ev, course, pars, seed) {
+  const r = makeRng(seed);
+  const partner = MEMBERS[r.int(0, MEMBERS.length - 1)].id;
+  const field = [...MEMBERS.map((m) => ({ id: m.id, ...memberGolfer(c, m.id) })), ...REGULARS]
+    .filter((g) => g.id !== partner)
+    .map((g) => ({ id: g.id, name: g.name, scores: simScores(r, g, pars.slice(0, ev.holes), course.rating) }));
+  return { ...ev, partner, field };
+}
+
+// The leaderboard after `thru` holes: everyone's total and score to par, best
+// first, ties split on the last three holes then the last one (countback).
+// `you` and `partner` are your group's scores.
+function leaderboard(ev, pars, thru, you, partner) {
+  const sum = (a, from, to) => a.slice(from, to).reduce((t, v) => t + (v ?? 0), 0);
+  const par = sum(pars, 0, thru);
+  const rows = [
+    { id: 'you', name: you.name, scores: you.scores, you: true },
+    { id: ev.partner, name: partner.name, scores: partner.scores },
+    ...ev.field,
+  ].map((p) => ({ ...p, total: sum(p.scores, 0, thru), last3: sum(p.scores, Math.max(0, thru - 3), thru), last: p.scores[thru - 1] ?? 0 }));
+  rows.forEach((p) => { p.toPar = p.total - par; });
+  rows.sort((a, b) => a.total - b.total || a.last3 - b.last3 || a.last - b.last || (b.you ? 1 : 0) - (a.you ? 1 : 0));
+  rows.forEach((p, i) => { p.pos = i + 1; });
+  return rows;
+}
+
+// What a finishing position wins.
+const prizeFor = (ev, pos) => ev.prizes[pos - 1] ?? 0;
 
 // ---- menus.js ----
 // The screens around a round, drawn over the course: the title, starting a
@@ -4386,10 +4472,14 @@ function hubLayout(W, H, career) {
     match: { key: 'match', label: 'MONEY MATCH', x: px + pw - 250, y: py + ph - 30, w: 108, h: 18 },
     practice: { key: 'practice', label: 'PRACTICE', x: px + pw - 340, y: py + ph - 30, w: 84, h: 18 },
     shop: { key: 'shop', label: 'PRO SHOP', x: px + pw - 430, y: py + ph - 30, w: 84, h: 18 },
+    // This week's event, if there is one, in a card on the right.
+    card: { x: px + pw - 172, y: py + 44, w: 156, h: 74 },
+    event: !career.round && eventFor(career.week) ? { key: 'event', label: `ENTER £${eventFor(career.week).fee}`, x: px + pw - 164, y: py + 96, w: 140, h: 16 } : null,
     menu: { key: 'menu', label: 'MENU', x: px + 16, y: py + ph - 30, w: 56, h: 18 },
   };
 }
 
+const ordinal = (n) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'TH' : ['TH', 'ST', 'ND', 'RD'][n % 10] ?? 'TH'}`;
 const toPar = (d) => (d === 0 ? 'E' : d > 0 ? `+${d}` : `${d}`);
 
 function drawHub(ctx, W, H, L, { career: c, hover, now }) {
@@ -4402,6 +4492,7 @@ function drawHub(ctx, W, H, L, { career: c, hover, now }) {
   golferAt(ctx, c.look, c.shirt, p.x + 46, p.y + 112, now);
   drawText(ctx, c.name, p.x + 16, p.y + 120, '#ffffff', 1, null);
   drawText(ctx, `£${c.money}`, p.x + 16, p.y + 130, GOLD, 2);
+  (c.titles ?? []).slice(-3).forEach((t, i) => drawText(ctx, `${t.title} S${t.season}`, p.x + 16, p.y + 148 + i * 9, '#7ee07e', 1, null));
   const sx = p.x + 112, sy = p.y + 48, boost = kitBoost(c.kit);
   drawText(ctx, 'SKILLS', sx, sy - 6, DIM, 1, null);
   if (Object.keys(c.kit ?? {}).length) drawText(ctx, 'BLUE: YOUR KIT', sx + 46, sy - 6, KIT_BLUE, 1, null);
@@ -4422,6 +4513,11 @@ function drawHub(ctx, W, H, L, { career: c, hover, now }) {
       drawText(ctx, `WK ${r.week}  PRO SHOP: ${r.bought.name}  -£${r.bought.price}`, sx, ry + 11 + i * 9, KIT_BLUE, 1, null);
       return;
     }
+    if (r.comp) {
+      const e = r.comp;
+      drawText(ctx, `WK ${r.week}  ${e.name}: ${ordinal(e.pos)} OF ${e.of} (${toPar(r.score - r.par)})${e.prize ? `  +£${e.prize}` : ''}`, sx, ry + 11 + i * 9, e.pos === 1 ? GOLD : '#ffffff', 1, null);
+      return;
+    }
     if (r.practice) {
       const pr = r.practice;
       drawText(ctx, `WK ${r.week}  PRACTICE: ${pr.name} ${pr.hits}/${pr.balls}  ${SKILL_NAMES[pr.skill]} +${pr.gain.toFixed(1)}`, sx, ry + 11 + i * 9, '#7ee07e', 1, null);
@@ -4436,6 +4532,24 @@ function drawHub(ctx, W, H, L, { career: c, hover, now }) {
     const vs = r.vsScore == null ? '' : r.score < r.vsScore ? `  BEAT ${r.vs} ${r.vsScore}` : r.score > r.vsScore ? `  LOST TO ${r.vs} ${r.vsScore}` : `  TIED ${r.vs}`;
     drawText(ctx, `WK ${r.week}  ${r.score} (${toPar(r.score - r.par)})${vs}`, sx, ry + 11 + i * 9, '#ffffff', 1, null);
   });
+  // What's on: this week's event, or the next one.
+  const ev = eventFor(c.week), cd = L.card;
+  if (!c.round && (ev || nextEvent(c.week))) {
+    ctx.fillStyle = '#2c2050';
+    ctx.fillRect(cd.x, cd.y, cd.w, ev ? cd.h : 30);
+    if (ev) {
+      drawText(ctx, 'THIS WEEKEND', cd.x + 8, cd.y + 6, DIM, 1, null);
+      drawText(ctx, ev.name, cd.x + 8, cd.y + 16, GOLD, 1, null);
+      drawText(ctx, `${ev.holes} HOLES STROKE PLAY AT HOME`, cd.x + 8, cd.y + 26, '#ffffff', 1, null);
+      drawText(ctx, `PRIZES ${ev.prizes.map((v) => `£${v}`).join(' / ')}`, cd.x + 8, cd.y + 35, QUIET, 1, null);
+      if (L.event) menuButton(ctx, L.event, hover === 'event', c.money >= ev.fee);
+      if (c.money < ev.fee) drawText(ctx, `NEED £${ev.fee} TO ENTER`, cd.x + 8, cd.y + cd.h + 4, '#f08a8a', 1, null);
+    } else {
+      const nx = nextEvent(c.week);
+      drawText(ctx, 'NEXT EVENT', cd.x + 8, cd.y + 6, DIM, 1, null);
+      drawText(ctx, `${nx.name}, WEEK ${nx.week}`, cd.x + 8, cd.y + 17, GOLD, 1, null);
+    }
+  }
   if (c.round?.match) drawText(ctx, `MATCH IN PROGRESS: ${c.round.vs.toUpperCase()} FOR £${c.round.match.stake}`, p.x + 16, p.y + p.h - 44, GOLD, 1, null);
   else if (c.round) drawText(ctx, `ROUND IN PROGRESS AT ${c.round.course.name}: ${c.round.hole - 1} PLAYED`, p.x + 16, p.y + p.h - 44, GOLD, 1, null);
   else if (c.worn?.length) drawText(ctx, `WORN OUT: ${c.worn.join(', ')}. THE PRO SHOP HAS MORE.`, p.x + 16, p.y + p.h - 44, '#f08a8a', 1, null);
@@ -4617,6 +4731,56 @@ function drawShop(ctx, W, H, L, { career: c, hover, note }) {
   if (next) drawText(ctx, `BETTER KIT UNLOCKS AT ${TIER_NAMES[next.tier]} LEVEL.`, L.back.x + L.back.w + 10, L.back.y + 7, QUIET, 1, null);
   if (note) drawText(ctx, note.text, p.x + 12, L.back.y - 12, note.good ? '#7ee07e' : '#f08a8a', 1, null);
   menuButton(ctx, L.back, hover === 'back');
+}
+
+// ---------- Events ----------
+
+// A leaderboard: position, name, score to par and holes played. `rows` come
+// from leaderboard() in events.js; at most `max` are shown, plus yours if you're
+// further down.
+function drawLeaderboard(ctx, x, y, w, rows, { title, max = rows.length, thru = null }) {
+  let shown = rows.slice(0, max);
+  const me = rows.find((r) => r.you);
+  if (me && !shown.includes(me)) shown = [...shown.slice(0, max - 1), me];
+  const h = 16 + shown.length * 9 + 4;
+  panel(ctx, x, y, w, h);
+  drawText(ctx, title, x + 6, y + 5, GOLD, 1, null);
+  if (thru != null) { const t = `THRU ${thru}`; drawText(ctx, t, x + w - 6 - textWidth(t), y + 5, QUIET, 1, null); }
+  shown.forEach((r, i) => {
+    const ty = y + 16 + i * 9, colour = r.you ? GOLD : '#ffffff';
+    drawText(ctx, `${r.pos}`, x + 6, ty, r.you ? GOLD : QUIET, 1, null);
+    drawText(ctx, r.name.toUpperCase(), x + 22, ty, colour, 1, null);
+    const tp = toPar(r.toPar);
+    drawText(ctx, tp, x + w - 6 - textWidth(tp), ty, r.toPar < 0 ? '#f08a8a' : colour, 1, null);
+  });
+  return h;
+}
+
+// The final leaderboard after an event, with what you won.
+function resultsLayout(W, H, n) {
+  const pw = 300, ph = 46 + n * 9 + 42, px = mid(W, pw), py = mid(H, ph);
+  return {
+    panel: { x: px, y: py, w: pw, h: ph },
+    done: { key: 'done', label: 'BACK TO THE CLUBHOUSE', x: px + pw - 186, y: py + ph - 28, w: 170, h: 18 },
+  };
+}
+
+function drawResults(ctx, W, H, L, { results: res, hover }) {
+  const p = L.panel, me = res.rows.find((r) => r.you);
+  panel(ctx, p.x, p.y, p.w, p.h);
+  drawText(ctx, res.name, p.x + 16, p.y + 12, GOLD, 2);
+  const line = me.pos === 1 ? `YOU WIN!${res.title ? ` ${res.title}.` : ''}` : `YOU FINISHED ${ordinal(me.pos)} OF ${res.rows.length}.`;
+  drawText(ctx, `${line}${res.prize ? ` PRIZE £${res.prize}.` : ''}`, p.x + 16, p.y + 30, me.pos <= 3 ? '#7ee07e' : DIM, 1, null);
+  res.rows.forEach((r, i) => {
+    const y = p.y + 46 + i * 9, colour = r.you ? GOLD : '#ffffff';
+    drawText(ctx, ordinal(r.pos), p.x + 16, y, r.you ? GOLD : QUIET, 1, null);
+    drawText(ctx, r.name.toUpperCase(), p.x + 46, y, colour, 1, null);
+    drawText(ctx, `${r.total}`, p.x + 190, y, colour, 1, null);
+    drawText(ctx, toPar(r.toPar), p.x + 216, y, r.toPar < 0 ? '#f08a8a' : colour, 1, null);
+    const prize = res.prizes[i];
+    if (prize) drawText(ctx, `£${prize}`, p.x + 250, y, '#7ee07e', 1, null);
+  });
+  menuButton(ctx, L.done, hover === 'done');
 }
 
 // ---- main.js ----
@@ -5143,10 +5307,30 @@ function updatePutting(now) {
 function standings() {
   if (settings.practice) { const pr = settings.practice; return `BALL ${Math.min(pr.ball + 1, BALLS)} OF ${BALLS}, ${pr.hits} GOOD`; }
   if (settings.match) return matchWords(matchPlay(round, settings.holes), round.players.map((p) => p.name.toUpperCase()));
+  if (settings.comp) {
+    const rows = compBoard(), me = rows?.find((x) => x.you);
+    if (!me) return '';
+    const top = rows[0], tp = (d) => (d === 0 ? 'E' : d > 0 ? `+${d}` : `${d}`);
+    return me.pos === 1 ? `LEADING THE ${settings.comp.name} AT ${tp(me.toPar)}` : `${me.pos} OF ${rows.length} AT ${tp(me.toPar)}. ${top.name.toUpperCase()} LEADS AT ${tp(top.toPar)}`;
+  }
   return round.players.map((p, i) => {
     const st = standing(round, i);
     return st.holes ? `${p.name.toUpperCase()} ${st.toPar === 0 ? 'E' : st.toPar > 0 ? `+${st.toPar}` : st.toPar}` : '';
   }).filter(Boolean).join('  ');
+}
+
+// An event's leaderboard as far as you've played (null before the first hole's done).
+function compBoard() {
+  const thru = round.players[0].scores.filter((v) => v != null).length;
+  if (!thru) return null;
+  const [you, partner] = round.players;
+  return leaderboard(settings.comp, round.pars, thru, { name: you.name, scores: you.scores }, { name: partner.name, scores: partner.scores });
+}
+
+// The scorecard's title in an event: where you stand.
+function compTitle() {
+  const me = compBoard()?.find((x) => x.you);
+  return me ? `${settings.comp.name}: ${ordinal(me.pos)} OF ${settings.comp.field.length + 2}` : settings.comp.name;
 }
 
 // The last hole of the round, or a match already decided.
@@ -5164,9 +5348,14 @@ function holeFinished() {
   ui.banner = { text: result, sub: settings.match ? `${standings()}. ${sub}` : sub, until: Infinity };
   // A career round is saved hole by hole, so it can be picked up again later.
   if (settings.career) {
-    app.career.round = { course: playing, match: settings.match, form, vs: golfers[1].name, hole: last ? settings.holes + 1 : game.hole.number + 1, scores: round.players.map((p) => p.scores.slice()), putts: round.players.map((p) => p.putts.slice()) };
-    saveCareer(app.career);
+    saveRound(last ? settings.holes + 1 : game.hole.number + 1);
   }
+}
+
+// Keep the career round in progress, `hole` being the next to play.
+function saveRound(hole) {
+  app.career.round = { course: playing, match: settings.match, comp: settings.comp, form, vs: golfers[1].name, hole, scores: round.players.map((p) => p.scores.slice()), putts: round.players.map((p) => p.putts.slice()) };
+  saveCareer(app.career);
 }
 
 const scoreName = (d) => ({ '-3': 'ALBATROSS', '-2': 'EAGLE', '-1': 'BIRDIE', 0: 'PAR', 1: 'BOGEY', 2: 'DOUBLE BOGEY' })[d] ?? (d < 0 ? `${-d} UNDER` : `${d} OVER`);
@@ -5351,13 +5540,16 @@ function render(now) {
     hint: display.map ? 'CLICK THE MAP OR PRESS M TO GO BACK' : !humanTurn() && ui.phase !== 'done' ? `${who(me.golfer)} IS PLAYING` : ui.phase !== 'aim' ? '' : !ui.aim ? 'DRAG ON THE COURSE TO AIM' : ui.dragging ? 'LET GO TO SET THE AIM' : 'CHANGE SHOT OR DRAG AGAIN',
   });
   drawViewButtons(hud, W, display.map, settings.event, !settings.career);
+  // An event's leaderboard, top five and you.
+  const board = settings.comp && !ui.card && !display.map && compBoard();
+  if (board) drawLeaderboard(hud, W - 136, 104, 130, board, { title: 'LEADERBOARD', max: 5, thru: round.players[0].scores.filter((v) => v != null).length });
   if (ui.banner && now < ui.banner.until) drawBanner(hud, W, ui.banner.text, ui.banner.sub);
   if (ui.formNote && now < ui.formNote.until) drawFormNote(hud, W, ui.formNote.text, ui.formNote.good, ui.banner && now < ui.banner.until && ui.banner.sub ? 88 : 78);
   if (ui.pop && now < ui.pop.until) drawPop(hud, W, H, now);
   if (ui.cardAt && now >= ui.cardAt) { ui.card = true; ui.cardAt = 0; }
   if (ui.card) {
     const played = round.players[0].scores.filter((s) => s != null).length;
-    drawScorecard(hud, W, H, round, game.hole.number, settings.match ? `MATCH PLAY: ${standings()}` : played === settings.holes ? 'ROUND COMPLETE' : `${game.course.name.toUpperCase()}  SCORECARD`);
+    drawScorecard(hud, W, H, round, game.hole.number, settings.match ? `MATCH PLAY: ${standings()}` : settings.comp && played < settings.holes ? compTitle() : played === settings.holes ? 'ROUND COMPLETE' : `${game.course.name.toUpperCase()}  SCORECARD`);
   }
 }
 
@@ -5386,6 +5578,7 @@ function renderMenu(now) {
   if (app.mode === 'new') drawNewCareer(hud, W, H, newCareerLayout(W, H), { draft: app.draft, hover, now, replaces: !!app.career });
   if (app.mode === 'hub') drawHub(hud, W, H, hubLayout(W, H, app.career), { career: app.career, hover, now });
   if (app.mode === 'drills') drawDrills(hud, W, H, drillsLayout(W, H), { career: app.career, hover });
+  if (app.mode === 'results') drawResults(hud, W, H, resultsLayout(W, H, app.results.rows.length), { results: app.results, hover });
   if (app.mode === 'shop') drawShop(hud, W, H, shopLayout(W, H), { career: app.career, hover, note: app.shopNote });
   if (app.mode === 'members') drawMembers(hud, W, H, membersLayout(W, H), { career: app.career, pick: app.pick, hover, now });
   if (app.mode === 'courses') drawCourses(hud, W, H, coursesLayout(W, H, clubCourses(app.career)), { courses: clubCourses(app.career), hover });
@@ -5396,7 +5589,8 @@ function menuButtons() {
   const { W, H } = display;
   if (app.mode === 'title') return titleLayout(W, H, !!app.career);
   if (app.mode === 'new') { const L = newCareerLayout(W, H); return [L.prev, L.next, ...L.shirts, L.back, L.start]; }
-  if (app.mode === 'hub') { const L = hubLayout(W, H, app.career); return app.career.round ? [L.play, L.menu] : [L.play, L.match, L.practice, L.shop, L.menu]; }
+  if (app.mode === 'hub') { const L = hubLayout(W, H, app.career); return app.career.round ? [L.play, L.menu] : [L.play, L.match, L.practice, L.shop, L.menu, ...(L.event ? [L.event] : [])]; }
+  if (app.mode === 'results') return [resultsLayout(W, H, app.results.rows.length).done];
   if (app.mode === 'shop') { const L = shopLayout(W, H); return [...L.buys, L.back]; }
   if (app.mode === 'drills') { const L = drillsLayout(W, H); return [...(canPractise(app.career) ? L.drills : []), L.back]; }
   if (app.mode === 'members') { const L = membersLayout(W, H); return [...L.members, ...L.stakes, L.challenge, L.back]; }
@@ -5422,6 +5616,8 @@ function menuAction(key) {
   if (key.startsWith('shirt-')) { d.shirt = SHIRT_COLOURS[Number(key.slice(6))]; return; }
   if (key === 'back' && ['courses', 'members', 'drills', 'shop'].includes(app.mode)) return goHub();
   if (key === 'practice') { app.mode = 'drills'; app.hover = canPractise(app.career) ? 'drill-0' : 'back'; return; }
+  if (key === 'event') return startEvent();
+  if (key === 'done') return goHub();
   if (key === 'shop') { app.mode = 'shop'; app.shopNote = null; app.hover = 'back'; return; }
   if (key.startsWith('buy-')) {
     const c = app.career, item = shopItem(SLOTS[Number(key.slice(4))].key, c.tier);
@@ -5490,13 +5686,14 @@ function showTitle() {
 let playing = null;
 
 // Show a course behind the menus (or play it): settings for the course, hole and round.
-function useCourse(course, hole, career, match = null, practice = null) {
+function useCourse(course, hole, career, match = null, practice = null, comp = null) {
   playing = course;
   form = null;
   settings.match = match;
+  settings.comp = comp;
   settings.practice = practice;
   Object.assign(settings, { style: course.style, seed: course.seed, name: course.name ?? null, par: course.par ?? 72, length: course.length ?? 'standard', tour: course.tour ?? null, holes: course.holes ?? 18, hole, career, event: false });
-  golfers = !career ? [PLAYER, RIVAL] : practice ? [careerGolfer(app.career)] : [careerGolfer(app.career), match ? memberGolfer(app.career, match.member) : clubOpponent()];
+  golfers = !career ? [PLAYER, RIVAL] : practice ? [careerGolfer(app.career)] : [careerGolfer(app.career), match ? memberGolfer(app.career, match.member) : comp ? memberGolfer(app.career, comp.partner) : clubOpponent()];
   showMap(false);
   loadHole();
 }
@@ -5516,11 +5713,11 @@ function goHub() {
 
 // Play a round on one of your club's courses, or carry on the one in progress.
 // A money match (`match`) is played at home.
-function playCareerRound(course, match = null) {
+function playCareerRound(course, match = null, comp = null) {
   const c = app.career;
   app.mode = 'play';
   round = null;
-  useCourse(c.round?.course ?? course, c.round?.hole ?? 1, true, c.round ? c.round.match ?? null : match);
+  useCourse(c.round?.course ?? course, c.round?.hole ?? 1, true, c.round ? c.round.match ?? null : match, null, c.round ? c.round.comp ?? null : comp);
   form = c.round?.form ?? newForm();
   if (c.round) round.players.forEach((p, i) => { p.scores = c.round.scores[i].slice(); p.putts = c.round.putts[i].slice(); });
 }
@@ -5533,9 +5730,32 @@ function endCareerRound() {
   const match = saved.match && { ...saved.match, lead: matchPlay({ players: saved.scores.map((scores) => ({ scores })) }, holes).lead };
   const good = Object.values(saved.form ?? {}).reduce((t, [g]) => t + g, 0), bad = Object.values(saved.form ?? {}).reduce((t, [, b]) => t + b, 0);
   c.report = { change: applyForm(c.skills, saved.form ?? newForm()), good, bad };
-  finishRound(c, { course: course.name, holes, score: total(saved.scores[0]), par: total(pars), vs: (saved.vs ?? clubOpponent().name).toUpperCase(), vsScore: total(saved.scores[1]), match });
+  // An event: the final leaderboard and what you won.
+  let comp = null;
+  if (saved.comp) {
+    const ev = saved.comp, rows = leaderboard(ev, pars, holes, { name: c.name, scores: saved.scores[0] }, { name: saved.vs, scores: saved.scores[1] });
+    const pos = rows.find((x) => x.you).pos, prize = prizeFor(ev, pos);
+    comp = { name: ev.name, pos, of: rows.length, prize, winner: rows[0].name, title: pos === 1 ? ev.title ?? null : null };
+    app.results = { name: ev.name, title: ev.title, prize, prizes: ev.prizes, rows };
+  }
+  finishRound(c, { course: course.name, holes, score: total(saved.scores[0]), par: total(pars), vs: (saved.vs ?? clubOpponent().name).toUpperCase(), vsScore: total(saved.scores[1]), match, comp });
   saveCareer(c);
-  goHub();
+  if (!comp) return goHub();
+  app.mode = 'results';
+  app.hover = 'done';
+  useCourse(c.home, 1, true);
+}
+
+// Enter this week's event: pay the entry and tee off with your partner.
+function startEvent() {
+  const c = app.career, ev = eventFor(c.week);
+  if (!ev || c.round || c.money < ev.fee) return;
+  c.money -= ev.fee;
+  const course = { ...c.home, holes: ev.holes };
+  const pars = buildCourse({ ...course }, { layout: false }).holes.map((h) => h.par);
+  const comp = newEvent(c, ev, course, pars, (c.season * 100 + c.week) * 7919 + course.seed);
+  playCareerRound(course, null, comp);
+  saveRound(1); // the entry's paid: the round is yours to finish
 }
 
 // ---------- Practice ground ----------
