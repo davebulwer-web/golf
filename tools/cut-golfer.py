@@ -75,6 +75,18 @@ SHEETS = {
         ],
         'blank': [(20, 670, 385, 706), (690, 670, 1070, 706), (1315, 670, 1500, 738)],
     },
+    'andy': {
+        'shrink': 6.3,
+        'rows': [
+            ((50, 295), SWING),
+            ((415, 605), PUTT + IDLE),
+            ((672, 945), HAPPY + CROSS + ['shade-eyes']),
+        ],
+        'blank': [(20, 670, 385, 706), (690, 670, 1075, 706), (1315, 670, 1500, 738)],
+        # His belt and the creases in his trousers are near black, which would
+        # cut his legs off from the rest of him, so dimmer pixels count too.
+        'body': 20,
+    },
     'casual': {
         'shrink': 6.3,
         'rows': [
@@ -133,7 +145,7 @@ def cut(look, spec):
             feet_band[y1 - spec['ground']:y1] = True
         core &= feet_band
         shadow &= feet_band
-    body = (bright > 45) & ~shadow
+    body = (bright > spec.get('body', 45)) & ~shadow
 
     # Pad the sheet so cells near its edge can be cut whole.
     pad_by = max(cell_w, cell_h)

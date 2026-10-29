@@ -7,6 +7,7 @@ import { drawText, textWidth } from './art.js';
 import { panel, GOLD } from './hud.js';
 import { drawDinky, golferFrame } from './dinky.js';
 import { STYLES } from './course-generator.js';
+import { LOOKS, ownShirt, SHIRT_COLOURS, SKILL_NAMES, WEEKS, MEMBERS, STAKES, startingSkills, courseStars, memberGolfer, record } from './career.js';
 import { LOOKS, SHIRT_COLOURS, SKILL_NAMES, WEEKS, MEMBERS, STAKES, startingSkills, courseStars, memberGolfer, record, canPractise } from './career.js';
 import { SLOTS, TIER_NAMES, kitItem, kitBoost, shopItem, nextItem, boostWords } from './shop.js';
 import { DRILLS, BALLS } from './practice.js';
@@ -47,7 +48,7 @@ function golferAt(ctx, look, shirt, x, y, now) {
   ctx.imageSmoothingEnabled = false;
   ctx.translate(Math.round(x), Math.round(y));
   ctx.scale(2, 2);
-  drawDinky(ctx, `${look}/${golferFrame('stand', 0, now)}`, 0, 0, look === 'veteran' ? null : shirt);
+  drawDinky(ctx, `${look}/${golferFrame('stand', 0, now)}`, 0, 0, ownShirt(look) ? null : shirt);
   ctx.restore();
 }
 
@@ -112,7 +113,7 @@ export function drawNewCareer(ctx, W, H, L, { draft, hover, now, replaces }) {
   menuButton(ctx, L.prev, hover === 'prev');
   menuButton(ctx, L.next, hover === 'next');
   drawText(ctx, look.name, L.look.x + Math.round((L.look.w - textWidth(look.name)) / 2), L.look.y + 72, '#ffffff', 1, null);
-  const recolours = draft.look !== 'veteran';
+  const recolours = !look.own;
   for (const s of L.shirts) {
     ctx.fillStyle = s.colour;
     ctx.globalAlpha = recolours ? 1 : 0.25;
@@ -123,7 +124,7 @@ export function drawNewCareer(ctx, W, H, L, { draft, hover, now, replaces }) {
       ctx.fillRect(s.x - 1, s.y - 2, s.w + 2, 1); ctx.fillRect(s.x - 1, s.y + s.h + 1, s.w + 2, 1);
     }
   }
-  if (!recolours) drawText(ctx, 'KEEPS HIS OWN JUMPER', L.look.x + 4, L.shirts[0].y + 14, QUIET, 1, null);
+  if (!recolours) drawText(ctx, look.own.note, L.look.x + 4, L.shirts[0].y + 14, QUIET, 1, null);
 
   // What they start with.
   const sx = p.x + 160, sy = p.y + 40;

@@ -10,18 +10,22 @@ const SAVE_KEY = 'pixel-golf.career';
 export const WEEKS = 12; // weeks in a season
 
 // The looks you can start as, with a name for each and how they tilt the
-// starting skills (all start as a club hacker, around 45).
+// starting skills (all start as a club hacker, around 45). A look whose
+// sprites can't be recoloured has `own`: the shirt colour it keeps.
 export const LOOKS = [
   { look: 'club', name: 'ALL-ROUNDER', tilt: {} },
   { look: 'heavy', name: 'BIG HITTER', tilt: { power: 8, accuracy: -4, shortGame: -2 } },
   { look: 'athletic', name: 'ATHLETE', tilt: { power: 4, recovery: 4, putting: -4 } },
   { look: 'casual', name: 'WEEKENDER', tilt: { shortGame: 6, power: -4 } },
   { look: 'tall', name: 'BEANPOLE', tilt: { power: 6, shortGame: -4, putting: -2 } },
-  { look: 'veteran', name: 'OLD HAND', tilt: { accuracy: 4, putting: 6, power: -8 } },
+  { look: 'veteran', name: 'OLD HAND', tilt: { accuracy: 4, putting: 6, power: -8 }, own: { shirt: '#c8b48a', note: 'KEEPS HIS OWN JUMPER' } },
+  { look: 'andy', name: 'ANGRY ANDY', tilt: { power: 6, recovery: 2, putting: -6 }, own: { shirt: '#ece8e6', note: 'KEEPS HIS SHIRT AND TIE' } },
 ];
+// The fixed shirt colour of a look that can't be recoloured, or undefined.
+export const ownShirt = (look) => LOOKS.find((l) => l.look === look)?.own?.shirt;
 export const SHIRT_COLOURS = ['#d03a2a', '#2f6fd6', '#2f9a4a', '#e0a020', '#8a4ad0', '#e8e8f0'];
 // The old hand keeps his own beige jumper (his sprites can't be recoloured).
-export const VETERAN_SHIRT = '#c8b48a';
+export const VETERAN_SHIRT = ownShirt('veteran');
 export const SKILL_NAMES = { power: 'POWER', accuracy: 'ACCURACY', shortGame: 'SHORT GAME', recovery: 'RECOVERY', putting: 'PUTTING' };
 
 const BASE_SKILLS = { power: 45, accuracy: 45, shortGame: 45, recovery: 42, putting: 45 };
@@ -48,7 +52,7 @@ export function newCareer({ name, look, shirt }, rand = Math.random) {
   };
   const home = take();
   return {
-    version: 1, name, look, shirt: look === 'veteran' ? VETERAN_SHIRT : shirt, tier: 'club', season: 1, week: 1, money: 100,
+    version: 1, name, look, shirt: ownShirt(look) ?? shirt, tier: 'club', season: 1, week: 1, money: 100,
     skills: startingSkills(look),
     // Your home club's course, and two other club courses you can play away.
     home, away: [take(), take()],
