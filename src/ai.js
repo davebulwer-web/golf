@@ -4,7 +4,7 @@
 // counting the risk of a bad outcome according to its nerve.
 
 import { makeRng, surfaceAt, pointAt, project, dist } from './course-generator.js';
-import { SHOT_TYPES, shotType, maxCarry, playShot, waterDrop } from './shots.js';
+import { SHOT_TYPES, shotType, maxCarry, playShot, waterDrop, lieAt, canPlay } from './shots.js';
 import { holeChance } from './putting.js';
 
 const LIE_COST = { tee: 0, fairway: 0, fringe: -0.05, green: 0, rough: 0.3, waste: 0.3, bunker: 0.45, trees: 0.8 };
@@ -23,7 +23,7 @@ export function strokesLeft(golfer, hole, p, lie) {
 // Landing spots worth trying: a fan of lines either side of the pin at several
 // lengths, the pin itself, and points down the middle of the hole (for doglegs).
 function candidateAims(golfer, ball, hole, type) {
-  const max = maxCarry(golfer, type, ball.lie, hole);
+  const max = maxCarry(golfer, type, lieAt(hole, ball.at, ball.lie), hole);
   const toPin = dist(ball.at, hole.pin);
   const aims = [];
   const base = Math.atan2(hole.pin.y - ball.at.y, hole.pin.x - ball.at.x);
@@ -42,13 +42,13 @@ function candidateAims(golfer, ball, hole, type) {
   return aims;
 }
 
-// Which shots are worth considering from here.
+// Which shots are worth considering from here (of those the lie allows).
 function typesToTry(golfer, ball, hole) {
-  const toPin = dist(ball.at, hole.pin);
-  const lob = maxCarry(golfer, shotType('lob'), ball.lie, hole);
-  if (toPin < lob * 0.9) return ['lob', 'runner', 'straight'];
-  if (ball.lie === 'trees') return ['runner', 'straight', 'lob'];
-  return ['straight', 'fade', 'draw', 'runner'];
+  const toPin = dist(ball.at, hole.pin), lie = lieAt(hole, ball.at, ball.lie);
+  const lob = maxCarry(golfer, shotType('lob'), lie, hole);
+  const want = toPin < lob * 0.9 ? ['lob', 'runner', 'straight'] : ['straight', 'fade', 'draw', 'runner', 'lob'];
+  const ok = want.filter((k) => canPlay(lie, k));
+  return ok.length ? ok : lie.shots;
 }
 
 // Pick a shot: returns { type, aim, expected } where `expected` is the strokes it

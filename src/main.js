@@ -10,7 +10,7 @@ import { layoutHole, shiftView, addSurroundings, drawHole, isOutOfBounds, course
 import { drawSprite, blit } from './art.js';
 import { drawHud, drawShotBar, drawPuttBar, drawBanner, drawFormNote, drawScorecard, shotButtons, actionButtons, viewButtons, drawViewButtons, drawHoleNumber, BAR_TOP } from './hud.js';
 import { roundWeather, holeWind } from './weather.js';
-import { SHOT_TYPES, shotType, maxCarry, chooseClub, shotSpread, flightPoint, clampToReach, playsAs } from './shots.js';
+import { SHOT_TYPES, shotType, maxCarry, chooseClub, shotSpread, flightPoint, clampToReach, playsAs, lieAt, lieReach, canPlay } from './shots.js';
 import { PLAYER, RIVAL } from './golfers.js';
 import { startHole, current, toPin, hit, settle, settlePutt, newRound, standing, matchPlay, matchWords, nextTurn, allHoled, pickUp, PICK_UP } from './play.js';
 import { planShot } from './ai.js';
@@ -317,7 +317,7 @@ function rescale() {
 // The aim clamped to what the current shot can reach.
 function clampAim(p) {
   const me = current(game.play);
-  return clampToReach(me.golfer, shotType(ui.shot), me.lie, game.hole, me.at, p);
+  return clampToReach(me.golfer, shotType(ui.shot), myLie(me), game.hole, me.at, p);
 }
 
 const humanTurn = () => !current(game.play).golfer.ai;
@@ -340,8 +340,14 @@ function cancelAim() {
   ui.aim = null;
 }
 
+// The lie of the golfer whose turn it is, worked out once per spot.
+function myLie(me) {
+  if (ui.lie?.x !== me.at.x || ui.lie.y !== me.at.y || ui.lie.surface !== me.lie || ui.lie.hole !== game.hole) ui.lie = { x: me.at.x, y: me.at.y, hole: game.hole, surface: me.lie, lie: lieAt(game.hole, me.at, me.lie) };
+  return ui.lie.lie;
+}
+
 function pickShot(key) {
-  if (!humanTurn()) return;
+  if (!humanTurn() || !canPlay(myLie(current(game.play)), key)) return;
   ui.shot = ui.humanShot = key;
   if (ui.aim) ui.aim = clampAim(ui.aim);
 }
@@ -470,7 +476,11 @@ function startTurn(now, note) {
     ui.phase = 'aim';
     greenZoom(false);
     if (me.golfer.ai) ui.aiAt = now + (note ? 2000 : 1000);
-    else ui.shot = ui.humanShot;
+    else {
+      // The shot you last chose, if this lie allows it.
+      const lie = myLie(me);
+      ui.shot = canPlay(lie, ui.humanShot) ? ui.humanShot : lie.shots[0];
+    }
   }
   cam.manual = false;
 }
@@ -662,8 +672,8 @@ function drawAim() {
     dot(s.x, s.y, 'rgba(0, 0, 0, 0.25)');
     dot(up.x, up.y, '#ffffff');
   }
-  const max = maxCarry(me.golfer, type, me.lie, game.hole);
-  const sp = shotSpread(me.golfer, type, me.lie, d, max, game.weather);
+  const max = maxCarry(me.golfer, type, myLie(me), game.hole);
+  const sp = shotSpread(me.golfer, type, myLie(me), d, max, game.weather);
   const ux = (ui.aim.x - me.at.x) / (d || 1), uy = (ui.aim.y - me.at.y) / (d || 1);
   // Redder as the shot gets riskier.
   const risk = Math.min(1, (d / max) ** 3 + sp.mishit * 3);
@@ -801,14 +811,17 @@ function render(now) {
     });
   }
   const type = shotType(ui.shot);
-  const max = Math.round(maxCarry(me.golfer, type, me.lie, game.hole));
+  const lie = myLie(me);
+  const max = Math.round(maxCarry(me.golfer, type, lie, game.hole));
   const aimYds = ui.aim ? Math.round(dist(me.at, ui.aim)) : 0;
   const slope = ui.aim ? Math.round(playsAs(game.hole, me.at, ui.aim)) - aimYds : 0; // + uphill
   const canHit = ui.phase === 'aim' && !!ui.aim && !ui.dragging && humanTurn();
   if (!pt) drawShotBar(hud, W, H, {
-    types: SHOT_TYPES, selected: ui.shot, max, aim: aimYds, slope, canHit,
-    club: chooseClub(me.golfer, type, aimYds + slope || max, me.lie).toUpperCase(),
-    lie: LIE_NAMES[me.lie] ?? me.lie.toUpperCase(), toPin: Math.round(toPin(game.play)), stroke: me.holed ? me.strokes : me.strokes + 1,
+    types: SHOT_TYPES, allowed: lie.shots, selected: ui.shot, max, aim: aimYds, slope, canHit,
+    club: chooseClub(me.golfer, type, aimYds + slope || max, lie).toUpperCase(),
+    // How much of a full shot the lie gives (recovery skill included; a runner
+    // gets more out of the trees).
+    lie: lie.hard ? `${lie.name} ${Math.round(lieReach(me.golfer, SHOT_TYPES[0], lie) * 100)}%` : LIE_NAMES[me.lie] ?? me.lie.toUpperCase(), toPin: Math.round(toPin(game.play)), stroke: me.holed ? me.strokes : me.strokes + 1,
     hint: display.map ? 'CLICK THE MAP OR PRESS M TO GO BACK' : !humanTurn() && ui.phase !== 'done' ? `${who(me.golfer)} IS PLAYING` : ui.phase !== 'aim' ? '' : !ui.aim ? 'DRAG ON THE COURSE TO AIM' : ui.dragging ? 'LET GO TO SET THE AIM' : 'CHANGE SHOT OR DRAG AGAIN',
   });
   drawViewButtons(hud, W, display.map, settings.event, !settings.career);
@@ -1238,7 +1251,7 @@ function autoPutt() {
   pt.meterAt = now - plan.power * POWER_SWEEP;
   stopPower(now);
 }
-window.golf = { get game() { return game; }, get world() { return world; }, get round() { return round; }, ui, cam, display, app, settings, shoot, clampAim, setZoom, turnView, changeGolfer, autoPutt, greenFor, toggleEvent, menuAction, menuButtonsForTest: () => menuButtons(), sceneryInFront, tournamentSites: () => tournamentSites(game.course) };
+window.golf = { get game() { return game; }, get world() { return world; }, get round() { return round; }, ui, cam, display, app, settings, shoot, clampAim, setZoom, turnView, changeGolfer, autoPutt, greenFor, toggleEvent, menuAction, menuButtonsForTest: () => menuButtons(), sceneryInFront, surfaceAt, pointAt, tournamentSites: () => tournamentSites(game.course) };
 
 measure();
 if (app.mode === 'title') {
