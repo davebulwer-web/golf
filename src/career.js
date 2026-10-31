@@ -92,7 +92,7 @@ export const MEMBERS = [
     skills: { power: 36, accuracy: 54, shortGame: 50, recovery: 44, putting: 58 } },
   { id: 'sal', name: 'Swift Sal', look: 'athletic', shirt: '#2f9a4a', nerve: 0.6, about: 'CLUB CHAMPION TWO YEARS RUNNING.',
     skills: { power: 52, accuracy: 52, shortGame: 50, recovery: 50, putting: 48 } },
-  { id: 'chip', name: 'Chippy Pete', look: 'casual', shirt: '#e8e8f0', nerve: 0.4, about: 'MISSES GREENS, THEN CHIPS IN.',
+  { id: 'chip', name: 'Chippy Pete', look: 'club', shirt: '#e8e8f0', nerve: 0.4, about: 'MISSES GREENS, THEN CHIPS IN.',
     skills: { power: 40, accuracy: 42, shortGame: 60, recovery: 52, putting: 50 } },
   { id: 'vince', name: 'Vince Vallance', look: 'club', shirt: '#8a4ad0', nerve: 0.7, rival: true, about: 'YOUR RIVAL. ALWAYS ONE STEP AHEAD.',
     skills: { power: 47, accuracy: 47, shortGame: 47, recovery: 44, putting: 47 } },
@@ -137,7 +137,14 @@ export function finishRound(c, result) {
     k.left -= 1;
     if (k.left <= 0) { c.worn.push(kitItem(k.id)?.name ?? slot); delete c.kit[slot]; }
   }
-  if (!result.comp && !result.eventRound && !result.sim) c.midweek = m ? 'match' : 'round';
+  // A midweek challenge pays out if you did it.
+  if (result.challenge?.met) c.money += result.challenge.prize;
+  if (!result.comp && !result.eventRound && !result.sim) c.midweek = result.challenge ? 'challenge' : m ? 'match' : 'round';
+  // Your best rounds, nine and eighteen holes, for the career record.
+  if (!result.sim && !m && (result.holes === 9 || result.holes === 18) && result.par) {
+    const best = ((c.stats ??= {}).best ??= {}), d = result.score - result.par, was = best[result.holes];
+    if (!was || d < was.toPar) best[result.holes] = { toPar: d, score: result.score, course: result.course, season: c.season };
+  }
 }
 
 // ---------- Practice ----------

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Golf</title>
+<title>Fairway Pixels</title>
 <style>
   html, body { margin: 0; height: 100%; background: #14101f; overflow: hidden; }
   canvas { position: fixed; left: 0; top: 0; image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
@@ -2503,6 +2503,8 @@ function eventPlan(hole, extras, seed = 0) {
   if (n === 18 || extras.has('cameraman')) add('cameraman', [byGreen(-r - 4, r + 6), byGreen(-r - 4, -r - 6), byGreen(0, r + 7), byGreen(0, -r - 7)], toGreen);
   if (extras.has('camera-platform')) add('camera-platform', [byGreen(-r - 10, r + 16), byGreen(-r - 10, -r - 16), byGreen(r + 10, r + 14)], toGreen);
   if (extras.has('commentary')) add('commentary', [byGreen(-r - 18, r + 14), byGreen(-r - 18, -r - 14), byGreen(r + 14, -r - 6)], toGreen);
+  // At a major, the presentation stage behind the last green.
+  if (n === 18) add('stage', [byGreen(r + 40, 0), byGreen(-r - 50, r + 34), byGreen(-r - 50, -r - 34), byGreen(r + 30, r + 30)], toGreen);
   if (n === 18) add('crane', [byGreen(r + 26, r + 10), byGreen(r + 26, -r - 10), byGreen(-r - 14, r + 16)], toGreen);
   if (extras.has('compound')) {
     // Each piece tries the same places round its yard, so they keep together.
@@ -2538,12 +2540,13 @@ const eventCache = new Map();
 // How dressed up a course is (`course.tournament`): 0 not at all; 1 a county
 // event's banners, flags and ropes; 2 the challenge tour's, with stands round
 // the closing greens, leaderboards, tents and the clubhouse set; 3 (or true)
-// everything, TV and all.
+// everything, TV and all; 4 a major's, with the presentation stage as well.
 const dressingLevel = (course) => (course.tournament === true ? 3 : course.tournament || 0);
 const LEVEL_1 = ['banner', 'flag', 'feather', 'rope', 'signpost'];
 const LEVEL_2 = [...LEVEL_1, 'leaderboard', 'scoreboard', 'tent', 'barrier', 'picket', 'arch', 'marquee', 'trophy-board', 'toilet'];
 const STANDS = ['stand', 'covered-stand', 'long-stand'];
 function dressed(level, name, n) {
+  if (name === 'stage') return level >= 4;
   if (level >= 3) return true;
   const kind = (k) => name === k || name.startsWith(`${k}-`);
   if (level === 2 && STANDS.some(kind)) return n % 9 === 0 || n >= 16;
@@ -3959,10 +3962,10 @@ function applyForm(skills, form) {
 const BALLS = 5;
 
 const DRILLS = [
-  { key: 'drive', skill: 'power', name: 'LONG DRIVE', about: 'FIVE DRIVES. KEEP THEM IN PLAY, AND HIT THEM A LONG WAY.' },
-  { key: 'target', skill: 'accuracy', name: 'TARGET GREENS', about: 'FIVE APPROACHES FROM 140 TO 170 YARDS. HIT THE GREEN.' },
-  { key: 'chip', skill: 'shortGame', name: 'CHIP TO THE CIRCLE', about: 'FIVE PITCHES FROM 30 TO 70 YARDS. FINISH WITHIN 3 YARDS.' },
-  { key: 'escape', skill: 'recovery', name: 'ESCAPE ARTIST', about: 'FIVE BALLS IN SAND AND ROUGH. GET THEM ON THE GREEN.' },
+  { key: 'drive', skill: 'power', name: 'LONG DRIVE', aim: 'DRIVE DOWN THE FAIRWAY', about: 'FIVE DRIVES. KEEP THEM IN PLAY, AND HIT THEM A LONG WAY.' },
+  { key: 'target', skill: 'accuracy', name: 'TARGET GREENS', aim: 'HIT THE GREEN WITH THE TARGET FLAG', about: 'FIVE APPROACHES FROM 140 TO 170 YARDS. HIT THE GREEN.' },
+  { key: 'chip', skill: 'shortGame', name: 'CHIP TO THE CIRCLE', aim: 'CHIP INTO THE CIRCLE ROUND THE TARGET FLAG', about: 'FIVE PITCHES FROM 30 TO 70 YARDS. FINISH WITHIN 3 YARDS.' },
+  { key: 'escape', skill: 'recovery', name: 'ESCAPE ARTIST', aim: 'GET IT ON THE GREEN WITH THE TARGET FLAG', about: 'FIVE BALLS IN SAND AND ROUGH. GET THEM ON THE GREEN.' },
   { key: 'putt', skill: 'putting', name: 'PUTTING CHALLENGE', about: 'FIVE PUTTS FROM 6 TO 30 FEET. HOLE THEM.' },
 ];
 const drill = (key) => DRILLS.find((d) => d.key === key);
@@ -4271,7 +4274,7 @@ const MEMBERS = [
     skills: { power: 36, accuracy: 54, shortGame: 50, recovery: 44, putting: 58 } },
   { id: 'sal', name: 'Swift Sal', look: 'athletic', shirt: '#2f9a4a', nerve: 0.6, about: 'CLUB CHAMPION TWO YEARS RUNNING.',
     skills: { power: 52, accuracy: 52, shortGame: 50, recovery: 50, putting: 48 } },
-  { id: 'chip', name: 'Chippy Pete', look: 'casual', shirt: '#e8e8f0', nerve: 0.4, about: 'MISSES GREENS, THEN CHIPS IN.',
+  { id: 'chip', name: 'Chippy Pete', look: 'club', shirt: '#e8e8f0', nerve: 0.4, about: 'MISSES GREENS, THEN CHIPS IN.',
     skills: { power: 40, accuracy: 42, shortGame: 60, recovery: 52, putting: 50 } },
   { id: 'vince', name: 'Vince Vallance', look: 'club', shirt: '#8a4ad0', nerve: 0.7, rival: true, about: 'YOUR RIVAL. ALWAYS ONE STEP AHEAD.',
     skills: { power: 47, accuracy: 47, shortGame: 47, recovery: 44, putting: 47 } },
@@ -4316,7 +4319,14 @@ function finishRound(c, result) {
     k.left -= 1;
     if (k.left <= 0) { c.worn.push(kitItem(k.id)?.name ?? slot); delete c.kit[slot]; }
   }
-  if (!result.comp && !result.eventRound && !result.sim) c.midweek = m ? 'match' : 'round';
+  // A midweek challenge pays out if you did it.
+  if (result.challenge?.met) c.money += result.challenge.prize;
+  if (!result.comp && !result.eventRound && !result.sim) c.midweek = result.challenge ? 'challenge' : m ? 'match' : 'round';
+  // Your best rounds, nine and eighteen holes, for the career record.
+  if (!result.sim && !m && (result.holes === 9 || result.holes === 18) && result.par) {
+    const best = ((c.stats ??= {}).best ??= {}), d = result.score - result.par, was = best[result.holes];
+    if (!was || d < was.toPar) best[result.holes] = { toPar: d, score: result.score, course: result.course, season: c.season };
+  }
 }
 
 // ---------- Practice ----------
@@ -4404,14 +4414,24 @@ const EVENTS = {
   tourChamp: { kind: 'tourChamp', name: 'TOUR CHAMPIONSHIP', holes: 18, rounds: 4, cut: 16, fee: 300, title: 'TOUR CHAMPION', big: true,
     prizes: [30000, 16000, 10000, 7000, 5500, 4500, 3800, 3200, 2800, 2400, 2100, 1900, 1700, 1500, 1300] },
 };
-// The tiers you can play so far, and where winning one takes you.
+// The four majors, one a quarter at the top level, on the majors' own courses.
+// Between them the best players keep playing the tour's classics.
+const MAJORS = [
+  { kind: 'major', name: 'THE AZALEA INVITATIONAL', short: 'AZALEA' },
+  { kind: 'major', name: 'THE NATIONAL OPEN', short: 'NATIONAL OPEN' },
+  { kind: 'major', name: 'THE LINKS CHAMPIONSHIP', short: 'LINKS' },
+  { kind: 'major', name: 'THE PLAYERS CROWN', short: 'PLAYERS CROWN' },
+].map((m) => ({ ...m, holes: 18, rounds: 4, cut: 16, fee: 500, big: true, major: true, title: `${m.short} CHAMPION`,
+  prizes: [50000, 28000, 18000, 13000, 10000, 8500, 7300, 6200, 5300, 4600, 4000, 3500, 3100, 2700, 2400] }));
+// The tiers, and where winning one takes you; the majors are the top.
 const NEXT_TIER = { club: 'county', county: 'challenge', challenge: 'tour', tour: 'majors' };
-const PLAYABLE_TIERS = ['club', 'county', 'challenge', 'tour'];
+const PLAYABLE_TIERS = ['club', 'county', 'challenge', 'tour', 'majors'];
 // How much tournament dressing a tier's events get (see tournamentSites):
 // county banners and flags, stands at the closing holes on the challenge tour,
-// and everything, TV and all, on the main tour.
-const DRESSING = { club: 0, county: 1, challenge: 2, tour: 3, majors: 3 };
-const TIER_OF = { rollup: 'club', medal: 'club', championship: 'club', open: 'county', county: 'county', challenge: 'challenge', final: 'challenge', tour: 'tour', tourChamp: 'tour' };
+// everything, TV and all, on the main tour, and the presentation stage too
+// at a major.
+const DRESSING = { club: 0, county: 1, challenge: 2, tour: 3, majors: 4 };
+const TIER_OF = { rollup: 'club', medal: 'club', championship: 'club', open: 'county', county: 'county', challenge: 'challenge', final: 'challenge', tour: 'tour', tourChamp: 'tour', major: 'majors' };
 const eventTier = (ev) => TIER_OF[ev.kind] ?? 'club';
 
 // Where a county or tour event is played: a different course of the tier each
@@ -4424,7 +4444,14 @@ const placeName = (course) => course.name.replace(/ (GOLF|NATIONAL).*$/, '');
 const WEEKLY = { county: ['open', 'county', 'OPEN'], challenge: ['challenge', 'final', 'CHALLENGE'], tour: ['tour', 'tourChamp', 'CLASSIC'] };
 
 // The weekend event in a week: what it is and where (`venue`, a course).
+const MAJOR_WEEKS = [3, 6, 9, 12];
 function eventFor(c, week = c.week) {
+  if (c.tier === 'majors') {
+    const m = MAJOR_WEEKS.indexOf(week);
+    if (m >= 0) return { ...MAJORS[m], week, venue: COURSE_LIST.majors[m] };
+    const venue = venueFor('tour', week);
+    return { ...EVENTS.tour, name: `${placeName(venue)} CLASSIC`, week, venue };
+  }
   if (WEEKLY[c.tier]) {
     const [weekly, big, word] = WEEKLY[c.tier], venue = venueFor(c.tier, week);
     return week === WEEKS ? { ...EVENTS[big], week, venue } : { ...EVENTS[weekly], name: `${placeName(venue)} ${word}`, week, venue };
@@ -4447,16 +4474,16 @@ const REGULARS = [
 const COUNTY = [
   { id: 'lofty', name: 'Lofty Lewis', look: 'tall', shirt: '#2f6fd6', nerve: 0.7, skills: { power: 66, accuracy: 50, shortGame: 50, recovery: 52, putting: 52 } },
   { id: 'sandy', name: 'Sandy Banks', look: 'casual', shirt: '#e0a020', nerve: 0.4, skills: { power: 50, accuracy: 54, shortGame: 60, recovery: 62, putting: 54 } },
-  { id: 'rory', name: 'Rory Rough', look: 'athletic', shirt: '#d03a2a', nerve: 0.8, skills: { power: 60, accuracy: 48, shortGame: 54, recovery: 60, putting: 50 } },
+  { id: 'rory', name: 'Rory Rough', look: 'club', shirt: '#d03a2a', nerve: 0.8, skills: { power: 60, accuracy: 48, shortGame: 54, recovery: 60, putting: 50 } },
   { id: 'max', name: 'Max Yardage', look: 'heavy', shirt: '#8a4ad0', nerve: 0.6, skills: { power: 68, accuracy: 50, shortGame: 48, recovery: 50, putting: 50 } },
-  { id: 'penny', name: 'Penny Pitchmark', look: 'club', shirt: '#2f9a4a', nerve: 0.3, skills: { power: 48, accuracy: 60, shortGame: 58, recovery: 52, putting: 60 } },
+  { id: 'penny', name: 'Penny Pitchmark', look: 'casual', shirt: '#2f9a4a', nerve: 0.3, skills: { power: 48, accuracy: 60, shortGame: 58, recovery: 52, putting: 60 } },
   { id: 'barry', name: 'Barry Bunker', look: 'heavy', shirt: '#e8e8f0', nerve: 0.5, skills: { power: 54, accuracy: 50, shortGame: 58, recovery: 58, putting: 50 } },
   { id: 'ivy', name: 'Ivy Irons', look: 'athletic', shirt: '#e8e8f0', nerve: 0.4, skills: { power: 52, accuracy: 64, shortGame: 54, recovery: 50, putting: 54 } },
   { id: 'cleek', name: 'Colonel Cleek', look: 'veteran', shirt: null, nerve: 0.2, skills: { power: 44, accuracy: 60, shortGame: 58, recovery: 50, putting: 64 } },
   { id: 'ron', name: 'Big Ron Rollins', look: 'heavy', shirt: '#d03a2a', nerve: 0.9, skills: { power: 70, accuracy: 44, shortGame: 46, recovery: 54, putting: 48 } },
-  { id: 'fran', name: 'Fairway Fran', look: 'club', shirt: '#e0a020', nerve: 0.3, skills: { power: 50, accuracy: 62, shortGame: 52, recovery: 48, putting: 56 } },
-  { id: 'kenny', name: 'Kenny Kickback', look: 'casual', shirt: '#2f6fd6', nerve: 0.6, skills: { power: 54, accuracy: 52, shortGame: 62, recovery: 54, putting: 58 } },
-  { id: 'hattie', name: 'Hattie Hazard', look: 'tall', shirt: '#2f9a4a', nerve: 0.7, skills: { power: 58, accuracy: 54, shortGame: 54, recovery: 56, putting: 56 } },
+  { id: 'fran', name: 'Fairway Fran', look: 'athletic', shirt: '#e0a020', nerve: 0.3, skills: { power: 50, accuracy: 62, shortGame: 52, recovery: 48, putting: 56 } },
+  { id: 'kenny', name: 'Kenny Kickback', look: 'heavy', shirt: '#2f6fd6', nerve: 0.6, skills: { power: 54, accuracy: 52, shortGame: 62, recovery: 54, putting: 58 } },
+  { id: 'hattie', name: 'Hattie Hazard', look: 'casual', shirt: '#2f9a4a', nerve: 0.7, skills: { power: 58, accuracy: 54, shortGame: 54, recovery: 56, putting: 56 } },
 ];
 
 // The tours: young pros on the challenge tour, the best in the game on the
@@ -4469,7 +4496,12 @@ const TOUR_NAMES = ['Duke Driveway', 'Ace Archer', 'Sunny Sweetspot', 'Brooks Bi
   'Rex Redzone', 'Ingrid Inswing', 'Clint Clubface', 'Pip Pinseeker', 'Monty Mallet', 'Jet Jansen', 'Nico Niblett', 'Bea Bogeyfree',
   'Cal Cartpath', 'Rio Rollout', 'Stella Stinger', 'Hugo Hangtime', 'Dale Downhill', 'Mika Mashie', 'Lance Loft', 'Ruby Reload',
   'Frankie Flop', 'Wally Wedgeworth', 'Suzy Spin', 'Theo Tapin', 'Nina Nineiron', 'Gil Greenreader', 'Kingsley Crown'];
-const PRO_LOOKS = ['athletic', 'tall', 'club'];
+// The athletic and casual sheets are women golfers, so the pros' looks go by
+// their names.
+const WOMEN = new Set(['Dot', 'Lulu', 'Kiki', 'Holly', 'Tess', 'Fiona', 'Sunny', 'Grace', 'Ingrid', 'Bea', 'Stella', 'Mika',
+  'Ruby', 'Suzy', 'Nina']);
+const PRO_LOOKS = ['tall', 'club'];
+const proLook = (name, i) => (WOMEN.has(name.split(' ')[0]) ? 'athletic' : PRO_LOOKS[i % 2]);
 const PRO_SHIRTS = ['#1e2a5a', '#e8e8f0', '#d85a9a', '#2fb0a0', '#2a2a30', '#c8a040', '#d03a2a', '#2f6fd6'];
 const SKILL_KEYS = ['power', 'accuracy', 'shortGame', 'recovery', 'putting'];
 function pros(names, tier, level) {
@@ -4478,17 +4510,19 @@ function pros(names, tier, level) {
     // The last few names are the tour's stars, a little better than the rest.
     const star = Math.max(0, i - names.length + 5);
     const skills = Object.fromEntries(SKILL_KEYS.map((k) => [k, Math.round(level + star + (r.next() - 0.5) * 10 + (k === best ? 7 : 0))]));
-    return { id: `${tier}-${i}`, name, look: PRO_LOOKS[i % 3], shirt: PRO_SHIRTS[(i * 3) % PRO_SHIRTS.length], nerve: Math.round((0.2 + r.next() * 0.7) * 10) / 10, skills };
+    return { id: `${tier}-${i}`, name, look: proLook(name, i), shirt: PRO_SHIRTS[(i * 3) % PRO_SHIRTS.length], nerve: Math.round((0.2 + r.next() * 0.7) * 10) / 10, skills };
   });
 }
 const CHALLENGE = pros(CHALLENGE_NAMES, 'challenge', 58);
 const TOUR = pros(TOUR_NAMES, 'tour', 66);
+// At the top the same faces, a few years on and a few points better.
+const ELITE = pros(TOUR_NAMES, 'tour', 70);
 
 // Your second rival turns up on the challenge tour, and like Vince keeps
 // ahead of you, by a bit more.
 function dexGolfer(c) {
   const skills = Object.fromEntries(SKILL_KEYS.map((k) => [k, Math.max(60, Math.round(c.skills[k]) + 3)]));
-  return { id: 'dex', name: 'Dex Dashwood', look: 'athletic', shirt: '#2a2a30', ai: true, nerve: 0.8, rival: true, skills };
+  return { id: 'dex', name: 'Dex Dashwood', look: 'tall', shirt: '#2a2a30', ai: true, nerve: 0.8, rival: true, skills };
 }
 
 // Everyone who plays a tier's events (but you), as golfers. Club members and
@@ -4498,7 +4532,8 @@ function fieldFor(c, tier = c.tier) {
   const vince = { id: 'vince', ...memberGolfer(c, 'vince') };
   if (tier === 'county') return [...COUNTY.map((g) => ({ ...g, shirt: g.shirt ?? VETERAN_SHIRT })), vince];
   if (tier === 'challenge') return [...CHALLENGE, vince, dexGolfer(c)];
-  if (tier === 'tour' || tier === 'majors') return [...TOUR, vince, dexGolfer(c)];
+  if (tier === 'tour') return [...TOUR, vince, dexGolfer(c)];
+  if (tier === 'majors') return [...ELITE, vince, dexGolfer(c)];
   return [...MEMBERS.map((m) => ({ id: m.id, ...memberGolfer(c, m.id) })), ...REGULARS];
 }
 // One of them as a golfer to play alongside.
@@ -4506,7 +4541,7 @@ function fieldGolfer(c, id) {
   const g = everyone(c).find((x) => x.id === id);
   return { name: g.name, look: g.look, shirt: g.shirt, ai: true, nerve: g.nerve, skills: g.skills };
 }
-const everyone = (c) => ['club', 'county', 'challenge', 'tour'].flatMap((t) => fieldFor(c, t));
+const everyone = (c) => ['club', 'county', 'challenge', c.tier === 'majors' ? 'majors' : 'tour'].flatMap((t) => fieldFor(c, t));
 const nameOf = (c, id) => (id === 'you' ? c.name : everyone(c).find((x) => x.id === id)?.name ?? id);
 
 // How many shots over par per hole a golfer averages, from the course's rating
@@ -4679,11 +4714,86 @@ function endWeek(c) {
   const champion = (c.titles ?? []).some((t) => t.season === c.season && t.title === big.title);
   const up = NEXT_TIER[c.tier], earned = !!up && (pos <= PROMOTED || champion);
   const promoted = earned && PLAYABLE_TIERS.includes(up);
-  c.lastSeason = { season: c.season, tier: c.tier, pos, of: table.length, champion, earned, promoted, to: up, table: table.map(({ name, pts, pos: n, you }) => ({ name, pts, pos: n, you })), seen: false };
+  // At the top there's nowhere to go: the best of the year is player of the year.
+  const best = !up && pos === 1;
+  if (best) c.titles = [...(c.titles ?? []), { season: c.season, title: 'PLAYER OF THE YEAR' }];
+  const rivals = table.filter((p) => RIVALS[p.id]).map((p) => ({ name: p.name, pos: p.pos }));
+  c.lastSeason = { season: c.season, tier: c.tier, pos, of: table.length, champion, earned, promoted, best, to: up, rivals, table: table.map(({ name, pts, pos: n, you }) => ({ name, pts, pos: n, you })), seen: false };
+  c.seasons = [...(c.seasons ?? []), { season: c.season, tier: c.tier, pos, promoted }];
   if (promoted) c.tier = up;
   c.season += 1;
   c.week = 1;
   c.merit = {};
+}
+
+// ---------- Rivals and the record ----------
+
+// Your rivals: Vince from the start, Dex from the challenge tour.
+const RIVALS = { vince: 'VINCE', dex: 'DEX' };
+
+// What an event's final board means for the rivalry: who finished ahead of
+// whom (when you both played), and news when a rival wins one, above all one
+// you missed. Returns the news lines.
+function eventStory(c, ev, rows) {
+  const me = rows.find((r) => r.you), news = [];
+  c.rivals ??= {};
+  for (const id of Object.keys(RIVALS)) {
+    const r = rows.find((x) => x.id === id);
+    if (!r) continue;
+    if (r.pos === 1) news.push(`${r.name.toUpperCase()} WON ${ev.name.startsWith('THE ') ? '' : 'THE '}${ev.name}${me ? '' : ' WITHOUT YOU THERE'}`);
+    if (!me) continue;
+    const h = (c.rivals[id] ??= { ahead: 0, behind: 0 });
+    const place = (x) => x.pos ?? 999 + x.total; // a missed cut is behind anyone who made it
+    if (place(me) < place(r)) h.ahead += 1; else h.behind += 1;
+  }
+  return news;
+}
+
+// Note a finished event of yours in the career record.
+function recordEvent(c, ev, comp) {
+  const s = (c.stats ??= {});
+  const add = (k, n = 1) => { s[k] = (s[k] ?? 0) + n; };
+  add('events');
+  if (comp.pos === 1) add('wins');
+  if (comp.pos && comp.pos <= 3) add('top3');
+  if (comp.mc) add('missed');
+  add('prizeMoney', comp.prize);
+  if (comp.pos === 1 && ev.major) add('majors');
+}
+
+// ---------- Midweek challenges ----------
+
+// A one-off challenge for the week's midweek slot: nine holes on one of your
+// courses, playing with Bertie as your marker, for a prize that grows with
+// the tier. Beat a score, make some birdies, or keep a clean card.
+const CHALLENGE_PRIZE = { club: 15, county: 40, challenge: 150, tour: 600, majors: 1500 };
+const toParWords = (d) => (d === 0 ? 'LEVEL PAR' : d > 0 ? `${d} OVER` : `${-d} UNDER`);
+function challengeFor(c) {
+  const r = makeRng(c.season * 1009 + c.week * 37 + 11);
+  const courses = clubCourses(c), course = courses[r.int(0, courses.length - 1)];
+  const where = course.id === c.home.id ? 'AT HOME' : `AT ${placeName(course)}`;
+  const kind = ['break', 'birdies', 'clean'][r.int(0, 2)];
+  const prize = CHALLENGE_PRIZE[c.tier] ?? 15;
+  const ch = { kind, prize, where, course: { ...course, holes: 9 } };
+  if (kind === 'break') {
+    // A little better than you'd expect to manage there.
+    ch.target = Math.round(holeMean(course.rating, playingSkills(c)) * 9 - 0.6);
+    ch.text = `${toParWords(ch.target)} OR BETTER`;
+  } else if (kind === 'birdies') {
+    ch.target = { club: 1, county: 1, challenge: 2, tour: 2, majors: 3 }[c.tier] ?? 1;
+    ch.text = ch.target === 1 ? 'MAKE A BIRDIE' : `MAKE ${ch.target} BIRDIES`;
+  } else {
+    ch.text = 'NO DOUBLE BOGEYS';
+  }
+  return ch;
+}
+
+// Whether a card (`scores` on `pars`) meets a challenge.
+function challengeMet(ch, scores, pars) {
+  const holes = pars.slice(0, 9).map((par, i) => scores[i] - par);
+  if (ch.kind === 'break') return holes.reduce((t, d) => t + d, 0) <= ch.target;
+  if (ch.kind === 'birdies') return holes.filter((d) => d < 0).length >= ch.target;
+  return holes.every((d) => d < 2);
 }
 
 // ---- menus.js ----
@@ -4742,11 +4852,22 @@ function titleLayout(W, H, hasSave) {
     ...(hasSave ? [next('continue', 'CONTINUE CAREER')] : []),
     next('new', 'NEW CAREER'),
     next('free', 'FREE PLAY'),
+    next('fullscreen', 'FULL SCREEN'),
   ];
 }
 
-function drawTitle(ctx, W, H, { buttons, hover, save }) {
-  const logo = 'PIXEL GOLF';
+// A short note along the bottom of a menu screen.
+function drawMenuNote(ctx, W, H, text) {
+  const w = textWidth(text) + 16;
+  ctx.fillStyle = '#2c2050';
+  ctx.fillRect(mid(W, w), H - 34, w, 13);
+  drawText(ctx, text, mid(W, textWidth(text)), H - 30, '#f08a8a', 1, null);
+}
+
+function drawTitle(ctx, W, H, { buttons, hover, save, full }) {
+  const fs = buttons.find((b) => b.key === 'fullscreen');
+  if (fs) fs.label = full ? 'LEAVE FULL SCREEN' : 'FULL SCREEN';
+  const logo = 'FAIRWAY PIXELS';
   drawText(ctx, logo, mid(W, textWidth(logo, 6)), Math.round(H * 0.2), GOLD, 6);
   const tag = 'A RETRO GOLF CAREER';
   drawText(ctx, tag, mid(W, textWidth(tag, 2)), Math.round(H * 0.2) + 42, '#ffffff', 2);
@@ -4755,7 +4876,7 @@ function drawTitle(ctx, W, H, { buttons, hover, save }) {
     const line = `${save.name}, SEASON ${save.season} WEEK ${save.week}, £${save.money}`;
     drawText(ctx, line, mid(W, textWidth(line)), buttons[0].y + buttons[0].h + 3, QUIET, 1, null);
   }
-  const help = 'CLICK A BUTTON, OR UP/DOWN AND ENTER';
+  const help = 'CLICK A BUTTON, OR UP/DOWN AND ENTER.  F FOR FULL SCREEN ANY TIME';
   drawText(ctx, help, mid(W, textWidth(help)), H - 16, QUIET, 1, null);
 }
 
@@ -4822,7 +4943,7 @@ function drawNewCareer(ctx, W, H, L, { draft, hover, now, replaces }) {
 // ---------- Clubhouse ----------
 
 function hubLayout(W, H, career) {
-  const pw = 512, ph = 252, px = mid(W, pw), py = mid(H, ph);
+  const pw = 512, ph = 278, px = mid(W, pw), py = mid(H, ph);
   const play = career.round ? `CONTINUE ${career.round.match ? 'MATCH' : 'ROUND'}, HOLE ${career.round.hole}` : 'PRACTICE ROUND';
   return {
     panel: { x: px, y: py, w: pw, h: ph },
@@ -4832,13 +4953,16 @@ function hubLayout(W, H, career) {
     shop: { key: 'shop', label: 'PRO SHOP', x: px + pw - 430, y: py + ph - 30, w: 84, h: 18 },
     // The week, in a card on the right: the midweek slot, the weekend event
     // (enter or skip it) and where you stand on the order of merit.
-    card: { x: px + pw - 172, y: py + 40, w: 156, h: 96 },
+    card: { x: px + pw - 172, y: py + 40, w: 156, h: 124 },
+    // This week's one-off challenge, another way to spend midweek.
+    tryChallenge: { key: 'try-challenge', label: 'TRY IT', x: px + pw - 68, y: py + 52, w: 44, h: 12 },
     // Partway through a longer event: play the next round, or work it out.
-    event: career.event ? { key: 'event-play', label: `PLAY ROUND ${career.event.round + 1}`, x: px + pw - 164, y: py + 98, w: 84, h: 14 }
-      : { key: 'event', label: `ENTER £${eventFor(career).fee}`, x: px + pw - 164, y: py + 98, w: 84, h: 14 },
-    skip: career.event ? { key: 'event-sim', label: 'SIM', x: px + pw - 74, y: py + 98, w: 50, h: 14 }
-      : { key: 'skip', label: 'SKIP', x: px + pw - 74, y: py + 98, w: 50, h: 14 },
-    merit: { key: 'merit', label: 'TABLE', x: px + pw - 64, y: py + 118, w: 40, h: 12 },
+    event: career.event ? { key: 'event-play', label: `PLAY ROUND ${career.event.round + 1}`, x: px + pw - 164, y: py + 126, w: 84, h: 14 }
+      : { key: 'event', label: `ENTER £${eventFor(career).fee}`, x: px + pw - 164, y: py + 126, w: 84, h: 14 },
+    skip: career.event ? { key: 'event-sim', label: 'SIM', x: px + pw - 74, y: py + 126, w: 50, h: 14 }
+      : { key: 'skip', label: 'SKIP', x: px + pw - 74, y: py + 126, w: 50, h: 14 },
+    merit: { key: 'merit', label: 'TABLE', x: px + pw - 64, y: py + 146, w: 40, h: 12 },
+    record: { key: 'record', label: 'CAREER', x: px + pw - 88, y: py + 12, w: 72, h: 14 },
     menu: { key: 'menu', label: 'MENU', x: px + 16, y: py + ph - 30, w: 56, h: 18 },
   };
 }
@@ -4869,10 +4993,19 @@ function drawHub(ctx, W, H, L, { career: c, hover, now }) {
   if (c.report) drawText(ctx, `LAST ROUND: ${c.report.good} GOOD SHOTS, ${c.report.bad} BAD`, sx, sy + 66, QUIET, 1, null);
 
   // Recent rounds.
-  const ry = p.y + 144;
+  const ry = p.y + 172;
   drawText(ctx, 'RECENT ROUNDS', sx, ry, DIM, 1, null);
   if (!c.history.length) drawText(ctx, 'NONE YET. PLAY NINE HOLES AT YOUR CLUB.', sx, ry + 11, QUIET, 1, null);
   c.history.slice(0, 5).forEach((r, i) => {
+    if (r.news) {
+      drawText(ctx, `WK ${r.week}  ${r.news}`, sx, ry + 11 + i * 9, '#c89af0', 1, null);
+      return;
+    }
+    if (r.challenge) {
+      const ch = r.challenge;
+      drawText(ctx, `WK ${r.week}  CHALLENGE, ${ch.text}: ${ch.met ? `DONE!  +£${ch.prize}` : `MISSED (${toPar(r.score - r.par)})`}`, sx, ry + 11 + i * 9, ch.met ? GOLD : '#f08a8a', 1, null);
+      return;
+    }
     if (r.skipped) {
       drawText(ctx, `WK ${r.week}  SKIPPED ${r.skipped.name}. ${r.skipped.winner.toUpperCase()} WON`, sx, ry + 11 + i * 9, QUIET, 1, null);
       return;
@@ -4919,24 +5052,33 @@ function drawHub(ctx, W, H, L, { career: c, hover, now }) {
     if (cut) drawText(ctx, cut, cd.x + 8, cd.y + 46, ev.cutMade ? '#7ee07e' : QUIET, 1, null);
     menuButton(ctx, L.event, hover === L.event.key);
     menuButton(ctx, L.skip, hover === L.skip.key);
-    drawText(ctx, 'SIM: WORKED OUT FROM YOUR SKILLS', cd.x + 8, cd.y + 76, QUIET, 1, null);
+    drawText(ctx, 'SIM: WORKED OUT FROM YOUR SKILLS', cd.x + 8, cd.y + 104, QUIET, 1, null);
   }
   if (!c.round && !c.event) {
     ctx.fillStyle = '#2c2050';
     ctx.fillRect(cd.x, cd.y, cd.w, cd.h);
-    const done = { practice: 'PRACTISED', match: 'PLAYED A MONEY MATCH', round: 'PLAYED A PRACTICE ROUND' }[c.midweek];
+    const done = { practice: 'PRACTISED', match: 'PLAYED A MONEY MATCH', round: 'PLAYED A PRACTICE ROUND', challenge: 'TOOK THE CHALLENGE' }[c.midweek];
     drawText(ctx, done ? `MIDWEEK: ${done}` : 'MIDWEEK: PICK ONE BELOW', cd.x + 8, cd.y + 6, done ? QUIET : '#7ee07e', 1, null);
-    drawText(ctx, 'THIS WEEKEND', cd.x + 8, cd.y + 19, DIM, 1, null);
-    drawText(ctx, ev.name, cd.x + 8, cd.y + 29, GOLD, 1, null);
+    if (!done) {
+      const ch = challengeFor(c);
+      drawText(ctx, 'OR THE CHALLENGE:', cd.x + 8, cd.y + 15, DIM, 1, null);
+      drawText(ctx, ch.text, cd.x + 8, cd.y + 26, '#ffffff', 1, null);
+      drawText(ctx, `9 HOLES ${ch.where}, £${ch.prize}`, cd.x + 8, cd.y + 35, QUIET, 1, null);
+      menuButton(ctx, L.tryChallenge, hover === 'try-challenge');
+    }
+    const wy = cd.y + 28; // the weekend, below the midweek
+    drawText(ctx, 'THIS WEEKEND', cd.x + 8, wy + 19, DIM, 1, null);
+    drawText(ctx, ev.name, cd.x + 8, wy + 29, GOLD, 1, null);
     const where = ev.venue.id === c.home.id ? 'AT HOME' : `AT ${ev.venue.name.replace(/ GOLF.*$/, '')}`;
-    drawText(ctx, `${ev.holes} HOLES ${where}`, cd.x + 8, cd.y + 39, '#ffffff', 1, null);
-    drawText(ctx, `PRIZES ${ev.prizes.map((v) => `£${v}`).join(' / ')}`, cd.x + 8, cd.y + 48, QUIET, 1, null);
+    const rounds = ev.rounds > 1 ? `${ev.rounds} ROUNDS` : `${ev.holes} HOLES`;
+    drawText(ctx, `${rounds} ${where}`, cd.x + 8, wy + 39, '#ffffff', 1, null);
+    drawText(ctx, `PRIZES ${ev.prizes.slice(0, 3).map((v) => `£${v}`).join(' / ')}`, cd.x + 8, wy + 48, QUIET, 1, null);
     menuButton(ctx, L.event, hover === 'event', c.money >= ev.fee);
     menuButton(ctx, L.skip, hover === 'skip');
     const me = meritTable(c).find((r) => r.you);
-    drawText(ctx, 'ORDER OF MERIT', cd.x + 8, cd.y + 76, DIM, 1, null);
-    if (me.pts) drawText(ctx, `${ordinal(me.pos)}, ${me.pts} PTS`, cd.x + 8, cd.y + 85, me.pos <= PROMOTED ? '#7ee07e' : '#ffffff', 1, null);
-    else drawText(ctx, 'NO POINTS YET', cd.x + 8, cd.y + 85, QUIET, 1, null);
+    drawText(ctx, 'ORDER OF MERIT', cd.x + 8, wy + 76, DIM, 1, null);
+    if (me.pts) drawText(ctx, `${ordinal(me.pos)}, ${me.pts} PTS`, cd.x + 8, wy + 85, me.pos <= PROMOTED ? '#7ee07e' : '#ffffff', 1, null);
+    else drawText(ctx, 'NO POINTS YET', cd.x + 8, wy + 85, QUIET, 1, null);
     menuButton(ctx, L.merit, hover === 'merit');
     if (c.money < ev.fee) drawText(ctx, `NEED £${ev.fee} TO ENTER`, cd.x + 8, cd.y + cd.h + 3, '#f08a8a', 1, null);
   }
@@ -4945,6 +5087,7 @@ function drawHub(ctx, W, H, L, { career: c, hover, now }) {
   else if (c.worn?.length) drawText(ctx, `WORN OUT: ${c.worn.join(', ')}. THE PRO SHOP HAS MORE.`, p.x + 16, p.y + p.h - 44, '#f08a8a', 1, null);
 
   menuButton(ctx, L.menu, hover === 'menu');
+  if (!c.round) menuButton(ctx, L.record, hover === 'record');
   menuButton(ctx, L.play, hover === 'play', !!c.round || (!c.midweek && !c.event));
   if (!c.round) {
     // The midweek choices, greyed once you've used the week's slot.
@@ -5197,7 +5340,7 @@ function drawResults(ctx, W, H, L, { results: res, rows, hover }) {
 
 // The order of merit as a table, or how the season ended with the final one.
 function meritLayout(W, H, n, key = 'back') {
-  const pw = 300, ph = 64 + n * 9 + 34, px = mid(W, pw), py = mid(H, ph);
+  const pw = 300, ph = 70 + n * 9 + 34, px = mid(W, pw), py = mid(H, ph);
   return {
     panel: { x: px, y: py, w: pw, h: ph },
     back: { key, label: key === 'back' ? 'BACK' : 'ON TO NEXT SEASON', x: px + pw - (key === 'back' ? 76 : 156), y: py + ph - 28, w: key === 'back' ? 60 : 140, h: 18 },
@@ -5229,13 +5372,73 @@ function drawSeason(ctx, W, H, L, { season: s, career: c, hover }) {
   panel(ctx, p.x, p.y, p.w, p.h);
   drawText(ctx, `SEASON ${s.season} IS OVER`, p.x + 16, p.y + 12, GOLD, 2);
   const how = s.champion ? `YOU WON THE BIG ONE AND FINISHED ${ordinal(s.pos)}.` : `YOU FINISHED ${ordinal(s.pos)} OF ${s.of} ON THE ORDER OF MERIT.`;
-  const next = s.promoted ? `PROMOTED! NEXT SEASON IS ${up} GOLF. VINCE IS COMING TOO.`
+  const rivals = s.tier === 'club' || s.tier === 'county' ? 'VINCE IS COMING TOO.' : 'SO ARE YOUR RIVALS.';
+  const next = s.best ? 'PLAYER OF THE YEAR! THE BEST IN THE GAME.'
+    : s.promoted ? `PROMOTED! NEXT SEASON IS ${up} GOLF. ${rivals}`
     : s.earned ? `YOU'VE EARNED A PLACE AT ${up} LEVEL. IT OPENS SOON.`
-    : `ANOTHER SEASON AT ${TIER_NAMES[s.tier]} LEVEL. TOP ${PROMOTED} GO UP.`;
+    : s.to ? `ANOTHER SEASON AT ${TIER_NAMES[s.tier]} LEVEL. TOP ${PROMOTED} GO UP.`
+    : 'ANOTHER YEAR OF MAJORS. FINISH TOP TO BE PLAYER OF THE YEAR.';
   drawText(ctx, how, p.x + 16, p.y + 32, DIM, 1, null);
-  drawText(ctx, next, p.x + 16, p.y + 42, s.earned ? '#7ee07e' : '#ffffff', 1, null);
-  meritRowsAt(ctx, p, s.table, p.y + 58);
+  drawText(ctx, next, p.x + 16, p.y + 42, s.earned || s.best ? '#7ee07e' : '#ffffff', 1, null);
+  if (s.rivals?.length) drawText(ctx, `RIVALS: ${s.rivals.map((r) => `${r.name.toUpperCase()} ${ordinal(r.pos)}`).join(', ')}`, p.x + 16, p.y + 52, '#c89af0', 1, null);
+  meritRowsAt(ctx, p, s.table, p.y + 64);
   menuButton(ctx, L.back, hover === 'carry-on');
+}
+
+// ---------- Career record ----------
+
+function recordLayout(W, H) {
+  const pw = 440, ph = 300, px = mid(W, pw), py = mid(H, ph);
+  return {
+    panel: { x: px, y: py, w: pw, h: ph },
+    back: { key: 'back', label: 'BACK', x: px + pw - 76, y: py + ph - 28, w: 60, h: 18 },
+  };
+}
+
+// Everything you've done: seasons, events, money, best rounds, rivals, titles.
+function drawRecord(ctx, W, H, L, { career: c, hover }) {
+  const p = L.panel, st = c.stats ?? {}, x = p.x + 16, x2 = p.x + 230;
+  panel(ctx, p.x, p.y, p.w, p.h);
+  drawText(ctx, `${c.name}: CAREER`, x, p.y + 12, GOLD, 2);
+  drawText(ctx, `SEASON ${c.season}, WEEK ${c.week}, AT ${TIER_NAMES[c.tier]} LEVEL`, x, p.y + 30, DIM, 1, null);
+  const line = (tx, y, label, value, colour = '#ffffff') => {
+    drawText(ctx, label, tx, y, QUIET, 1, null);
+    drawText(ctx, `${value}`, tx + 96, y, colour, 1, null);
+  };
+  let y = p.y + 48;
+  line(x, y, 'EVENTS PLAYED', st.events ?? 0); y += 10;
+  line(x, y, 'WINS', st.wins ?? 0, st.wins ? GOLD : '#ffffff'); y += 10;
+  line(x, y, 'TOP THREES', st.top3 ?? 0); y += 10;
+  line(x, y, 'MISSED CUTS', st.missed ?? 0); y += 10;
+  line(x, y, 'MAJORS WON', st.majors ?? 0, st.majors ? GOLD : '#ffffff'); y += 10;
+  line(x, y, 'PRIZE MONEY', `£${st.prizeMoney ?? 0}`, GOLD); y += 10;
+  const m = Object.values(c.members ?? {}).reduce((t, r) => ({ won: t.won + r.won, lost: t.lost + r.lost, halved: t.halved + r.halved }), { won: 0, lost: 0, halved: 0 });
+  line(x, y, 'MONEY MATCHES', `W${m.won} L${m.lost} H${m.halved}`); y += 16;
+  drawText(ctx, 'BEST ROUNDS', x, y, DIM, 1, null); y += 10;
+  for (const holes of [9, 18]) {
+    const b = st.best?.[holes];
+    line(x, y, `${holes} HOLES`, b ? `${b.score} (${toPar(b.toPar)}) ${b.course.replace(/ (GOLF|NATIONAL).*$/, '')}` : 'NONE YET'); y += 10;
+  }
+  y += 6;
+  drawText(ctx, 'RIVALS, FINISHING AHEAD OF THEM', x, y, DIM, 1, null); y += 10;
+  for (const [id, short] of Object.entries(RIVALS)) {
+    const r = c.rivals?.[id];
+    line(x, y, short, r ? `AHEAD ${r.ahead}, BEHIND ${r.behind}` : id === 'dex' && ['club', 'county'].includes(c.tier) ? 'NOT MET YET' : 'NO EVENTS TOGETHER YET', '#c89af0'); y += 10;
+  }
+  // Seasons and titles down the right.
+  let ry = p.y + 48;
+  drawText(ctx, 'SEASONS', x2, ry, DIM, 1, null); ry += 10;
+  const seasons = c.seasons ?? [];
+  if (!seasons.length) { drawText(ctx, 'FIRST SEASON UNDER WAY', x2, ry, QUIET, 1, null); ry += 10; }
+  for (const s of seasons.slice(-8)) {
+    drawText(ctx, `S${s.season}  ${TIER_NAMES[s.tier]}: ${ordinal(s.pos)}${s.promoted ? '  UP!' : ''}`, x2, ry, s.promoted ? '#7ee07e' : '#ffffff', 1, null); ry += 10;
+  }
+  ry += 6;
+  drawText(ctx, 'TITLES', x2, ry, DIM, 1, null); ry += 10;
+  const titles = c.titles ?? [];
+  if (!titles.length) drawText(ctx, 'NONE YET', x2, ry, QUIET, 1, null);
+  for (const t of titles.slice(-10)) { drawText(ctx, `S${t.season}  ${t.title}`, x2, ry, GOLD, 1, null); ry += 10; }
+  menuButton(ctx, L.back, hover === 'back');
 }
 
 // ---- main.js ----
@@ -5509,6 +5712,18 @@ function toggleEvent() {
   shareAddress();
 }
 
+// Full screen and back. A page shown inside another (as a shared link is) may
+// not be allowed to: then say to use the browser's own full screen key.
+function toggleFullscreen() {
+  const d = document;
+  const failed = () => { ui.banner = { text: 'FULL SCREEN ISN\'T ALLOWED HERE', sub: 'PRESS F11 FOR THE BROWSER\'S OWN FULL SCREEN', until: performance.now() + 3000 }; app.note = { text: 'FULL SCREEN ISN\'T ALLOWED HERE. PRESS F11 INSTEAD.', until: performance.now() + 3000 }; };
+  try {
+    if (d.fullscreenElement) d.exitFullscreen();
+    else if (!d.fullscreenEnabled || !d.documentElement.requestFullscreen) failed();
+    else d.documentElement.requestFullscreen().catch(failed);
+  } catch { failed(); }
+}
+
 // Play as the next golfer look (until there's a proper character picker).
 function changeGolfer() {
   if (settings.career) return;
@@ -5683,12 +5898,12 @@ function afterStroke(now, note) {
   startTurn(now, note);
 }
 
-function startTurn(now, note) {
+function startTurn(now, note, sub) {
   game.play.turn = nextTurn(game.play);
   const me = current(game.play);
   Object.assign(ui, { anim: null, aim: null, dragging: false, aiPlanned: false });
   const turn = me.onGreen ? (me.golfer.ai ? `${who(me.golfer)} TO PUTT` : 'YOUR PUTT') : yourTurn(me.golfer);
-  ui.banner = note ? { text: note, sub: turn, until: now + 2200 } : { text: turn, until: now + 1200 };
+  ui.banner = note ? { text: note, sub: sub ?? turn, until: now + 2200 } : { text: turn, until: now + 1200 };
   if (me.onGreen) {
     showMap(false);
     ui.phase = 'putting';
@@ -5813,7 +6028,8 @@ function standings() {
     const top = rows[0], tp = (d) => (d === 0 ? 'E' : d > 0 ? `+${d}` : `${d}`);
     return me.pos === 1 ? `LEADING THE ${settings.comp.name} AT ${tp(me.toPar)}` : `${me.pos} OF ${rows.length} AT ${tp(me.toPar)}. ${top.name.toUpperCase()} LEADS AT ${tp(top.toPar)}`;
   }
-  return round.players.map((p, i) => {
+  const ch = settings.challenge ? `CHALLENGE: ${settings.challenge.text}  ` : '';
+  return ch + round.players.map((p, i) => {
     const st = standing(round, i);
     return st.holes ? `${p.name.toUpperCase()} ${st.toPar === 0 ? 'E' : st.toPar > 0 ? `+${st.toPar}` : st.toPar}` : '';
   }).filter(Boolean).join('  ');
@@ -5854,7 +6070,7 @@ function holeFinished() {
 
 // Keep the career round in progress, `hole` being the next to play.
 function saveRound(hole) {
-  app.career.round = { course: playing, match: settings.match, comp: settings.comp, form, vs: golfers[1].name, hole, scores: round.players.map((p) => p.scores.slice()), putts: round.players.map((p) => p.putts.slice()) };
+  app.career.round = { course: playing, match: settings.match, comp: settings.comp, challenge: settings.challenge, form, vs: golfers[1].name, hole, scores: round.players.map((p) => p.scores.slice()), putts: round.players.map((p) => p.putts.slice()) };
   saveCareer(app.career);
 }
 
@@ -5916,6 +6132,7 @@ function drawPlay(now) {
   ctx.setTransform(1, 0, 0, 1, -Math.round(cam.x), -Math.round(cam.y));
   drawCourse();
 
+  if (settings.practice) drawDrillTarget();
   if (ui.phase === 'aim' && ui.aim) drawAim();
 
   // Each golfer stands beside their ball (or where they played from while it's
@@ -5927,6 +6144,8 @@ function drawPlay(now) {
   // one being played.
   const pins = world.holes.map((o) => o.toHere(o.hole.pin));
   pins.forEach((pin, i) => {
+    // A drill has one flag to aim at, so the other holes' are left out.
+    if (settings.practice && i > 0) return;
     const at = v.worldToScreen(pin);
     items.push({ y: at.y, draw: () => drawSprite(ctx, flagFrame(now, i > 0), at.x, at.y) });
   });
@@ -5972,8 +6191,25 @@ function drawPlay(now) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
 }
 
-// Every hole's number, over its flag and by its back tee.
+// The chipping drill's circle: three yards round the hole, where a ball has
+// to finish to count.
+function drawDrillTarget() {
+  if (settings.practice.key !== 'chip') return;
+  const v = world.view, pin = game.hole.pin;
+  ctx.fillStyle = '#f2c93a';
+  for (let k = 0; k < 24; k++) {
+    const a = k / 24 * Math.PI * 2, s = v.worldToScreen({ x: pin.x + Math.cos(a) * 3, y: pin.y + Math.sin(a) * 3 });
+    ctx.fillRect(Math.round(s.x) - 1, Math.round(s.y), 2, 1);
+  }
+}
+
+// Every hole's number, over its flag and by its back tee. In a drill, just
+// TARGET over the flag being played to.
 function drawHoleNumbers(v, flagHeight) {
+  if (settings.practice) {
+    const o = world.holes[0], pin = v.worldToScreen(o.toHere(o.hole.pin));
+    return drawHoleNumber(ctx, pin.x + 1, pin.y - 32 + flagHeight, 'TARGET', true);
+  }
   for (const [i, o] of world.holes.entries()) {
     const pin = v.worldToScreen(o.toHere(o.hole.pin));
     const tee = v.worldToScreen(o.toHere(pointAt(o.hole.line, o.hole.tees.black)));
@@ -6021,7 +6257,7 @@ function render(now) {
   }
   drawHud(hud, W, H, {
     course: game.course, hole: game.hole, tee: TEE, weather: game.weather, wind: game.wind, windScreen: world.view.worldDirToScreen(game.wind.across, game.wind.along), standing: standings(),
-    keys: settings.career ? '+/- ZOOM  Q/E TURN  M MAP  RIGHT-DRAG SCROLLS  H CLUBHOUSE' : 'N/P HOLE  R COURSE  S STYLE  +/- ZOOM  Q/E TURN  M MAP  RIGHT-DRAG SCROLLS  H MENU',
+    keys: settings.career ? '+/- ZOOM  Q/E TURN  M MAP  RIGHT-DRAG SCROLLS  H CLUBHOUSE  F FULL SCREEN' : 'N/P HOLE  R COURSE  S STYLE  +/- ZOOM  Q/E TURN  M MAP  RIGHT-DRAG SCROLLS  H MENU',
   });
   if (pt) {
     const d = dist(me.at, game.hole.pin);
@@ -6081,11 +6317,13 @@ function renderMenu(now) {
   hud.fillStyle = 'rgba(12, 8, 24, 0.6)';
   hud.fillRect(0, 0, W, H);
   const hover = app.hover;
-  if (app.mode === 'title') drawTitle(hud, W, H, { buttons: titleLayout(W, H, !!app.career), hover, save: app.career });
+  if (app.mode === 'title') drawTitle(hud, W, H, { buttons: titleLayout(W, H, !!app.career), hover, save: app.career, full: !!document.fullscreenElement });
+  if (app.note && now < app.note.until) drawMenuNote(hud, W, H, app.note.text);
   if (app.mode === 'new') drawNewCareer(hud, W, H, newCareerLayout(W, H), { draft: app.draft, hover, now, replaces: !!app.career });
   if (app.mode === 'hub') drawHub(hud, W, H, hubLayout(W, H, app.career), { career: app.career, hover, now });
   if (app.mode === 'drills') drawDrills(hud, W, H, drillsLayout(W, H), { career: app.career, hover });
   if (app.mode === 'results') drawResults(hud, W, H, resultsLayout(W, H, resultsShown(app.results.rows).length), { results: app.results, rows: resultsShown(app.results.rows), hover });
+  if (app.mode === 'record') drawRecord(hud, W, H, recordLayout(W, H), { career: app.career, hover });
   if (app.mode === 'merit') drawMerit(hud, W, H, meritLayout(W, H, resultsShown(meritRows()).length), { title: `ORDER OF MERIT, SEASON ${app.career.season}`, rows: meritRows(), career: app.career, hover });
   if (app.mode === 'season') drawSeason(hud, W, H, meritLayout(W, H, resultsShown(app.career.lastSeason.table).length, 'carry-on'), { season: app.career.lastSeason, career: app.career, hover });
   if (app.mode === 'shop') drawShop(hud, W, H, shopLayout(W, H), { career: app.career, hover, note: app.shopNote });
@@ -6104,9 +6342,10 @@ function menuButtons() {
   if (app.mode === 'hub') {
     const c = app.career, L = hubLayout(W, H, c);
     if (c.round) return [L.play, L.menu];
-    if (c.event) return [L.shop, L.menu, L.event, L.skip];
-    return [...(c.midweek ? [] : [L.play, L.match, L.practice]), L.shop, L.menu, ...(c.money >= eventFor(c).fee ? [L.event] : []), L.skip, L.merit];
+    if (c.event) return [L.shop, L.menu, L.event, L.skip, L.record];
+    return [...(c.midweek ? [] : [L.play, L.match, L.practice, L.tryChallenge]), L.shop, L.menu, ...(c.money >= eventFor(c).fee ? [L.event] : []), L.skip, L.merit, L.record];
   }
+  if (app.mode === 'record') return [recordLayout(W, H).back];
   if (app.mode === 'merit') return [meritLayout(W, H, resultsShown(meritRows()).length).back];
   if (app.mode === 'season') return [meritLayout(W, H, resultsShown(app.career.lastSeason.table).length, 'carry-on').back];
   if (app.mode === 'results') return [resultsLayout(W, H, resultsShown(app.results.rows).length).done];
@@ -6125,6 +6364,7 @@ function menuClick(p) {
 function menuAction(key) {
   const d = app.draft;
   if (key === 'continue') return goHub();
+  if (key === 'fullscreen') return toggleFullscreen();
   if (key === 'new') { app.draft = { name: '', look: 'club', shirt: SHIRT_COLOURS[0] }; app.mode = 'new'; app.hover = 'start'; return; }
   if (key === 'free') return startFreePlay();
   if (key === 'prev' || key === 'next') {
@@ -6133,13 +6373,20 @@ function menuAction(key) {
     return;
   }
   if (key.startsWith('shirt-')) { d.shirt = SHIRT_COLOURS[Number(key.slice(6))]; return; }
-  if (key === 'back' && ['courses', 'members', 'drills', 'shop', 'merit'].includes(app.mode)) return goHub();
+  if (key === 'back' && ['courses', 'members', 'drills', 'shop', 'merit', 'record'].includes(app.mode)) return goHub();
   if (key === 'practice') { app.mode = 'drills'; app.hover = canPractise(app.career) ? 'drill-0' : 'back'; return; }
   if (key === 'event') return startEvent();
   if (key === 'skip') return skipEvent();
   if (key === 'event-play') return playEventRound();
   if (key === 'event-sim') return simEventRound();
   if (key === 'merit') { app.mode = 'merit'; app.hover = 'back'; return; }
+  if (key === 'record') { app.mode = 'record'; app.hover = 'back'; return; }
+  if (key === 'try-challenge') {
+    const c = app.career;
+    if (c.midweek || c.event || c.round) return;
+    const ch = challengeFor(c);
+    return playCareerRound(ch.course, null, null, ch);
+  }
   if (key === 'carry-on') { app.career.lastSeason.seen = true; saveCareer(app.career); return goHub(); }
   if (key === 'done') return goHub();
   if (key === 'shop') { app.mode = 'shop'; app.shopNote = null; app.hover = 'back'; return; }
@@ -6190,7 +6437,7 @@ function menuKey(e) {
     if (k === 'Escape') return menuAction('back');
     return;
   }
-  if (['courses', 'members', 'drills', 'shop', 'merit'].includes(app.mode) && k === 'Escape') return menuAction('back');
+  if (['courses', 'members', 'drills', 'shop', 'merit', 'record'].includes(app.mode) && k === 'Escape') return menuAction('back');
   if (app.mode === 'hub') {
     if (k === 'Enter') return menuAction('play');
     if (k === 'Escape') return menuAction('menu');
@@ -6218,6 +6465,7 @@ function useCourse(course, hole, career, match = null, practice = null, comp = n
   settings.match = match;
   settings.comp = comp;
   settings.practice = practice;
+  settings.challenge = null;
   Object.assign(settings, { style: course.style, seed: course.seed, name: course.name ?? null, par: course.par ?? 72, length: course.length ?? 'standard', tour: course.tour ?? null, holes: course.holes ?? 18, hole, career, event: comp ? DRESSING[eventTier(comp)] : 0 });
   golfers = !career ? [PLAYER, RIVAL] : practice ? [careerGolfer(app.career)] : [careerGolfer(app.career), match ? memberGolfer(app.career, match.member) : comp ? fieldGolfer(app.career, comp.partner) : clubOpponent()];
   showMap(false);
@@ -6240,11 +6488,12 @@ function goHub() {
 
 // Play a round on one of your club's courses, or carry on the one in progress.
 // A money match (`match`) is played at home.
-function playCareerRound(course, match = null, comp = null) {
+function playCareerRound(course, match = null, comp = null, challenge = null) {
   const c = app.career;
   app.mode = 'play';
   round = null;
   useCourse(c.round?.course ?? course, c.round?.hole ?? 1, true, c.round ? c.round.match ?? null : match, null, c.round ? c.round.comp ?? null : comp);
+  settings.challenge = c.round ? c.round.challenge ?? null : challenge;
   form = c.round?.form ?? newForm();
   if (c.round) round.players.forEach((p, i) => { p.scores = c.round.scores[i].slice(); p.putts = c.round.putts[i].slice(); });
 }
@@ -6264,9 +6513,11 @@ function endCareerRound() {
     const done = eventRoundIn(c, saved.comp, pars, saved.scores[0], saved.scores[1]);
     if (done) ({ comp, rows } = done); else eventRound = { name: saved.comp.name, round: saved.comp.round };
   }
-  finishRound(c, { course: course.name, holes, score: total(saved.scores[0]), par: total(pars), vs: (saved.vs ?? clubOpponent().name).toUpperCase(), vsScore: total(saved.scores[1]), match, comp, eventRound });
+  // A midweek challenge: did you do it?
+  const challenge = saved.challenge && { text: saved.challenge.text, where: saved.challenge.where, prize: saved.challenge.prize, met: challengeMet(saved.challenge, saved.scores[0], pars) };
+  finishRound(c, { course: course.name, holes, score: total(saved.scores[0]), par: total(pars), vs: (saved.vs ?? clubOpponent().name).toUpperCase(), vsScore: total(saved.scores[1]), match, comp, eventRound, challenge });
   // The weekend event's done: points on the order of merit, and on to next week.
-  if (comp) { addMerit(c, saved.comp, rows); endWeek(c); }
+  if (comp) eventOver(c, saved.comp, comp, rows);
   saveCareer(c);
   if (!saved.comp) return goHub();
   app.mode = 'results';
@@ -6292,6 +6543,21 @@ function eventRoundIn(c, ev, pars, mine, partnerScores) {
   return { comp, rows };
 }
 
+// An event of yours is over: the record, the rivals, the order of merit, and
+// on to next week.
+function eventOver(c, ev, comp, rows) {
+  recordEvent(c, ev, comp);
+  news(c, eventStory(c, ev, rows));
+  addMerit(c, ev, rows);
+  endWeek(c);
+}
+
+// Lines of news at the top of the clubhouse's recent rounds.
+function news(c, lines) {
+  for (const text of lines) c.history.unshift({ season: c.season, week: c.week, news: text });
+  c.history = c.history.slice(0, 40);
+}
+
 // Work out your next round of an event instead of playing it.
 function simEventRound() {
   const c = app.career, ev = c.event;
@@ -6300,7 +6566,7 @@ function simEventRound() {
   const done = eventRoundIn(c, ev, pars, mine, null);
   const sum = (a) => a.reduce((t, v) => t + v, 0);
   finishRound(c, { course: ev.venue.name, holes: ev.holes, score: sum(mine), par: sum(pars), sim: true, comp: done?.comp ?? null, eventRound: done ? null : { name: ev.name, round: ev.round } });
-  if (done) { addMerit(c, ev, done.rows); endWeek(c); }
+  if (done) eventOver(c, ev, done.comp, done.rows);
   c.report = null;
   saveCareer(c);
   app.mode = 'results';
@@ -6341,7 +6607,7 @@ function skipEvent() {
   const rows = skippedEvent(c, ev, eventPars(ev), eventSeed(c, ev));
   addMerit(c, ev, rows);
   c.history.unshift({ season: c.season, week: c.week, skipped: { name: ev.name, winner: rows[0].name } });
-  c.history = c.history.slice(0, 40);
+  news(c, eventStory(c, ev, rows));
   endWeek(c);
   saveCareer(c);
   goHub();
@@ -6367,7 +6633,7 @@ function practiceBall(now) {
   Object.assign(me, { at, lie, strokes: 0, putts: 0, holed: false, onGreen: lie === 'green' });
   // Closer in for the short shots, so the ball and the green read well.
   if (pr.ball === 0) setZoom(pr.key === 'chip' ? 2 : pr.key === 'escape' ? 1 : 0);
-  startTurn(now, `${drill(pr.key).name}: BALL ${pr.ball + 1} OF ${BALLS}`);
+  startTurn(now, `${drill(pr.key).name}: BALL ${pr.ball + 1} OF ${BALLS}`, drill(pr.key).aim);
   aimCamera(true);
 }
 
@@ -6488,6 +6754,8 @@ canvas.addEventListener('wheel', (e) => { e.preventDefault(); setZoom(display.zo
 const PAN = { arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] };
 
 addEventListener('keydown', (e) => {
+  // F goes full screen and back, anywhere but while typing a name.
+  if (e.key.toLowerCase() === 'f' && app.mode !== 'new' && !e.ctrlKey && !e.metaKey) return toggleFullscreen();
   if (app.mode !== 'play') return menuKey(e);
   const k = e.key.toLowerCase();
   if (k >= '1' && k <= '5') return pickShot(SHOT_TYPES[Number(k) - 1].key);

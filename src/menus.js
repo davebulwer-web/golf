@@ -10,7 +10,7 @@ import { STYLES } from './course-generator.js';
 import { LOOKS, ownShirt, SHIRT_COLOURS, SKILL_NAMES, WEEKS, MEMBERS, STAKES, startingSkills, courseStars, memberGolfer, record, canPractise } from './career.js';
 import { SLOTS, TIER_NAMES, kitItem, kitBoost, shopItem, nextItem, boostWords } from './shop.js';
 import { DRILLS, BALLS } from './practice.js';
-import { eventFor, meritTable, PROMOTED } from './events.js';
+import { eventFor, meritTable, PROMOTED, challengeFor, RIVALS } from './events.js';
 
 const DIM = '#c8c0e8', QUIET = '#8a80b0';
 const mid = (W, w) => Math.round((W - w) / 2);
@@ -61,11 +61,22 @@ export function titleLayout(W, H, hasSave) {
     ...(hasSave ? [next('continue', 'CONTINUE CAREER')] : []),
     next('new', 'NEW CAREER'),
     next('free', 'FREE PLAY'),
+    next('fullscreen', 'FULL SCREEN'),
   ];
 }
 
-export function drawTitle(ctx, W, H, { buttons, hover, save }) {
-  const logo = 'PIXEL GOLF';
+// A short note along the bottom of a menu screen.
+export function drawMenuNote(ctx, W, H, text) {
+  const w = textWidth(text) + 16;
+  ctx.fillStyle = '#2c2050';
+  ctx.fillRect(mid(W, w), H - 34, w, 13);
+  drawText(ctx, text, mid(W, textWidth(text)), H - 30, '#f08a8a', 1, null);
+}
+
+export function drawTitle(ctx, W, H, { buttons, hover, save, full }) {
+  const fs = buttons.find((b) => b.key === 'fullscreen');
+  if (fs) fs.label = full ? 'LEAVE FULL SCREEN' : 'FULL SCREEN';
+  const logo = 'FAIRWAY PIXELS';
   drawText(ctx, logo, mid(W, textWidth(logo, 6)), Math.round(H * 0.2), GOLD, 6);
   const tag = 'A RETRO GOLF CAREER';
   drawText(ctx, tag, mid(W, textWidth(tag, 2)), Math.round(H * 0.2) + 42, '#ffffff', 2);
@@ -74,7 +85,7 @@ export function drawTitle(ctx, W, H, { buttons, hover, save }) {
     const line = `${save.name}, SEASON ${save.season} WEEK ${save.week}, £${save.money}`;
     drawText(ctx, line, mid(W, textWidth(line)), buttons[0].y + buttons[0].h + 3, QUIET, 1, null);
   }
-  const help = 'CLICK A BUTTON, OR UP/DOWN AND ENTER';
+  const help = 'CLICK A BUTTON, OR UP/DOWN AND ENTER.  F FOR FULL SCREEN ANY TIME';
   drawText(ctx, help, mid(W, textWidth(help)), H - 16, QUIET, 1, null);
 }
 
@@ -141,7 +152,7 @@ export function drawNewCareer(ctx, W, H, L, { draft, hover, now, replaces }) {
 // ---------- Clubhouse ----------
 
 export function hubLayout(W, H, career) {
-  const pw = 512, ph = 252, px = mid(W, pw), py = mid(H, ph);
+  const pw = 512, ph = 278, px = mid(W, pw), py = mid(H, ph);
   const play = career.round ? `CONTINUE ${career.round.match ? 'MATCH' : 'ROUND'}, HOLE ${career.round.hole}` : 'PRACTICE ROUND';
   return {
     panel: { x: px, y: py, w: pw, h: ph },
@@ -151,13 +162,16 @@ export function hubLayout(W, H, career) {
     shop: { key: 'shop', label: 'PRO SHOP', x: px + pw - 430, y: py + ph - 30, w: 84, h: 18 },
     // The week, in a card on the right: the midweek slot, the weekend event
     // (enter or skip it) and where you stand on the order of merit.
-    card: { x: px + pw - 172, y: py + 40, w: 156, h: 96 },
+    card: { x: px + pw - 172, y: py + 40, w: 156, h: 124 },
+    // This week's one-off challenge, another way to spend midweek.
+    tryChallenge: { key: 'try-challenge', label: 'TRY IT', x: px + pw - 68, y: py + 52, w: 44, h: 12 },
     // Partway through a longer event: play the next round, or work it out.
-    event: career.event ? { key: 'event-play', label: `PLAY ROUND ${career.event.round + 1}`, x: px + pw - 164, y: py + 98, w: 84, h: 14 }
-      : { key: 'event', label: `ENTER £${eventFor(career).fee}`, x: px + pw - 164, y: py + 98, w: 84, h: 14 },
-    skip: career.event ? { key: 'event-sim', label: 'SIM', x: px + pw - 74, y: py + 98, w: 50, h: 14 }
-      : { key: 'skip', label: 'SKIP', x: px + pw - 74, y: py + 98, w: 50, h: 14 },
-    merit: { key: 'merit', label: 'TABLE', x: px + pw - 64, y: py + 118, w: 40, h: 12 },
+    event: career.event ? { key: 'event-play', label: `PLAY ROUND ${career.event.round + 1}`, x: px + pw - 164, y: py + 126, w: 84, h: 14 }
+      : { key: 'event', label: `ENTER £${eventFor(career).fee}`, x: px + pw - 164, y: py + 126, w: 84, h: 14 },
+    skip: career.event ? { key: 'event-sim', label: 'SIM', x: px + pw - 74, y: py + 126, w: 50, h: 14 }
+      : { key: 'skip', label: 'SKIP', x: px + pw - 74, y: py + 126, w: 50, h: 14 },
+    merit: { key: 'merit', label: 'TABLE', x: px + pw - 64, y: py + 146, w: 40, h: 12 },
+    record: { key: 'record', label: 'CAREER', x: px + pw - 88, y: py + 12, w: 72, h: 14 },
     menu: { key: 'menu', label: 'MENU', x: px + 16, y: py + ph - 30, w: 56, h: 18 },
   };
 }
@@ -188,10 +202,19 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
   if (c.report) drawText(ctx, `LAST ROUND: ${c.report.good} GOOD SHOTS, ${c.report.bad} BAD`, sx, sy + 66, QUIET, 1, null);
 
   // Recent rounds.
-  const ry = p.y + 144;
+  const ry = p.y + 172;
   drawText(ctx, 'RECENT ROUNDS', sx, ry, DIM, 1, null);
   if (!c.history.length) drawText(ctx, 'NONE YET. PLAY NINE HOLES AT YOUR CLUB.', sx, ry + 11, QUIET, 1, null);
   c.history.slice(0, 5).forEach((r, i) => {
+    if (r.news) {
+      drawText(ctx, `WK ${r.week}  ${r.news}`, sx, ry + 11 + i * 9, '#c89af0', 1, null);
+      return;
+    }
+    if (r.challenge) {
+      const ch = r.challenge;
+      drawText(ctx, `WK ${r.week}  CHALLENGE, ${ch.text}: ${ch.met ? `DONE!  +£${ch.prize}` : `MISSED (${toPar(r.score - r.par)})`}`, sx, ry + 11 + i * 9, ch.met ? GOLD : '#f08a8a', 1, null);
+      return;
+    }
     if (r.skipped) {
       drawText(ctx, `WK ${r.week}  SKIPPED ${r.skipped.name}. ${r.skipped.winner.toUpperCase()} WON`, sx, ry + 11 + i * 9, QUIET, 1, null);
       return;
@@ -238,24 +261,33 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
     if (cut) drawText(ctx, cut, cd.x + 8, cd.y + 46, ev.cutMade ? '#7ee07e' : QUIET, 1, null);
     menuButton(ctx, L.event, hover === L.event.key);
     menuButton(ctx, L.skip, hover === L.skip.key);
-    drawText(ctx, 'SIM: WORKED OUT FROM YOUR SKILLS', cd.x + 8, cd.y + 76, QUIET, 1, null);
+    drawText(ctx, 'SIM: WORKED OUT FROM YOUR SKILLS', cd.x + 8, cd.y + 104, QUIET, 1, null);
   }
   if (!c.round && !c.event) {
     ctx.fillStyle = '#2c2050';
     ctx.fillRect(cd.x, cd.y, cd.w, cd.h);
-    const done = { practice: 'PRACTISED', match: 'PLAYED A MONEY MATCH', round: 'PLAYED A PRACTICE ROUND' }[c.midweek];
+    const done = { practice: 'PRACTISED', match: 'PLAYED A MONEY MATCH', round: 'PLAYED A PRACTICE ROUND', challenge: 'TOOK THE CHALLENGE' }[c.midweek];
     drawText(ctx, done ? `MIDWEEK: ${done}` : 'MIDWEEK: PICK ONE BELOW', cd.x + 8, cd.y + 6, done ? QUIET : '#7ee07e', 1, null);
-    drawText(ctx, 'THIS WEEKEND', cd.x + 8, cd.y + 19, DIM, 1, null);
-    drawText(ctx, ev.name, cd.x + 8, cd.y + 29, GOLD, 1, null);
+    if (!done) {
+      const ch = challengeFor(c);
+      drawText(ctx, 'OR THE CHALLENGE:', cd.x + 8, cd.y + 15, DIM, 1, null);
+      drawText(ctx, ch.text, cd.x + 8, cd.y + 26, '#ffffff', 1, null);
+      drawText(ctx, `9 HOLES ${ch.where}, £${ch.prize}`, cd.x + 8, cd.y + 35, QUIET, 1, null);
+      menuButton(ctx, L.tryChallenge, hover === 'try-challenge');
+    }
+    const wy = cd.y + 28; // the weekend, below the midweek
+    drawText(ctx, 'THIS WEEKEND', cd.x + 8, wy + 19, DIM, 1, null);
+    drawText(ctx, ev.name, cd.x + 8, wy + 29, GOLD, 1, null);
     const where = ev.venue.id === c.home.id ? 'AT HOME' : `AT ${ev.venue.name.replace(/ GOLF.*$/, '')}`;
-    drawText(ctx, `${ev.holes} HOLES ${where}`, cd.x + 8, cd.y + 39, '#ffffff', 1, null);
-    drawText(ctx, `PRIZES ${ev.prizes.map((v) => `£${v}`).join(' / ')}`, cd.x + 8, cd.y + 48, QUIET, 1, null);
+    const rounds = ev.rounds > 1 ? `${ev.rounds} ROUNDS` : `${ev.holes} HOLES`;
+    drawText(ctx, `${rounds} ${where}`, cd.x + 8, wy + 39, '#ffffff', 1, null);
+    drawText(ctx, `PRIZES ${ev.prizes.slice(0, 3).map((v) => `£${v}`).join(' / ')}`, cd.x + 8, wy + 48, QUIET, 1, null);
     menuButton(ctx, L.event, hover === 'event', c.money >= ev.fee);
     menuButton(ctx, L.skip, hover === 'skip');
     const me = meritTable(c).find((r) => r.you);
-    drawText(ctx, 'ORDER OF MERIT', cd.x + 8, cd.y + 76, DIM, 1, null);
-    if (me.pts) drawText(ctx, `${ordinal(me.pos)}, ${me.pts} PTS`, cd.x + 8, cd.y + 85, me.pos <= PROMOTED ? '#7ee07e' : '#ffffff', 1, null);
-    else drawText(ctx, 'NO POINTS YET', cd.x + 8, cd.y + 85, QUIET, 1, null);
+    drawText(ctx, 'ORDER OF MERIT', cd.x + 8, wy + 76, DIM, 1, null);
+    if (me.pts) drawText(ctx, `${ordinal(me.pos)}, ${me.pts} PTS`, cd.x + 8, wy + 85, me.pos <= PROMOTED ? '#7ee07e' : '#ffffff', 1, null);
+    else drawText(ctx, 'NO POINTS YET', cd.x + 8, wy + 85, QUIET, 1, null);
     menuButton(ctx, L.merit, hover === 'merit');
     if (c.money < ev.fee) drawText(ctx, `NEED £${ev.fee} TO ENTER`, cd.x + 8, cd.y + cd.h + 3, '#f08a8a', 1, null);
   }
@@ -264,6 +296,7 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
   else if (c.worn?.length) drawText(ctx, `WORN OUT: ${c.worn.join(', ')}. THE PRO SHOP HAS MORE.`, p.x + 16, p.y + p.h - 44, '#f08a8a', 1, null);
 
   menuButton(ctx, L.menu, hover === 'menu');
+  if (!c.round) menuButton(ctx, L.record, hover === 'record');
   menuButton(ctx, L.play, hover === 'play', !!c.round || (!c.midweek && !c.event));
   if (!c.round) {
     // The midweek choices, greyed once you've used the week's slot.
@@ -516,7 +549,7 @@ export function drawResults(ctx, W, H, L, { results: res, rows, hover }) {
 
 // The order of merit as a table, or how the season ended with the final one.
 export function meritLayout(W, H, n, key = 'back') {
-  const pw = 300, ph = 64 + n * 9 + 34, px = mid(W, pw), py = mid(H, ph);
+  const pw = 300, ph = 70 + n * 9 + 34, px = mid(W, pw), py = mid(H, ph);
   return {
     panel: { x: px, y: py, w: pw, h: ph },
     back: { key, label: key === 'back' ? 'BACK' : 'ON TO NEXT SEASON', x: px + pw - (key === 'back' ? 76 : 156), y: py + ph - 28, w: key === 'back' ? 60 : 140, h: 18 },
@@ -548,11 +581,71 @@ export function drawSeason(ctx, W, H, L, { season: s, career: c, hover }) {
   panel(ctx, p.x, p.y, p.w, p.h);
   drawText(ctx, `SEASON ${s.season} IS OVER`, p.x + 16, p.y + 12, GOLD, 2);
   const how = s.champion ? `YOU WON THE BIG ONE AND FINISHED ${ordinal(s.pos)}.` : `YOU FINISHED ${ordinal(s.pos)} OF ${s.of} ON THE ORDER OF MERIT.`;
-  const next = s.promoted ? `PROMOTED! NEXT SEASON IS ${up} GOLF. VINCE IS COMING TOO.`
+  const rivals = s.tier === 'club' || s.tier === 'county' ? 'VINCE IS COMING TOO.' : 'SO ARE YOUR RIVALS.';
+  const next = s.best ? 'PLAYER OF THE YEAR! THE BEST IN THE GAME.'
+    : s.promoted ? `PROMOTED! NEXT SEASON IS ${up} GOLF. ${rivals}`
     : s.earned ? `YOU'VE EARNED A PLACE AT ${up} LEVEL. IT OPENS SOON.`
-    : `ANOTHER SEASON AT ${TIER_NAMES[s.tier]} LEVEL. TOP ${PROMOTED} GO UP.`;
+    : s.to ? `ANOTHER SEASON AT ${TIER_NAMES[s.tier]} LEVEL. TOP ${PROMOTED} GO UP.`
+    : 'ANOTHER YEAR OF MAJORS. FINISH TOP TO BE PLAYER OF THE YEAR.';
   drawText(ctx, how, p.x + 16, p.y + 32, DIM, 1, null);
-  drawText(ctx, next, p.x + 16, p.y + 42, s.earned ? '#7ee07e' : '#ffffff', 1, null);
-  meritRowsAt(ctx, p, s.table, p.y + 58);
+  drawText(ctx, next, p.x + 16, p.y + 42, s.earned || s.best ? '#7ee07e' : '#ffffff', 1, null);
+  if (s.rivals?.length) drawText(ctx, `RIVALS: ${s.rivals.map((r) => `${r.name.toUpperCase()} ${ordinal(r.pos)}`).join(', ')}`, p.x + 16, p.y + 52, '#c89af0', 1, null);
+  meritRowsAt(ctx, p, s.table, p.y + 64);
   menuButton(ctx, L.back, hover === 'carry-on');
+}
+
+// ---------- Career record ----------
+
+export function recordLayout(W, H) {
+  const pw = 440, ph = 300, px = mid(W, pw), py = mid(H, ph);
+  return {
+    panel: { x: px, y: py, w: pw, h: ph },
+    back: { key: 'back', label: 'BACK', x: px + pw - 76, y: py + ph - 28, w: 60, h: 18 },
+  };
+}
+
+// Everything you've done: seasons, events, money, best rounds, rivals, titles.
+export function drawRecord(ctx, W, H, L, { career: c, hover }) {
+  const p = L.panel, st = c.stats ?? {}, x = p.x + 16, x2 = p.x + 230;
+  panel(ctx, p.x, p.y, p.w, p.h);
+  drawText(ctx, `${c.name}: CAREER`, x, p.y + 12, GOLD, 2);
+  drawText(ctx, `SEASON ${c.season}, WEEK ${c.week}, AT ${TIER_NAMES[c.tier]} LEVEL`, x, p.y + 30, DIM, 1, null);
+  const line = (tx, y, label, value, colour = '#ffffff') => {
+    drawText(ctx, label, tx, y, QUIET, 1, null);
+    drawText(ctx, `${value}`, tx + 96, y, colour, 1, null);
+  };
+  let y = p.y + 48;
+  line(x, y, 'EVENTS PLAYED', st.events ?? 0); y += 10;
+  line(x, y, 'WINS', st.wins ?? 0, st.wins ? GOLD : '#ffffff'); y += 10;
+  line(x, y, 'TOP THREES', st.top3 ?? 0); y += 10;
+  line(x, y, 'MISSED CUTS', st.missed ?? 0); y += 10;
+  line(x, y, 'MAJORS WON', st.majors ?? 0, st.majors ? GOLD : '#ffffff'); y += 10;
+  line(x, y, 'PRIZE MONEY', `£${st.prizeMoney ?? 0}`, GOLD); y += 10;
+  const m = Object.values(c.members ?? {}).reduce((t, r) => ({ won: t.won + r.won, lost: t.lost + r.lost, halved: t.halved + r.halved }), { won: 0, lost: 0, halved: 0 });
+  line(x, y, 'MONEY MATCHES', `W${m.won} L${m.lost} H${m.halved}`); y += 16;
+  drawText(ctx, 'BEST ROUNDS', x, y, DIM, 1, null); y += 10;
+  for (const holes of [9, 18]) {
+    const b = st.best?.[holes];
+    line(x, y, `${holes} HOLES`, b ? `${b.score} (${toPar(b.toPar)}) ${b.course.replace(/ (GOLF|NATIONAL).*$/, '')}` : 'NONE YET'); y += 10;
+  }
+  y += 6;
+  drawText(ctx, 'RIVALS, FINISHING AHEAD OF THEM', x, y, DIM, 1, null); y += 10;
+  for (const [id, short] of Object.entries(RIVALS)) {
+    const r = c.rivals?.[id];
+    line(x, y, short, r ? `AHEAD ${r.ahead}, BEHIND ${r.behind}` : id === 'dex' && ['club', 'county'].includes(c.tier) ? 'NOT MET YET' : 'NO EVENTS TOGETHER YET', '#c89af0'); y += 10;
+  }
+  // Seasons and titles down the right.
+  let ry = p.y + 48;
+  drawText(ctx, 'SEASONS', x2, ry, DIM, 1, null); ry += 10;
+  const seasons = c.seasons ?? [];
+  if (!seasons.length) { drawText(ctx, 'FIRST SEASON UNDER WAY', x2, ry, QUIET, 1, null); ry += 10; }
+  for (const s of seasons.slice(-8)) {
+    drawText(ctx, `S${s.season}  ${TIER_NAMES[s.tier]}: ${ordinal(s.pos)}${s.promoted ? '  UP!' : ''}`, x2, ry, s.promoted ? '#7ee07e' : '#ffffff', 1, null); ry += 10;
+  }
+  ry += 6;
+  drawText(ctx, 'TITLES', x2, ry, DIM, 1, null); ry += 10;
+  const titles = c.titles ?? [];
+  if (!titles.length) drawText(ctx, 'NONE YET', x2, ry, QUIET, 1, null);
+  for (const t of titles.slice(-10)) { drawText(ctx, `S${t.season}  ${t.title}`, x2, ry, GOLD, 1, null); ry += 10; }
+  menuButton(ctx, L.back, hover === 'back');
 }
