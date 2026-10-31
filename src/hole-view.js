@@ -570,7 +570,9 @@ function eventsFor(course, index, others) {
 
 // Trees, bushes and cacti, and the hole's furniture, sorted back to front.
 function paintScenery(buf, W, H, view, hole) {
-  for (const it of sceneryItems(W, H, view, hole)) blit(buf, W, H, it.sprite, it.x, it.y);
+  const items = sceneryItems(W, H, view, hole);
+  for (const it of items) blit(buf, W, H, it.sprite, it.x, it.y);
+  return items;
 }
 
 // The scenery standing on a W x H picture of the view: { sprite, x, y } with
@@ -658,6 +660,7 @@ function put(buf, W, H, x, y, c) {
 }
 
 // Draw the hole into ImageData-sized buffer `buf` (Uint32Array of W x H).
+// Returns the scenery drawn on it, as sceneryItems gives it.
 // `actors` are things on the hole: { at: {x, y} in yards, golfer, ball, shirt }.
 // `origin` is where this picture sits in a bigger one drawn in pieces, so the
 // ground textures line up across them.
@@ -665,9 +668,10 @@ export function drawHole(buf, W, H, hole, view, actors = [], origin = { x: 0, y:
   const ground = sampleGround(view, W, H);
   paintGround(buf, W, H, hole.style, ground, origin);
   if (!view.sparse) paintBridges(buf, W, H, view, hole);
-  paintScenery(buf, W, H, view, hole);
+  const scenery = paintScenery(buf, W, H, view, hole);
   if (view.others.length) shadeOutOfBounds(buf, W, H, view, ground);
   if (!view.sparse) paintMarkers(buf, W, H, view, hole, actors);
+  return scenery;
 }
 
 // Footbridges out to island greens, this hole's and its neighbours': a run of

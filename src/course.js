@@ -8,10 +8,16 @@ import { generateCourse, STYLES, makeRng, pointAt, blobGap, dist } from './cours
 import { courseMap } from './course-map.js';
 import { terrainFor } from './terrain.js';
 
+const FAIRWAY_WIDEN = 1.3;
+
 for (const st of Object.values(STYLES)) {
   st.dogleg = Math.min(0.95, st.dogleg + 0.2);
   st.bend = Math.round(st.bend * 1.2);
   st.sharpDogleg = Math.min(0.5, (st.sharpDogleg ?? 0) * 2.5);
+  // Wider fairways than the management game: landing a drive on the short grass
+  // should be a fair target. The rough and any bunkers lining the edges move
+  // out with them, as they're placed from the fairway's width.
+  st.fwHalf = st.fwHalf.map((w) => Math.round(w * FAIRWAY_WIDEN));
 }
 
 // Like the generator's blobs: a circle with a wobbly edge, stretched and turned.
