@@ -139,7 +139,9 @@ function piece(i, j) {
   const v = shiftView(world.view, -i * PIECE, -j * PIECE);
   addSurroundings(v, game.course, game.hole.number - 1, PIECE, PIECE, 1e6, piecePad(v.grid.cell));
   const img = new ImageData(PIECE, PIECE);
-  drawHole(new Uint32Array(img.data.buffer), PIECE, PIECE, game.hole, v, [], { x: i * PIECE, y: j * PIECE });
+  const scenery = drawHole(new Uint32Array(img.data.buffer), PIECE, PIECE, game.hole, v, [], { x: i * PIECE, y: j * PIECE });
+  // Kept, on the whole picture, so a ball can be hidden behind it.
+  (world.scenery ??= new Map()).set(key, scenery.map((it) => ({ ...it, x: it.x + i * PIECE, y: it.y + j * PIECE })));
   c = document.createElement('canvas');
   c.width = PIECE; c.height = PIECE;
   c.getContext('2d').putImageData(img, 0, 0);
@@ -159,13 +161,36 @@ function sceneryInFront(x, y, h) {
   const ox = Math.round(x) - FRONT_BOX / 2, oy = Math.round(y) - h;
   const v = shiftView(world.view, -ox, -oy);
   addSurroundings(v, game.course, game.hole.number - 1, FRONT_BOX, h, 1e6, piecePad(v.grid.cell));
-  const left = x - 12, right = x + 12, top = y - h;
+  const left = x - 12, right = x + 12;
   const front = sceneryItems(FRONT_BOX, h, v, game.hole)
     .map((it) => ({ ...it, x: it.x + ox, y: it.y + oy }))
     .filter((it) => it.y > y && it.x - it.sprite.ax < right && it.x - it.sprite.ax + it.sprite.w > left && it.y - it.sprite.ay < y);
   if (world.front.size > 200) world.front.clear();
   world.front.set(key, front);
   return front;
+}
+
+// The trees and furniture in front of a ball whose shadow is at (x, y) on the
+// course picture, covering any of the box from x - half to x + half and from
+// `top` down to y. The ball moves every frame, so this uses the scenery kept
+// from drawing the pieces of the course round it, rather than working it out
+// afresh like a golfer's spot.
+function sceneryOverBall(x, y, top, half) {
+  const i0 = Math.floor(x / PIECE), j0 = Math.floor(y / PIECE);
+  const seen = new Set(), front = [];
+  for (let j = j0 - 1; j <= j0 + 1; j++) {
+    for (let i = i0 - 1; i <= i0 + 1; i++) {
+      for (const it of world.scenery?.get(`${i},${j}`) ?? []) {
+        const id = `${it.x},${it.y}`;
+        if (seen.has(id) || it.y <= y) continue;
+        const sx = it.x - it.sprite.ax, sy = it.y - it.sprite.ay;
+        if (sx >= x + half || sx + it.sprite.w <= x - half || sy >= y || sy + it.sprite.h <= top) continue;
+        seen.add(id);
+        front.push(it);
+      }
+    }
+  }
+  return front.sort((a, b) => a.y - b.y || a.x - b.x);
 }
 
 // A scenery sprite as a canvas, made the first time it's drawn this way.
@@ -755,9 +780,12 @@ function drawPlay(now) {
     items.push({ y: s.y + 0.5, draw: () => {
       const y = Math.round(up.y), bx = Math.round(s.x);
       if (ball.h > 0.3) { ctx.fillStyle = 'rgba(0, 0, 0, 0.45)'; ctx.fillRect(bx - 1, Math.round(s.y), 2, 1); }
-      if (ball.h > 4) return drawSprite(ctx, ballFrame(ball.h), bx, y + 1);
-      ctx.fillStyle = '#ffffff';
-      ctx.fillRect(bx - 1, y - 1, 2, 2);
+      if (ball.h > 4) drawSprite(ctx, ballFrame(ball.h), bx, y + 1);
+      else { ctx.fillStyle = '#ffffff'; ctx.fillRect(bx - 1, y - 1, 2, 2); }
+      // Like the golfers, trees and furniture in front of the ball (and its
+      // shadow) hide it, so it can fly or roll out of sight behind them.
+      const top = ball.h > 4 ? y - 6 : y - 2;
+      for (const it of sceneryOverBall(bx, Math.round(s.y) + 1, top, ball.h > 4 ? 5 : 2)) ctx.drawImage(spriteCanvas(it.sprite), it.x - it.sprite.ax, it.y - it.sprite.ay);
     } });
   });
   items.sort((a, b) => a.y - b.y);
@@ -1398,7 +1426,7 @@ function autoPutt() {
   pt.meterAt = now - plan.power * POWER_SWEEP;
   stopPower(now);
 }
-window.golf = { get game() { return game; }, get world() { return world; }, get round() { return round; }, ui, cam, display, app, settings, shoot, clampAim, setZoom, turnView, changeGolfer, autoPutt, greenFor, toggleEvent, menuAction, menuButtonsForTest: () => menuButtons(), sceneryInFront, surfaceAt, pointAt, tournamentSites: () => tournamentSites(game.course) };
+window.golf = { get game() { return game; }, get world() { return world; }, get round() { return round; }, ui, cam, display, app, settings, shoot, clampAim, setZoom, turnView, changeGolfer, autoPutt, greenFor, toggleEvent, menuAction, menuButtonsForTest: () => menuButtons(), sceneryInFront, sceneryOverBall, surfaceAt, pointAt, tournamentSites: () => tournamentSites(game.course) };
 
 measure();
 if (app.mode === 'title') {
