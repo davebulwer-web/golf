@@ -18,6 +18,15 @@ const WAVES = [240, 90, 34];
 const GROUND_STEP = 3; // yards between samples of a hole's shaped ground
 const GREEN_TILT = [0.012, 0.035]; // how steep a green may be, rise over run
 const BLEND = 3;       // samples over which shaped ground blends into the hills
+// Behind a green the ground may only fall away gently, so a shot that runs
+// through isn't sent tumbling down a bank into the woods or out of bounds. Out
+// to BACKSTOP[0] yards past the green's edge it falls at most BACK_FALL yards
+// per yard (well short of what sets a ball rolling, or speeds it up), then
+// blends back into the hills by BACKSTOP[1]. Behind means within about 75
+// degrees of the line the green is played along, as in course-map.js.
+const BACKSTOP = [22, 34];
+const BACK_FALL = 0.03;
+const BACK_CONE = [0.1, 0.45]; // from no backstop to all of it, by how straight behind
 
 const latticeHash = (i, j, k) => {
   let h = Math.imul(i, 374761393) + Math.imul(j, 668265263) + Math.imul(k, 1274126177);
@@ -89,6 +98,22 @@ function groundGrid(hole) {
   const tilt = Math.hypot(gx, gy) || 1, want = Math.max(GREEN_TILT[0], Math.min(GREEN_TILT[1], tilt));
   if (tilt < 1e-6) gx = 1;
   gx *= want / tilt; gy *= want / tilt;
+  const greenAt = (p) => g0 + 0.4 + gx * (p.x - gc.x) + gy * (p.y - gc.y);
+  // Which way the green is played: along the last leg of the hole.
+  const pts = hole.line.points, from = pts[pts.length - 2] ?? { x: 0, y: 0 };
+  const playLen = Math.hypot(gc.x - from.x, gc.y - from.y) || 1;
+  const play = { x: (gc.x - from.x) / playLen, y: (gc.y - from.y) / playLen };
+  // How much of the backstop applies at p (0 to 1), and the lowest the ground may be there.
+  const backstop = (p) => {
+    const dx = p.x - gc.x, dy = p.y - gc.y, d = Math.hypot(dx, dy) || 1;
+    const cone = smooth(Math.max(0, Math.min(1, ((dx * play.x + dy * play.y) / d - BACK_CONE[0]) / (BACK_CONE[1] - BACK_CONE[0]))));
+    if (cone <= 0) return null;
+    const out = Math.max(0, blobGap(hole.green, p));
+    if (out >= BACKSTOP[1]) return null;
+    const edge = { x: p.x - (dx / d) * out, y: p.y - (dy / d) * out };
+    const w = cone * (out <= BACKSTOP[0] ? 1 : 1 - smooth((out - BACKSTOP[0]) / (BACKSTOP[1] - BACKSTOP[0])));
+    return { w, floor: greenAt(edge) - 0.4 - BACK_FALL * out };
+  };
   // Tees are flat at the height of the ground where they are.
   const teeAt = (p) => {
     let best = Infinity, h = 0;
@@ -109,7 +134,7 @@ function groundGrid(hole) {
   const hard = new Uint8Array(n); // ground that keeps its own height right to its edge
   for (let k = 0; k < n; k++) {
     const p = at(k % nx, Math.floor(k / nx)), s = surf[k];
-    if (s === 'green' || s === 'fringe') { target[k] = g0 + 0.4 + gx * (p.x - gc.x) + gy * (p.y - gc.y); weight[k] = 1; }
+    if (s === 'green' || s === 'fringe') { target[k] = greenAt(p); weight[k] = 1; }
     else if (s === 'tee') { target[k] = teeAt(p) + 0.4; weight[k] = 1; }
     else if (s === 'fairway') { target[k] = hillsAt(t, map(p), true); weight[k] = 0.8; }
     else if (s === 'water') {
@@ -118,6 +143,15 @@ function groundGrid(hole) {
     } else if (s === 'sea') { target[k] = 0; weight[k] = 1; hard[k] = 1; }
     else if (s === 'beach') { target[k] = 0.6; weight[k] = 1; }
     else if (s === 'bunker') hard[k] = 1;
+    // Behind the green, raise ground that falls away too steeply.
+    if (s !== 'green' && s !== 'fringe' && !hard[k]) {
+      const b = backstop(p);
+      if (b && b.w > 0) {
+        if (weight[k] > 0) {
+          if (target[k] < b.floor) { target[k] += (b.floor - target[k]) * b.w; weight[k] = Math.max(weight[k], b.w); }
+        } else if (hills[k] < b.floor) { target[k] = b.floor; weight[k] = b.w; }
+      }
+    }
   }
 
   // Blend the shaping into the hills round it.

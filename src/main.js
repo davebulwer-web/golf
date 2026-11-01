@@ -51,8 +51,8 @@ const settings = {
   // A tournament round: grandstands, TV towers and tents round the course.
   event: params.get('event') === '1',
   // The course's name, par and tees, and how many holes make the round.
-  name: null, par: 72, length: 'standard', holes: 18,
-  tour: null, // a career tier's course: club and county ones have no signature doglegs
+  name: null, par: Number(params.get('par')) || 72, length: params.get('length') || 'standard', holes: 18,
+  tour: params.get('tour'), // a career tier's course: club and county ones have no signature doglegs
   career: false, // playing a round of the career
   match: null,   // a money match: { member, stake }
   practice: null, // a practice session: { key, ball, hits }
