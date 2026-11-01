@@ -175,7 +175,7 @@ export function drawShotBar(ctx, W, H, info) {
 }
 
 // The putting bar: the putt's length and slope, the power bar, and PUTT.
-// `info`: { feet, rise, range, power (0 to 1, or null), target (0 to 1), stage, canPutt, canCancel, hint, stroke }
+// `info`: { feet, rise, range, power (0 to 1, or null), aimFeet (how far the aim is), stage, canPutt, canCancel, hint, stroke }
 export const powerBar = (W, H) => ({ x: Math.round(W / 2 - 120), y: BAR_TOP(H) + 18, w: 240, h: 12 });
 
 export function drawPuttBar(ctx, W, H, info) {
@@ -185,11 +185,13 @@ export function drawPuttBar(ctx, W, H, info) {
   const lie = info.rise === 0 ? 'LEVEL' : `${info.rise > 0 ? 'UPHILL' : 'DOWNHILL'} ${Math.abs(info.rise)} IN`;
   drawText(ctx, lie, 14, top + 17);
   drawText(ctx, `STROKE ${info.stroke}`, 14, top + 26);
-  drawText(ctx, 'ARROWS RUN DOWNHILL', 14, top + 35, '#c8c0e8');
+  drawText(ctx, 'ARROWS POINT DOWNHILL', 14, top + 35, '#c8c0e8');
 
   // The bar: weak to strong, red through green to blue, like the old games.
   const b = powerBar(W, H);
-  drawText(ctx, 'POWER', b.x, b.y - 9, GOLD);
+  // The bar reads in feet of roll on a flat green: the red mark is the aim.
+  const set = info.power != null ? `   ROLL ${Math.round(info.power * info.range)} FT` : '';
+  drawText(ctx, `AIM ${info.aimFeet} FT${set}`, b.x, b.y - 9, GOLD);
   drawText(ctx, `MAX ${info.range} FT`, b.x + b.w - textWidth(`MAX ${info.range} FT`), b.y - 9);
   ctx.fillStyle = '#10101c';
   ctx.fillRect(b.x - 1, b.y - 1, b.w + 2, b.h + 2);
@@ -204,10 +206,12 @@ export function drawPuttBar(ctx, W, H, info) {
   // Every 5 feet a notch.
   ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
   for (let f = 5; f < info.range; f += 5) ctx.fillRect(b.x + Math.round(f / info.range * (b.w - 1)), b.y + b.h - 4, 1, 3);
-  // A red marker over the hole's distance, on the flat.
-  const tx = b.x + Math.round(Math.min(1, info.target) * (b.w - 1));
+  // A red marker over the aim's distance.
+  const tx = b.x + Math.round(Math.min(1, info.aimFeet / info.range) * (b.w - 1));
   ctx.fillStyle = '#ff4040';
   for (let k = 0; k < 3; k++) ctx.fillRect(tx - 2 + k, b.y - 4 + k, 5 - 2 * k, 1);
+  ctx.fillStyle = 'rgba(255, 64, 64, 0.8)';
+  ctx.fillRect(tx, b.y, 1, b.h);
   if (info.power != null) {
     const nx = b.x + Math.round(info.power * (b.w - 1));
     ctx.fillStyle = '#ffffff';

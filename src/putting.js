@@ -77,11 +77,16 @@ export function rollPutt(hole, from, angle, speed) {
 const RANGES = [8, 15, 25, 40, 60, 90, 120];
 export const puttRange = (yards) => RANGES.find((r) => r >= Math.max(yards * 3 * 1.3, yards * 3 + 4)) ?? RANGES[RANGES.length - 1];
 
+// The bar's range for a putt from `from` aimed at `aim`: it covers both the
+// hole and the aim, so aiming long gives a longer bar.
+export const aimRange = (hole, from, aim) => puttRange(Math.max(dist(from, hole.pin), dist(from, aim)));
+
 // The wobble a golfer's stroke puts on the line (radians) and the pace (a fraction).
 const strokeWobble = (golfer) => 1.6 - golfer.skills.putting / 100;
 
 // Strike a putt: aim at `aim` (a point on the green), with the bar stopped at
-// `power` (0 to 1) of `range` feet.
+// `power` (0 to 1) of `range` feet. Stopping the bar at the aim's distance rolls
+// the ball to the aim on a flat green; the slope does the rest.
 export function strike(rng, golfer, hole, from, aim, power, range) {
   const w = strokeWobble(golfer);
   const angle = Math.atan2(aim.y - from.y, aim.x - from.x) + rng.gauss() * 0.01 * w;
@@ -107,7 +112,6 @@ export function holeChance(golfer, ft) {
 export function readPutt(rng, golfer, hole, from) {
   const pin = hole.pin;
   const d = dist(from, pin);
-  const range = puttRange(d);
   // Coarse to fine: a fan of lines and paces, then closer in round the best.
   let best = { angle: Math.atan2(pin.y - from.y, pin.x - from.x), yards: d * 1.3 };
   for (const [da, n, dy] of [[0.04, 8, 0.15], [0.01, 4, 0.03], [0.003, 3, 0.01]]) {
@@ -127,9 +131,7 @@ export function readPutt(rng, golfer, hole, from) {
   const angle = best.angle + rng.gauss() * 0.04 * blur;
   const yards = best.yards * (1 + rng.gauss() * 0.08 * blur);
   const aimAt = Math.max(1, yards);
-  return {
-    aim: { x: from.x + Math.cos(angle) * aimAt, y: from.y + Math.sin(angle) * aimAt },
-    power: Math.min(1, yards * 3 / range),
-    range,
-  };
+  const aim = { x: from.x + Math.cos(angle) * aimAt, y: from.y + Math.sin(angle) * aimAt };
+  const range = aimRange(hole, from, aim);
+  return { aim, power: Math.min(1, yards * 3 / range), range };
 }
