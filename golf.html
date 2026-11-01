@@ -3112,24 +3112,45 @@ const sum = (a) => a.reduce((t, v) => t + (v ?? 0), 0);
 const toParText = (d) => (d === 0 ? 'E' : d > 0 ? `+${d}` : `${d}`);
 
 // Medal play card: each golfer's score on each hole against par, front nine,
-// back nine and total.
+// back nine and total. The name column is as wide as the longest name, so a
+// long name never runs into the hole-1 scores.
+const CARD_NAME_MAX = 14;
+const cardName = (s) => (s.length > CARD_NAME_MAX ? `${s.slice(0, CARD_NAME_MAX - 1)}.` : s);
 function drawScorecard(ctx, W, H, round, holeNumber, title) {
   const n = round.players.length;
-  const COL = 14, LABEL = 34, ROW = 10, blockH = (2 + n) * ROW + 4;
-  const w = LABEL + 9 * COL + 26 + 12, h = 18 + 2 * blockH + 10 + n * 10 + 24;
+  const names = round.players.map((p) => cardName(p.name));
+  const COL = 14, SUM = 22, ROW = 10, PAD = 8, blockH = (2 + n) * ROW + 6;
+  const LABEL = Math.max(textWidth('HOLE'), ...names.map((s) => textWidth(s))) + 8;
+  const inner = LABEL + 9 * COL + 4 + 2 * SUM;
+  const credit = 'SPRITES: MIKE MOORE, PIXELBITSNBYTES.COM';
+  const w = Math.max(inner, textWidth(title) + 8, textWidth(credit)) + 2 * PAD;
+  const h = 18 + 2 * blockH + 8 + n * 10 + 22;
   const x0 = Math.round((W - w) / 2), y0 = Math.round((H - h) / 2) - 10;
+  const left = x0 + Math.round((w - inner) / 2);
   panel(ctx, x0, y0, w, h);
   drawText(ctx, title, x0 + Math.round((w - textWidth(title)) / 2), y0 + 6, GOLD);
 
-  const block = (from, label, y) => {
-    const xs = (i) => x0 + 6 + LABEL + i * COL;
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
-    ctx.fillRect(x0 + 6, y - 2, w - 12, 9);
-    drawText(ctx, 'HOLE', x0 + 6, y, '#c8c0e8', 1, null);
-    drawText(ctx, 'PAR', x0 + 6, y + ROW, '#c8c0e8', 1, null);
-    round.players.forEach((p, r) => drawText(ctx, p.name, x0 + 6, y + (2 + r) * ROW, p.label ?? p.shirt, 1, null));
+  const block = (from, label, y, total) => {
+    const xs = (i) => left + LABEL + i * COL;
+    const sx = (k) => xs(9) + 4 + k * SUM;
+    const centre = (s, cx, cw) => cx + Math.round((cw - textWidth(s)) / 2);
+    // Header band, then a faint stripe on every other golfer's row.
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.10)';
+    ctx.fillRect(left - 3, y - 2, inner + 6, 9);
+    round.players.forEach((p, r) => {
+      if (r % 2) return;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.04)';
+      ctx.fillRect(left - 3, y + (2 + r) * ROW - 2, inner + 6, 9);
+    });
+    // Rules between the names and the holes, and before the totals.
+    ctx.fillStyle = 'rgba(200, 192, 232, 0.25)';
+    ctx.fillRect(xs(0) - 3, y - 2, 1, (2 + n) * ROW - 1);
+    ctx.fillRect(sx(0) - 3, y - 2, 1, (2 + n) * ROW - 1);
+    drawText(ctx, 'HOLE', left, y, '#c8c0e8', 1, null);
+    drawText(ctx, 'PAR', left, y + ROW, '#c8c0e8', 1, null);
+    round.players.forEach((p, r) => drawText(ctx, names[r], left, y + (2 + r) * ROW, p.label ?? p.shirt, 1, null));
     for (let i = 0; i < 9; i++) {
-      const hn = from + i, cx = xs(i), mid = (s) => cx + Math.round((COL - textWidth(s)) / 2);
+      const hn = from + i, cx = xs(i), mid = (s) => centre(s, cx, COL - 1);
       if (hn + 1 === holeNumber) { ctx.fillStyle = 'rgba(242, 201, 58, 0.25)'; ctx.fillRect(cx, y - 2, COL - 1, (2 + n) * ROW - 1); }
       drawText(ctx, `${hn + 1}`, mid(`${hn + 1}`), y, '#ffffff', 1, null);
       drawText(ctx, `${round.pars[hn]}`, mid(`${round.pars[hn]}`), y + ROW, '#c8c0e8', 1, null);
@@ -3140,18 +3161,26 @@ function drawScorecard(ctx, W, H, round, holeNumber, title) {
         drawText(ctx, `${sc}`, mid(`${sc}`), y + (2 + r) * ROW, d < 0 ? GOLD : d > 0 ? '#f08a8a' : '#ffffff', 1, null);
       });
     }
-    const tx = xs(9) + 4;
-    drawText(ctx, label, tx, y, '#ffffff', 1, null);
-    drawText(ctx, `${sum(round.pars.slice(from, from + 9))}`, tx, y + ROW, '#c8c0e8', 1, null);
-    round.players.forEach((p, r) => {
-      const part = p.scores.slice(from, from + 9);
-      if (part.some((sc) => sc != null)) drawText(ctx, `${sum(part)}`, tx, y + (2 + r) * ROW, '#ffffff', 1, null);
+    // Totals: OUT on the front nine; IN and TOT on the back nine.
+    const sums = [[label, from, 9]];
+    if (total) sums.push(['TOT', 0, 18]);
+    sums.forEach(([lab, start, len], k) => {
+      const cx = sx(k), put = (s, yy, col) => drawText(ctx, s, centre(s, cx, SUM - 4), yy, col, 1, null);
+      put(lab, y, '#ffffff');
+      put(`${sum(round.pars.slice(start, start + len))}`, y + ROW, '#c8c0e8');
+      round.players.forEach((p, r) => {
+        const part = p.scores.slice(start, start + len);
+        if (part.some((sc) => sc != null)) put(`${sum(part)}`, y + (2 + r) * ROW, '#ffffff');
+      });
     });
   };
-  block(0, 'OUT', y0 + 18);
-  block(9, 'IN', y0 + 18 + blockH);
+  block(0, 'OUT', y0 + 18, false);
+  block(9, 'IN', y0 + 18 + blockH, true);
 
-  let ty = y0 + 18 + 2 * blockH + 6;
+  let ty = y0 + 18 + 2 * blockH + 2;
+  ctx.fillStyle = 'rgba(200, 192, 232, 0.25)';
+  ctx.fillRect(left - 3, ty - 3, inner + 6, 1);
+  ty += 2;
   round.players.forEach((p) => {
     const played = p.scores.map((sc, i) => (sc == null ? null : sc - round.pars[i])).filter((d) => d != null);
     const line = played.length ? `${p.name}: ${sum(p.scores)}  (${toParText(sum(played))} THRU ${played.length})` : `${p.name}: NO HOLES YET`;
@@ -3161,7 +3190,6 @@ function drawScorecard(ctx, W, H, round, holeNumber, title) {
   const y1 = ty;
   const help = 'TAB: SHOW OR HIDE CARD';
   drawText(ctx, help, x0 + Math.round((w - textWidth(help)) / 2), y1 + 2, '#8a80b0', 1, null);
-  const credit = 'SPRITES: MIKE MOORE, PIXELBITSNBYTES.COM';
   drawText(ctx, credit, x0 + Math.round((w - textWidth(credit)) / 2), y1 + 10, '#6a6090', 1, null);
 }
 
