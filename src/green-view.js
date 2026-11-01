@@ -1,22 +1,24 @@
 // The green seen from above for putting, like the 16-bit golf games: the putt
-// runs up the screen, the green is mown in stripes and shaded lighter where it's
-// higher, and little arrows drift downhill to show the slope.
+// runs up the screen. The ground uses the same textures as the course, with the
+// same faint mowing stripes and darker banks round the green, shaded lighter
+// where it's higher, and arrows drift downhill to show the slope.
 
 import { surfaceAt, dist } from './course-generator.js';
 import { heightAt, slopeAt } from './terrain.js';
+import { groundTextures, groundPalette } from './art.js';
 import { CUP } from './putting.js';
 
-const STRIPE = 10; // pixels per mowing stripe
-const ARROW_GAP = 32;
-const GROUND_RGB = {
-  green: [[88, 176, 72], [78, 160, 64]], fringe: [[62, 136, 52]], rough: [[46, 108, 42], [42, 100, 38]],
-  bunker: [[226, 204, 146], [214, 190, 132]], water: [[58, 120, 200], [52, 110, 188]], trees: [[30, 78, 32], [26, 70, 28]],
-};
+const GREEN_STRIPE = 2.5;   // yards per mowing stripe, as on the course
+const GREEN_MOWN = 0.95;    // how much darker the alternate stripes are (the course's own)
+const ARROW_GAP = 44; // pixels between slope arrows
+const FLAT_SLOPE = 0.004;  // slopes gentler than this get no arrow
 
 // Lay the green out in the screen box { x, y, w, h } for a putt from `ball`:
 // the hole straight up the screen from the ball, the two of them centred and as
-// close up as fits. Draws the ground into a canvas of the whole screen, W x H.
-export function makeGreenView(hole, ball, box, W, H) {
+// close up as fits. Draws the ground into a canvas of the whole screen, W x H,
+// with the course's ground textures blown up `tex` times so they look the size
+// they do on the course close up.
+export function makeGreenView(hole, ball, box, W, H, tex = 2) {
   const pin = hole.pin;
   const d = Math.max(0.5, dist(ball, pin));
   const up = { x: (pin.x - ball.x) / d, y: (pin.y - ball.y) / d };
@@ -40,7 +42,9 @@ export function makeGreenView(hole, ball, box, W, H) {
   canvas.width = W; canvas.height = H;
   const g = canvas.getContext('2d');
   const img = g.createImageData(W, H);
-  const arrows = [];
+  const buf = new Uint32Array(img.data.buffer);
+  const textures = groundTextures(hole.style);
+  const palette = groundPalette(hole.style);
   const h0 = heightAt(hole, pin);
   // Find the ground every few pixels, and pixel by pixel only where it changes.
   const B = 4, gw = Math.ceil(W / B) + 1, gh = Math.ceil(H / B) + 1;
@@ -61,60 +65,109 @@ export function makeGreenView(hole, ball, box, W, H) {
     const a = coarse[k];
     return a === coarse[k + 1] && a === coarse[k + gw] && a === coarse[k + gw + 1] ? a : surfaceAt(hole, p);
   };
+  const names = [], ids = new Map();
+  const id = (s) => { if (!ids.has(s)) { ids.set(s, names.length); names.push(s); } return ids.get(s); };
+  const surf = new Uint8Array(W * H);
+  const stripe = new Uint8Array(W * H);
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
       const p = toWorld(x + 0.5, y + 0.5);
-      let s = groundAt(x, y, p);
-      if (s === 'waste' || s === 'tee' || s === 'fairway') s = 'rough';
-      const tones = GROUND_RGB[s] ?? GROUND_RGB.rough;
-      let rgb = s === 'green' ? tones[Math.floor(x / STRIPE) % 2] : tones[(x * 7 + y * 13 + ((x * y) >> 3)) % 5 === 0 ? 1 % tones.length : 0];
+      surf[y * W + x] = id(groundAt(x, y, p));
+      stripe[y * W + x] = Math.floor((p.x + p.y) / GREEN_STRIPE) & 1;
+    }
+  }
+  const RAISED = new Set(['green', 'tee']), SUNKEN = new Set(['bunker', 'water', 'sea']);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const k = y * W + x;
+      const s = names[surf[k]];
+      const t = textures[s] ?? textures.land;
+      let c = t.px[(Math.floor(y / tex) % t.h) * t.w + (Math.floor(x / tex) % t.w)];
+      if ((s === 'green' || s === 'fairway') && stripe[k]) c = greenDimmed(c, GREEN_MOWN);
+      // A bank round the green and tees, and a lip round bunkers and water, as on the course.
+      const edge = (palette[s] ?? palette.land)[2];
+      const near = (dx, dy) => { const xx = x + dx, yy = y + dy; return xx < 0 || yy < 0 || xx >= W || yy >= H ? surf[k] : surf[yy * W + xx]; };
+      if ((RAISED.has(s) || SUNKEN.has(s)) && (near(1, 0) !== surf[k] || near(-1, 0) !== surf[k] || near(0, 1) !== surf[k] || near(0, -1) !== surf[k])) {
+        if (!SUNKEN.has(s) || !SUNKEN.has(names[near(0, -1)])) c = edge;
+      }
       // Higher ground a touch lighter, lower ground darker.
-      if (s === 'green' || s === 'fringe') {
-        const k = 1 + Math.max(-0.16, Math.min(0.16, liftAt(x, y) * 0.5));
-        rgb = rgb.map((c) => Math.min(255, Math.round(c * k)));
-      }
-      const i = (y * W + x) * 4;
-      img.data[i] = rgb[0]; img.data[i + 1] = rgb[1]; img.data[i + 2] = rgb[2]; img.data[i + 3] = 255;
-      if (s === 'green' && x % ARROW_GAP === ARROW_GAP >> 1 && y % ARROW_GAP === ARROW_GAP >> 1) {
-        const sl = slopeAt(hole, p);
-        const steep = Math.hypot(sl.x, sl.y);
-        if (steep > 0.004) {
-          const down = dirToScreen({ x: -sl.x / steep, y: -sl.y / steep });
-          arrows.push({ x, y, dx: down.x, dy: down.y, steep });
-        }
-      }
+      if (s === 'green' || s === 'fringe') c = greenDimmed(c, 1 + Math.max(-0.16, Math.min(0.16, liftAt(x, y) * 0.5)));
+      buf[k] = c;
     }
   }
   g.putImageData(img, 0, 0);
+  // The slope arrows sit on a grid over the green, pointing downhill.
+  const arrows = [];
+  for (let y = ARROW_GAP >> 1; y < H; y += ARROW_GAP) {
+    for (let x = ARROW_GAP >> 1; x < W; x += ARROW_GAP) {
+      if (names[surf[y * W + x]] !== 'green') continue;
+      const sl = slopeAt(hole, toWorld(x + 0.5, y + 0.5));
+      const steep = Math.hypot(sl.x, sl.y);
+      if (steep <= FLAT_SLOPE) continue;
+      const down = dirToScreen({ x: -sl.x / steep, y: -sl.y / steep });
+      arrows.push({ x, y, dx: down.x, dy: down.y, steep });
+    }
+  }
   return { hole, ball, pin, scale, canvas, toScreen, toWorld, arrows };
+}
+
+// A packed pixel made lighter or darker by factor f.
+const greenDimmed = (c, f) => (c & 0xff000000) | (Math.min(255, ((c >>> 16) & 255) * f) << 16) | (Math.min(255, ((c >>> 8) & 255) * f) << 8) | Math.min(255, (c & 255) * f);
+
+// Slope arrows, drawn once for each of 32 directions and three sizes: a pale
+// arrow with a dark outline, so it reads on any grass.
+const ARROW_DIRS = 32;
+const arrowCache = new Map();
+function arrowSprite(dir, size, color) {
+  const key = `${dir}:${size}:${color}`;
+  if (arrowCache.has(key)) return arrowCache.get(key);
+  const a = (dir / ARROW_DIRS) * Math.PI * 2, ux = Math.cos(a), uy = Math.sin(a);
+  const len = [7, 9, 12][size], half = len / 2, head = [3, 4, 5][size], R = 8, N = R * 2 + 1;
+  const inside = (x, y) => {
+    const u = x * ux + y * uy, v = -x * uy + y * ux;
+    if (u > half || u < -half) return false;
+    if (u >= half - head) return Math.abs(v) <= (half - u) * 0.95 + 0.4;
+    return Math.abs(v) <= 0.6;
+  };
+  const c = document.createElement('canvas');
+  c.width = c.height = N;
+  const g = c.getContext('2d');
+  const outline = (x, y) => [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([ox, oy]) => inside(x + ox, y + oy));
+  for (let y = -R; y <= R; y++) {
+    for (let x = -R; x <= R; x++) {
+      if (inside(x, y)) g.fillStyle = color;
+      else if (outline(x, y)) g.fillStyle = 'rgba(16, 40, 16, 0.75)';
+      else continue;
+      g.fillRect(x + R, y + R, 1, 1);
+    }
+  }
+  const out = { canvas: c, R };
+  arrowCache.set(key, out);
+  return out;
 }
 
 const dotAt = (ctx, x, y, color, w = 1, h = 1) => { ctx.fillStyle = color; ctx.fillRect(Math.round(x), Math.round(y), w, h); };
 
 // Draw the green: the ground, the slope arrows (moving faster on steeper
 // slopes), the hole, any other balls, the aim and the ball. `aim` and `ball`
-// are world points; `others` are other golfers' balls.
-export function drawGreenView(ctx, v, now, { ball, aim, others = [], dropped = false }) {
+// are world points; `others` are other golfers' balls. `pace`, while the power
+// bar swings, is how far the putt would roll on the flat, in yards: a marker
+// slides along the line to show it.
+export function drawGreenView(ctx, v, now, { ball, aim, pace = null, others = [], dropped = false }) {
   ctx.drawImage(v.canvas, 0, 0);
   for (const a of v.arrows) {
-    // An arrow pointing downhill, bolder on steeper ground, with a bright
-    // pulse running down it: faster where it's steeper.
-    const len = 4 + Math.min(5, a.steep * 150);
-    const alpha = Math.min(0.75, 0.3 + a.steep * 12);
-    const pulse = ((now / 1000) * (0.5 + a.steep * 30) + (a.x * 0.37 + a.y * 0.11)) % 1;
-    const tipX = a.x + a.dx * len / 2, tipY = a.y + a.dy * len / 2;
-    for (let k = 0; k <= len; k++) {
-      const lit = Math.abs(k / len - (1 - pulse)) < 0.2;
-      ctx.fillStyle = `rgba(240, 255, 224, ${(lit ? Math.min(1, alpha + 0.35) : alpha).toFixed(2)})`;
-      ctx.fillRect(Math.round(tipX - a.dx * k), Math.round(tipY - a.dy * k), 1, 1);
-    }
-    ctx.fillStyle = `rgba(240, 255, 224, ${alpha.toFixed(2)})`;
-    for (const side of [-1, 1]) {
-      for (let k = 1; k <= 2; k++) {
-        ctx.fillRect(Math.round(tipX - (a.dx + side * a.dy * 0.9) * k), Math.round(tipY - (a.dy - side * a.dx * 0.9) * k), 1, 1);
-      }
-    }
+    // Each arrow drifts downhill and fades, then starts again: bigger, brighter
+    // and quicker on steeper ground.
+    const size = a.steep < 0.02 ? 0 : a.steep < 0.04 ? 1 : 2;
+    const color = ['#f0ffe4', '#fff2a0', '#ffc460'][size];
+    const dir = Math.round(Math.atan2(a.dy, a.dx) / (Math.PI * 2) * ARROW_DIRS + ARROW_DIRS) % ARROW_DIRS;
+    const spr = arrowSprite(dir, size, color);
+    const t = ((now / 1000) * (0.35 + a.steep * 14) + (a.x * 0.37 + a.y * 0.11) / ARROW_GAP) % 1;
+    const drift = (t - 0.5) * 8;
+    ctx.globalAlpha = Math.min(1, Math.sin(t * Math.PI) * 1.6) * (0.75 + size * 0.1);
+    ctx.drawImage(spr.canvas, Math.round(a.x + a.dx * drift) - spr.R, Math.round(a.y + a.dy * drift) - spr.R);
   }
+  ctx.globalAlpha = 1;
   // The hole: a dark disc with a lighter lip on the far side.
   const c = v.toScreen(v.pin);
   const r = Math.max(3.2, CUP * v.scale);
@@ -128,7 +181,7 @@ export function drawGreenView(ctx, v, now, { ball, aim, others = [], dropped = f
   // The flagstick's shadow, falling down to the right.
   for (let k = 2; k < 14; k++) dotAt(ctx, c.x + k * 0.7 + r - 1, c.y + k * 0.35, 'rgba(0, 0, 0, 0.25)');
   for (const o of others) greenBall(ctx, v.toScreen(o), v.scale, '#e8e8f0');
-  if (aim) greenAim(ctx, v, ball, aim, now);
+  if (aim) greenAim(ctx, v, ball, aim, now, pace);
   if (!dropped) greenBall(ctx, v.toScreen(ball), v.scale, '#ffffff');
 }
 
@@ -144,15 +197,33 @@ function greenBall(ctx, s, scale, color) {
   }
 }
 
-// A dotted line from the ball to the aim, and a crosshair on the aim.
-function greenAim(ctx, v, ball, aim, now) {
+// A dotted line from the ball to the aim, with a crosshair on the aim: where the
+// ball would stop on the flat. While the bar swings, a ring slides out along the
+// line to where the putt is set to roll.
+function greenAim(ctx, v, ball, aim, now, pace) {
   const a = v.toScreen(ball), b = v.toScreen(aim);
   const len = Math.hypot(b.x - a.x, b.y - a.y);
+  const ux = (b.x - a.x) / len, uy = (b.y - a.y) / len;
   const crawl = (now / 120) % 4;
-  for (let k = 4 + crawl; k < len - 5; k += 4) dotAt(ctx, a.x + (b.x - a.x) * k / len, a.y + (b.y - a.y) * k / len, 'rgba(255, 255, 255, 0.8)');
+  for (let k = 4 + crawl; k < len - 5; k += 4) {
+    dotAt(ctx, a.x + ux * k + 1, a.y + uy * k + 1, 'rgba(0, 0, 0, 0.35)');
+    dotAt(ctx, a.x + ux * k, a.y + uy * k, 'rgba(255, 255, 255, 0.9)');
+  }
   const x = Math.round(b.x), y = Math.round(b.y);
-  for (let k = 3; k <= 6; k++) {
-    dotAt(ctx, x - k, y, '#ffffff'); dotAt(ctx, x + k, y, '#ffffff');
-    dotAt(ctx, x, y - k, '#ffffff'); dotAt(ctx, x, y + k, '#ffffff');
+  for (const [col, o] of [['rgba(0, 0, 0, 0.4)', 1], ['#ffffff', 0]]) {
+    for (let k = 3; k <= 6; k++) {
+      dotAt(ctx, x - k + o, y + o, col); dotAt(ctx, x + k + o, y + o, col);
+      dotAt(ctx, x + o, y - k + o, col); dotAt(ctx, x + o, y + k + o, col);
+    }
+  }
+  if (pace == null) return;
+  const r = pace * v.scale;
+  const px = Math.round(a.x + ux * r), py = Math.round(a.y + uy * r);
+  const close = Math.abs(r - len) < 3;
+  for (let k = 0; k < 16; k++) {
+    const t = (k / 16) * Math.PI * 2;
+    const qx = Math.round(px + Math.cos(t) * 3.5), qy = Math.round(py + Math.sin(t) * 3.5);
+    dotAt(ctx, qx + 1, qy + 1, 'rgba(0, 0, 0, 0.4)');
+    dotAt(ctx, qx, qy, close ? '#ff6060' : '#ffe070');
   }
 }

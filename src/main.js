@@ -14,7 +14,7 @@ import { SHOT_TYPES, shotType, maxCarry, chooseClub, shotSpread, flightPoint, cl
 import { PLAYER, RIVAL } from './golfers.js';
 import { startHole, current, toPin, hit, settle, settlePutt, newRound, standing, matchPlay, matchWords, nextTurn, allHoled, pickUp, PICK_UP } from './play.js';
 import { planShot } from './ai.js';
-import { feet, puttRange, puttRise, readPutt, strike } from './putting.js';
+import { feet, aimRange, puttRise, readPutt, strike } from './putting.js';
 import { makeGreenView, drawGreenView } from './green-view.js';
 import { drawDinky, dinkySize, golferFrame, ballFrame, flagFrame, GOLFER_LOOKS, LIE_BANNERS, WATER_BANNER, OB_BANNER, scoreBanner } from './dinky.js';
 import { LOOKS, SHIRT_COLOURS, SKILL_NAMES, newCareer, clubCourses, careerGolfer, clubOpponent, memberGolfer, MEMBERS, STAKES, finishRound, canPractise, recordPractice, buyKit, saveCareer, loadCareer } from './career.js';
@@ -551,11 +551,21 @@ function startTurn(now, note, sub) {
 // ---------- Putting ----------
 
 // The green from above, laid out between the panels, for a putt from `at`.
-const greenFor = (at) => makeGreenView(game.hole, at, { x: 0, y: 50, w: display.W, h: BAR_TOP(display.H) - 54 }, display.W, display.H);
+// Its ground textures are blown up to look the size they do on the course close up.
+const greenFor = (at) => makeGreenView(game.hole, at, { x: 0, y: 50, w: display.W, h: BAR_TOP(display.H) - 54 }, display.W, display.H,
+  Math.max(1, Math.round((display.fitScale + MAX_ZOOM) / display.fitScale)));
 
 function newPutt(me, until) {
-  const range = puttRange(dist(me.at, game.hole.pin));
-  return { view: greenFor(me.at), stage: 'wait', until, aim: { ...game.hole.pin }, range, power: null, meterAt: 0, roll: null, rollAt: 0, plan: null };
+  const pt = { view: greenFor(me.at), stage: 'wait', until, aim: null, range: 0, power: null, meterAt: 0, roll: null, rollAt: 0, plan: null };
+  setPuttAim(pt, me.at, { ...game.hole.pin });
+  return pt;
+}
+
+// Aim the putt at `aim`: where it should stop on the flat. The power bar's range
+// and its red mark follow the aim.
+function setPuttAim(pt, from, aim) {
+  pt.aim = aim;
+  pt.range = aimRange(game.hole, from, aim);
 }
 
 // The power bar runs up and back down again until it's stopped.
@@ -586,8 +596,8 @@ function cancelPower() {
 
 function aimPutt(p) {
   const pt = ui.putt;
-  const at = pt.view.toWorld(p.x, p.y);
-  if (dist(at, current(game.play).at) > 0.2) pt.aim = at;
+  const at = pt.view.toWorld(p.x, p.y), from = current(game.play).at;
+  if (dist(at, from) > 0.2) setPuttAim(pt, from, at);
 }
 
 // Where the ball is on its roll: { at, done } (done once it's stopped or dropped).
@@ -612,8 +622,8 @@ function updatePutting(now) {
   }
   if (pt.stage === 'aim' && me.golfer.ai) {
     const t = Math.min(1, (now - pt.aimAt) / 700), e = 1 - (1 - t) ** 2;
-    pt.aim = { x: pt.aimFrom.x + (pt.plan.aim.x - pt.aimFrom.x) * e, y: pt.aimFrom.y + (pt.plan.aim.y - pt.aimFrom.y) * e };
-    if (now >= pt.until) startPower(now);
+    setPuttAim(pt, me.at, { x: pt.aimFrom.x + (pt.plan.aim.x - pt.aimFrom.x) * e, y: pt.aimFrom.y + (pt.plan.aim.y - pt.aimFrom.y) * e });
+    if (now >= pt.until) { setPuttAim(pt, me.at, pt.plan.aim); startPower(now); }
     return;
   }
   if (pt.stage === 'power') {
@@ -881,7 +891,7 @@ function render(now) {
     const others = game.play.players.filter((p, i) => i !== game.play.turn && !p.holed && p.onGreen).map((p) => p.at);
     drawGreenView(hud, pt.view, now, {
       ball: rolling ? rolling.at : me.at, aim: pt.stage === 'aim' || pt.stage === 'power' ? pt.aim : null,
-      others, dropped: rolling?.done && pt.roll.holed,
+      pace: pt.stage === 'power' ? pt.power * pt.range / 3 : null, others, dropped: rolling?.done && pt.roll.holed,
     });
   }
   drawHud(hud, W, H, {
@@ -892,9 +902,9 @@ function render(now) {
     const d = dist(me.at, game.hole.pin);
     const human = humanTurn();
     drawPuttBar(hud, W, H, {
-      feet: feet(d), rise: puttRise(game.hole, me.at), range: pt.range, power: pt.power, target: d * 3 / pt.range,
+      feet: feet(d), rise: puttRise(game.hole, me.at), range: pt.range, power: pt.power, aimFeet: feet(dist(me.at, pt.aim)),
       stage: pt.stage, canPutt: human && (pt.stage === 'aim' || pt.stage === 'power'), canCancel: human && pt.stage === 'power', stroke: me.strokes + 1,
-      hint: !human ? `${who(me.golfer)} IS PUTTING` : pt.stage === 'aim' ? 'CLICK THE GREEN TO AIM, THEN PUTT' : pt.stage === 'power' ? 'CLICK TO STOP THE BAR' : '',
+      hint: !human ? `${who(me.golfer)} IS PUTTING` : pt.stage === 'aim' ? 'CLICK WHERE IT SHOULD ROLL TO, THEN PUTT' : pt.stage === 'power' ? 'STOP THE BAR ON THE RED MARK' : '',
     });
   }
   const type = shotType(ui.shot);
@@ -1446,7 +1456,7 @@ function autoPutt() {
   if (pt?.stage !== 'aim') return;
   const me = current(game.play);
   const plan = readPutt(rng, me.golfer, game.hole, me.at);
-  pt.aim = plan.aim;
+  setPuttAim(pt, me.at, plan.aim);
   const now = performance.now();
   startPower(now);
   pt.meterAt = now - plan.power * POWER_SWEEP;
