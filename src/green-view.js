@@ -153,7 +153,7 @@ const dotAt = (ctx, x, y, color, w = 1, h = 1) => { ctx.fillStyle = color; ctx.f
 // are world points; `others` are other golfers' balls. `pace`, while the power
 // bar swings, is how far the putt would roll on the flat, in yards: a marker
 // slides along the line to show it.
-export function drawGreenView(ctx, v, now, { ball, aim, pace = null, others = [], dropped = false }) {
+export function drawGreenView(ctx, v, now, { ball, aim, pace = null, others = [], dropped = false, hop = 0 }) {
   ctx.drawImage(v.canvas, 0, 0);
   for (const a of v.arrows) {
     // Each arrow drifts downhill and fades, then starts again: bigger, brighter
@@ -182,18 +182,19 @@ export function drawGreenView(ctx, v, now, { ball, aim, pace = null, others = []
   for (let k = 2; k < 14; k++) dotAt(ctx, c.x + k * 0.7 + r - 1, c.y + k * 0.35, 'rgba(0, 0, 0, 0.25)');
   for (const o of others) greenBall(ctx, v.toScreen(o), v.scale, '#e8e8f0');
   if (aim) greenAim(ctx, v, ball, aim, now, pace);
-  if (!dropped) greenBall(ctx, v.toScreen(ball), v.scale, '#ffffff');
+  if (!dropped) greenBall(ctx, v.toScreen(ball), v.scale, '#ffffff', hop);
 }
 
-function greenBall(ctx, s, scale, color) {
-  const x = Math.round(s.x), y = Math.round(s.y);
+// `hop` lifts the ball off its shadow, in pixels.
+function greenBall(ctx, s, scale, color, hop = 0) {
+  const x = Math.round(s.x), y = Math.round(s.y), up = Math.round(hop);
   if (scale >= 10) {
     dotAt(ctx, x - 1, y + 1, 'rgba(0, 0, 0, 0.35)', 3, 2);
-    dotAt(ctx, x - 1, y - 1, color, 3, 3);
-    dotAt(ctx, x + 1, y + 1, '#b8b8c8');
+    dotAt(ctx, x - 1, y - 1 - up, color, 3, 3);
+    dotAt(ctx, x + 1, y + 1 - up, '#b8b8c8');
   } else {
     dotAt(ctx, x, y + 1, 'rgba(0, 0, 0, 0.35)', 2, 1);
-    dotAt(ctx, x - 1, y - 1, color, 2, 2);
+    dotAt(ctx, x - 1, y - 1 - up, color, 2, 2);
   }
 }
 

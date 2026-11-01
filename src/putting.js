@@ -12,8 +12,8 @@ export const feet = (yards) => Math.max(1, Math.round(yards * 3));
 const FRICTION = { green: 0.8, fringe: 2.2 }; // how fast the ball slows, yards per second per second
 const ROUGH_FRICTION = 4.5;                    // anywhere else
 const GRAVITY = 7.6;                           // a rolling ball's pull down a slope, yards per second per second
-export const CUP = 0.075;                      // the hole's radius, a touch generous
-const DROP_SPEED = 1.5;                        // fastest a ball can be going and still drop, straight in
+export const CUP = 0.1;                       // the hole's radius, generous so a putt on line drops
+const DROP_SPEED = 1.2;                        // fastest a ball can be going and still drop, straight in
 const PUTT_STEP = 1 / 60;
 
 const friction = (surface) => FRICTION[surface] ?? ROUGH_FRICTION;
@@ -29,7 +29,7 @@ export function rollPutt(hole, from, angle, speed) {
   let vx = Math.cos(angle) * speed, vy = Math.sin(angle) * speed;
   const pin = hole.pin;
   const path = [{ x, y }];
-  let surface = 'green', holed = false, entry = 0;
+  let surface = 'green', holed = false, entry = 0, over = false;
   for (let k = 0; k < 20 / PUTT_STEP; k++) {
     const g = slopeAt(hole, { x, y });
     const f = friction(surface);
@@ -47,21 +47,26 @@ export function rollPutt(hole, from, angle, speed) {
     const t = len2 ? Math.max(0, Math.min(1, ((pin.x - x) * sx + (pin.y - y) * sy) / len2)) : 0;
     const cx = x + sx * t, cy = y + sy * t;
     const miss = Math.hypot(pin.x - cx, pin.y - cy);
-    if (miss < CUP) {
+    if (miss >= CUP) over = false;
+    else if (!over) {
       const fast = Math.hypot(nx, ny);
       // Straight in it can be going quite quickly; over the edge it must be dying.
-      if (fast < DROP_SPEED * Math.sqrt(1 - (miss / CUP) ** 2) + 0.25) {
+      if (fast < DROP_SPEED * (0.5 + 0.5 * Math.sqrt(1 - (miss / CUP) ** 2))) {
         path.push({ x: pin.x, y: pin.y });
         holed = true;
         entry = miss;
         x = pin.x; y = pin.y;
         break;
       }
-      // Too quick: it catches the lip and is kicked off line.
+      // Too quick: it hits the back of the cup and jumps out, slowed and
+      // kicked off line (a little even when it was dead centre). It can't drop
+      // while it's still passing over the hole.
+      over = true;
       if (!path.lipped) {
         path.lipped = true;
+        path.lipAt = path.length;
         const side = Math.sign((pin.x - cx) * ny - (pin.y - cy) * nx) || 1;
-        const a = Math.atan2(ny, nx) - side * 0.5 * (1 - miss / CUP), s = fast * 0.75;
+        const a = Math.atan2(ny, nx) - side * (0.15 + 0.4 * (1 - miss / CUP)), s = fast * 0.6;
         nx = Math.cos(a) * s; ny = Math.sin(a) * s;
       }
     }
@@ -107,7 +112,7 @@ export function holeChance(golfer, ft) {
 
 // The computer golfer reads the putt: it tries lines and paces with the real
 // roll and picks the one that finishes in the hole, or nearest it, preferring
-// putts that would run a little past. Its read gets vaguer from further away.
+// putts that would only just reach. Its read gets vaguer from further away.
 // Returns { aim, power, range }.
 export function readPutt(rng, golfer, hole, from) {
   const pin = hole.pin;
@@ -121,7 +126,7 @@ export function readPutt(rng, golfer, hole, from) {
       for (let j = -4; j <= 4; j++) {
         const angle = around.angle + i * da, yards = Math.max(0.3, around.yards * (1 + j * dy));
         const r = rollPutt(hole, from, angle, speedFor(yards));
-        const score = r.holed ? (r.miss + Math.abs(yards - d - 0.4) * 0.05) * 0.01 : dist(r.rest, pin);
+        const score = r.holed ? (r.miss + Math.abs(yards - d - 0.05) * 0.05) * 0.01 : dist(r.rest, pin);
         if (!best || score < best.score) best = { score, angle, yards };
       }
     }
