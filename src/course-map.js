@@ -12,6 +12,12 @@ const SEA_REACH = 120; // yards of open sea a links hole keeps clear beside it
 const TURNS = 24;      // headings tried for each hole
 const WALKS = [[25, 40, 60, 80], [110, 150, 200], [260, 330, 400], [550, 700, 900]]; // tee distances from the last green, then further if nothing fits
 const COAST = 60;     // how far the coastline runs from the first tee, on courses by the sea
+// The next tee may sit in the woods round the green just played, but not behind
+// it: a shot that runs through the green mustn't find the next hole's ground,
+// which is out of bounds. Behind means within this many yards of the green's
+// edge and within about 75 degrees of the line the green is played along.
+const BEHIND_GREEN = 45;
+const BEHIND_CONE = 0.26;
 
 // Where a hole sits: a hole point p maps to the map at (x, y) + p turned by `rot`.
 export const toMap = (place, p) => {
@@ -64,6 +70,12 @@ export function courseMap(course) {
   const wet = new Set();     // open sea: other sea may share it, land may not
   const places = [], inland = [], clashes = [];
   let lastGreen = null;
+  let lastBack = null; // the green just played, on the map: { x, y, r, ux, uy } (u: the way it's played)
+  const behindLast = (q) => {
+    if (!lastBack) return false;
+    const dx = q.x - lastBack.x, dy = q.y - lastBack.y, d = Math.hypot(dx, dy);
+    return d < lastBack.r + BEHIND_GREEN && dx * lastBack.ux + dy * lastBack.uy > BEHIND_CONE * d;
+  };
   let coast = null;
   if (course.holes.some((h) => h.sea)) {
     const a = r.range(0, Math.PI * 2);
@@ -84,7 +96,7 @@ export function courseMap(course) {
         const by = blocked.get(k);
         // The tee may sit in the woods round the green just played. Land stays
         // off the coast, except a seaside hole's, which may jut out as a headland.
-        if ((by !== undefined && !(by === n - 1 && Math.hypot(p.x, p.y) < 45)) || wet.has(k) || seaward(q) > (fp.toSea ? 150 : -15)) {
+        if ((by !== undefined && !(by === n - 1 && Math.hypot(p.x, p.y) < 45 && !behindLast(q))) || wet.has(k) || seaward(q) > (fp.toSea ? 150 : -15)) {
           clash++;
           if (ok) return;
         }
@@ -148,6 +160,11 @@ export function courseMap(course) {
     if (fp.toSea && best.clash > 0) inland.push(n); // no room on the coast: it plays inland instead
     if (best.clash > 0) clashes.push(n);
     lastGreen = toMap(best.place, greenAt);
+    {
+      const pts = hole.line.points, a = toMap(best.place, pts[pts.length - 2]);
+      const len = Math.hypot(lastGreen.x - a.x, lastGreen.y - a.y) || 1;
+      lastBack = { ...lastGreen, r: hole.green.r, ux: (lastGreen.x - a.x) / len, uy: (lastGreen.y - a.y) / len };
+    }
     // Mark this hole's ground, with a strip of woods round its land.
     for (const p of fp.land) {
       const [i, j] = cellOf(toMap(best.place, p));
