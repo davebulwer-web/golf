@@ -5693,6 +5693,32 @@ function spriteCanvas(sprite) {
   return c;
 }
 
+// A tree or bit of furniture standing on the course picture, cut back out of
+// the picture itself rather than drawn afresh from its sprite, so it keeps
+// whatever was done to it there (trees out of bounds are drawn darker, and one
+// on the edge of the hole only partly so). Drawn over a golfer or ball behind
+// it, it then matches the rest of the tree exactly. Where a nearer tree
+// overlaps it, the cut-out shows that one, which is in front too.
+function sceneryCutOut(it) {
+  const key = `${it.x},${it.y},${it.sprite.w},${it.sprite.h}`;
+  world.cutouts ??= new Map();
+  let c = world.cutouts.get(key);
+  if (c) return c;
+  const sx = it.x - it.sprite.ax, sy = it.y - it.sprite.ay, { w, h } = it.sprite;
+  c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const g = c.getContext('2d');
+  g.drawImage(spriteCanvas(it.sprite), 0, 0);
+  g.globalCompositeOperation = 'source-in';
+  for (let j = Math.floor(sy / PIECE); j <= Math.floor((sy + h - 1) / PIECE); j++) {
+    for (let i = Math.floor(sx / PIECE); i <= Math.floor((sx + w - 1) / PIECE); i++) g.drawImage(piece(i, j), i * PIECE - sx, j * PIECE - sy);
+  }
+  if (world.cutouts.size > 400) world.cutouts.clear();
+  world.cutouts.set(key, c);
+  return c;
+}
+const drawSceneryOver = (items) => { for (const it of items) ctx.drawImage(sceneryCutOut(it), it.x - it.sprite.ax, it.y - it.sprite.ay); };
+
 // Draw the pieces of the course in view. Missing ones are drawn a couple a
 // frame while scrolling, so it never stalls for long; all at once for a new view.
 function drawCourse() {
@@ -6259,7 +6285,7 @@ function drawPlay(now) {
     items.push({ y: stand.y, draw: () => {
       drawDinky(ctx, `${p.golfer.look ?? 'club'}/${frame}`, x, stand.y, p.golfer.shirt, false, dir < 0) || drawSprite(ctx, 'golfer', x, stand.y, { c: p.golfer.shirt });
       // Trees and furniture in front of them hide them.
-      for (const it of sceneryInFront(x, stand.y, 34)) ctx.drawImage(spriteCanvas(it.sprite), it.x - it.sprite.ax, it.y - it.sprite.ay);
+      drawSceneryOver(sceneryInFront(x, stand.y, 34));
     } });
     if (p.holed) return;
     const s = v.worldToScreen(ball), up = v.worldToScreen(ball, ball.z);
@@ -6271,7 +6297,7 @@ function drawPlay(now) {
       // Like the golfers, trees and furniture in front of the ball (and its
       // shadow) hide it, so it can fly or roll out of sight behind them.
       const top = ball.h > 4 ? y - 6 : y - 2;
-      for (const it of sceneryOverBall(bx, Math.round(s.y) + 1, top, ball.h > 4 ? 5 : 2)) ctx.drawImage(spriteCanvas(it.sprite), it.x - it.sprite.ax, it.y - it.sprite.ay);
+      drawSceneryOver(sceneryOverBall(bx, Math.round(s.y) + 1, top, ball.h > 4 ? 5 : 2));
     } });
   });
   items.sort((a, b) => a.y - b.y);
