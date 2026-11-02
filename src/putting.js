@@ -13,7 +13,7 @@ const FRICTION = { green: 0.8, fringe: 2.2 }; // how fast the ball slows, yards 
 const ROUGH_FRICTION = 4.5;                    // anywhere else
 const GRAVITY = 7.6;                           // a rolling ball's pull down a slope, yards per second per second
 export const CUP = 0.1;                       // the hole's radius, generous so a putt on line drops
-const DROP_SPEED = 1.2;                        // fastest a ball can be going and still drop, straight in
+const DROP_SPEED = 1.4;                        // fastest a ball can be going and still drop, straight in
 const PUTT_STEP = 1 / 60;
 
 const friction = (surface) => FRICTION[surface] ?? ROUGH_FRICTION;
@@ -51,7 +51,7 @@ export function rollPutt(hole, from, angle, speed) {
     else if (!over) {
       const fast = Math.hypot(nx, ny);
       // Straight in it can be going quite quickly; over the edge it must be dying.
-      if (fast < DROP_SPEED * (0.5 + 0.5 * Math.sqrt(1 - (miss / CUP) ** 2))) {
+      if (fast < DROP_SPEED * (0.55 + 0.45 * Math.sqrt(1 - (miss / CUP) ** 2))) {
         path.push({ x: pin.x, y: pin.y });
         holed = true;
         entry = miss;
@@ -66,7 +66,7 @@ export function rollPutt(hole, from, angle, speed) {
         path.lipped = true;
         path.lipAt = path.length;
         const side = Math.sign((pin.x - cx) * ny - (pin.y - cy) * nx) || 1;
-        const a = Math.atan2(ny, nx) - side * (0.15 + 0.4 * (1 - miss / CUP)), s = fast * 0.6;
+        const a = Math.atan2(ny, nx) - side * (0.1 + 0.3 * (1 - miss / CUP)), s = fast * 0.7;
         nx = Math.cos(a) * s; ny = Math.sin(a) * s;
       }
     }
@@ -126,7 +126,7 @@ export function readPutt(rng, golfer, hole, from) {
       for (let j = -4; j <= 4; j++) {
         const angle = around.angle + i * da, yards = Math.max(0.3, around.yards * (1 + j * dy));
         const r = rollPutt(hole, from, angle, speedFor(yards));
-        const score = r.holed ? (r.miss + Math.abs(yards - d - 0.05) * 0.05) * 0.01 : dist(r.rest, pin);
+        const score = r.holed ? (r.miss + Math.abs(yards - d - 0.1) * 0.05) * 0.01 : dist(r.rest, pin);
         if (!best || score < best.score) best = { score, angle, yards };
       }
     }
