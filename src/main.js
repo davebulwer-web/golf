@@ -430,11 +430,25 @@ function alongPath(path, e) {
 
 // Where the ball is in the air between two points: `z` is its height in yards
 // (above the sea, like the ground) and `h` how high it is off the ground.
-function inFlight(from, to, type, t) {
-  const p = flightPoint(from, to, type, t);
+function inFlight(from, to, type, t, bend) {
+  const p = flightPoint(from, to, type, t, bend);
   const ground = world.view.ground;
   const z = ground(from) + (ground(to) - ground(from)) * t + p.h;
   return { x: p.x, y: p.y, z, h: Math.max(0, z - ground(p)) };
+}
+// A shot in the air at t from 0 to 1. One that hits a tree flies to the tree
+// on its way to where it would have landed, then drops from there.
+const TREE_FALL = 0.2; // share of the flight time spent falling out of the tree
+function shotInAir(shot, t) {
+  const type = shotType(shot.type);
+  if (!shot.tree) return inFlight(shot.from, shot.landing, type, t, shot.bend);
+  if (t < 1 - TREE_FALL) return inFlight(shot.from, shot.flightTo, type, t / (1 - TREE_FALL) * shot.tree.t, shot.bend);
+  const top = inFlight(shot.from, shot.flightTo, type, shot.tree.t, shot.bend);
+  const f = (t - (1 - TREE_FALL)) / TREE_FALL;
+  const p = { x: top.x + (shot.landing.x - top.x) * f, y: top.y + (shot.landing.y - top.y) * f };
+  const ground = world.view.ground(p);
+  const z = top.z + (ground - top.z) * f * f;
+  return { x: p.x, y: p.y, z, h: Math.max(0, z - ground) };
 }
 const onGround = (p) => ({ x: p.x, y: p.y, z: world.view.ground(p), h: 0 });
 
@@ -445,7 +459,7 @@ function ballNow(now) {
   if (!a) return onGround(me.at);
   const t = (now - a.start) / a.flight;
   if (t < 0) return onGround(a.shot.from); // still swinging
-  if (t < 1) return inFlight(a.shot.from, a.shot.landing, shotType(a.shot.type), t);
+  if (t < 1) return shotInAir(a.shot, t);
   const r = a.roll ? Math.min(1, (now - a.start - a.flight) / a.roll) : 1;
   const e = 1 - (1 - r) ** 2; // slows as it rolls out
   return onGround(a.shot.path ? alongPath(a.shot.path, e) : a.shot.rest);
