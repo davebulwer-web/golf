@@ -17,11 +17,11 @@ import { planShot } from './ai.js';
 import { feet, aimRange, puttRise, readPutt, strike } from './putting.js';
 import { makeGreenView, drawGreenView } from './green-view.js';
 import { drawDinky, dinkySize, golferFrame, ballFrame, flagFrame, GOLFER_LOOKS, LIE_BANNERS, WATER_BANNER, OB_BANNER, scoreBanner } from './dinky.js';
-import { LOOKS, SHIRT_COLOURS, SKILL_NAMES, newCareer, clubCourses, careerGolfer, clubOpponent, memberGolfer, MEMBERS, STAKES, finishRound, canPractise, recordPractice, buyKit, saveCareer, loadCareer } from './career.js';
+import { LOOKS, SHIRT_COLOURS, SKILL_NAMES, newCareer, clubCourses, careerGolfer, clubOpponent, memberGolfer, MEMBERS, STAKES, finishRound, canPractise, recordPractice, canWork, workShift, buyKit, saveCareer, loadCareer } from './career.js';
 import { BALLS, DRILLS, drill, drillHole, drillSpot, drillResult, drillGain } from './practice.js';
 import { newForm, judgeShot, judgePutt, tally, applyForm } from './form.js';
-import { titleLayout, drawTitle, newCareerLayout, drawNewCareer, hubLayout, drawHub, coursesLayout, drawCourses, membersLayout, drawMembers, drillsLayout, drawDrills, shopLayout, drawShop, drawLeaderboard, resultsLayout, drawResults, resultsShown, drawMenuNote, recordLayout, drawRecord, meritLayout, drawMerit, drawSeason, ordinal } from './menus.js';
-import { eventFor, newEvent, skippedEvent, leaderboard, prizeFor, fieldGolfer, addMerit, meritTable, endWeek, simRound, finishEventRound, finalBoard, DRESSING, eventTier, eventStory, recordEvent, challengeFor, challengeMet } from './events.js';
+import { titleLayout, drawTitle, newCareerLayout, drawNewCareer, hubLayout, drawHub, coursesLayout, drawCourses, membersLayout, drawMembers, drillsLayout, drawDrills, shopLayout, drawShop, drawLeaderboard, drawPot, resultsLayout, drawResults, resultsShown, drawMenuNote, recordLayout, drawRecord, meritLayout, drawMerit, drawSeason, ordinal } from './menus.js';
+import { eventFor, newEvent, skippedEvent, leaderboard, prizeFor, fieldGolfer, addMerit, meritTable, endWeek, simRound, finishEventRound, finalBoard, DRESSING, eventTier, eventStory, recordEvent, challengeFor, challengeMet, sidePots, potShot, potMark, POT_NAMES } from './events.js';
 import { SLOTS, shopItem } from './shop.js';
 
 const STYLE_KEYS = Object.keys(STYLES);
@@ -459,7 +459,7 @@ function update(now) {
   if (!a) return;
   if (ui.phase === 'flight' && now - a.start >= a.flight) ui.phase = 'roll';
   if (ui.phase === 'roll' && now - a.start >= a.flight + a.roll) {
-    const me = current(game.play), lie = me.lie;
+    const me = current(game.play), lie = me.lie, teeShot = me.strokes === 0;
     settle(game.play, a.shot);
     ui.anim = null;
     if (settings.practice) return practiceDone(a.shot.from, a.shot.rest, a.shot.holed, now);
@@ -470,8 +470,29 @@ function update(now) {
       showPop([pic], now);
       if (note === 'ON THE GREEN') note = null; // the picture says it
     }
+    if (teeShot) note = potNote(me, a.shot) ?? note;
     afterStroke(now, note);
   }
+}
+
+// The side pot on the hole being played, if there is one (event rounds only).
+const potHere = () => settings.pots?.find((p) => p.hole === game.hole.number) ?? null;
+
+// A tee shot on a side pot's hole: a new mark to beat, or (yours) how close
+// you came. Returns the words for the banner, or null.
+function potNote(me, shot) {
+  const pot = potHere();
+  if (!pot || shot.penalty) return null;
+  const pin = pot.kind === 'pin', counts = pin ? me.holed || me.lie === 'green' : me.lie === 'fairway';
+  const v = !counts ? null : pin ? Math.round(Math.hypot(me.at.x - game.hole.pin.x, me.at.y - game.hole.pin.y) * 3) : Math.round(Math.hypot(me.at.x - shot.from.x, me.at.y - shot.from.y));
+  const name = POT_NAMES[pot.kind];
+  if (potShot(pot, who(me.golfer), pin ? { feet: v } : { yards: v })) {
+    pot.you = !me.golfer.ai;
+    return me.holed ? null : `${name}: ${who(me.golfer)} ${potMark(pot)}. NEW MARK!`;
+  }
+  if (me.golfer.ai) return null;
+  if (v == null) return `${name}: ${pin ? 'MISSED THE GREEN' : 'MISSED THE FAIRWAY'}`;
+  return `${name}: ${v} ${pin ? 'FT' : 'YDS'}. ${pot.holder} HAS ${potMark(pot)}`;
 }
 
 // The computer golfer thinks, shows where it's aiming, then hits.
@@ -529,6 +550,9 @@ function startTurn(now, note, sub) {
   const me = current(game.play);
   Object.assign(ui, { anim: null, aim: null, dragging: false, aiPlanned: false });
   const turn = me.onGreen ? (me.golfer.ai ? `${who(me.golfer)} TO PUTT` : 'YOUR PUTT') : yourTurn(me.golfer);
+  // A side pot on this hole: say so on the tee.
+  const pot = potHere();
+  if (pot && !note && game.play.players.every((p) => p.strokes === 0)) { note = `${POT_NAMES[pot.kind]} FOR £${pot.prize}`; sub = `${pot.holder} HAS ${potMark(pot)}. ${turn}`; }
   ui.banner = note ? { text: note, sub: sub ?? turn, until: now + 2200 } : { text: turn, until: now + 1200 };
   if (me.onGreen) {
     showMap(false);
@@ -709,7 +733,7 @@ function holeFinished() {
 
 // Keep the career round in progress, `hole` being the next to play.
 function saveRound(hole) {
-  app.career.round = { course: playing, match: settings.match, comp: settings.comp, challenge: settings.challenge, form, vs: golfers[1].name, hole, scores: round.players.map((p) => p.scores.slice()), putts: round.players.map((p) => p.putts.slice()) };
+  app.career.round = { course: playing, match: settings.match, comp: settings.comp, pots: settings.pots?.map((p) => ({ ...p })), challenge: settings.challenge, form, vs: golfers[1].name, hole, scores: round.players.map((p) => p.scores.slice()), putts: round.players.map((p) => p.putts.slice()) };
   saveCareer(app.career);
 }
 
@@ -927,7 +951,9 @@ function render(now) {
   drawViewButtons(hud, W, display.map, settings.event, !settings.career);
   // An event's leaderboard, top five and you.
   const board = settings.comp && !ui.card && !display.map && compBoard();
-  if (board) drawLeaderboard(hud, W - 136, 104, 130, board, { title: settings.comp.rounds > 1 ? `LEADERBOARD R${settings.comp.round + 1}` : 'LEADERBOARD', max: 5, thru: round.players[0].scores.filter((v) => v != null).length });
+  const boardH = board ? drawLeaderboard(hud, W - 136, 104, 130, board, { title: settings.comp.rounds > 1 ? `LEADERBOARD R${settings.comp.round + 1}` : 'LEADERBOARD', max: 5, thru: round.players[0].scores.filter((v) => v != null).length }) : 0;
+  const pot = settings.comp && !ui.card && !display.map && potHere();
+  if (pot) drawPot(hud, W - 136, 104 + (boardH ? boardH + 4 : 0), 130, pot);
   if (ui.banner && now < ui.banner.until) drawBanner(hud, W, ui.banner.text, ui.banner.sub);
   if (ui.formNote && now < ui.formNote.until) drawFormNote(hud, W, ui.formNote.text, ui.formNote.good, ui.banner && now < ui.banner.until && ui.banner.sub ? 88 : 78);
   if (ui.pop && now < ui.pop.until) drawPop(hud, W, H, now);
@@ -985,7 +1011,7 @@ function menuButtons() {
     const c = app.career, L = hubLayout(W, H, c);
     if (c.round) return [L.play, L.menu];
     if (c.event) return [L.shop, L.menu, L.event, L.skip, L.record];
-    return [...(c.midweek ? [] : [L.play, L.match, L.practice, L.tryChallenge]), L.shop, L.menu, ...(c.money >= eventFor(c).fee ? [L.event] : []), L.skip, L.merit, L.record];
+    return [...(c.midweek ? [] : [L.play, L.match, L.practice, L.tryChallenge]), ...(canWork(c) ? [L.work] : []), L.shop, L.menu, ...(c.money >= eventFor(c).fee ? [L.event] : []), L.skip, L.merit, L.record];
   }
   if (app.mode === 'record') return [recordLayout(W, H).back];
   if (app.mode === 'merit') return [meritLayout(W, H, resultsShown(meritRows()).length).back];
@@ -1028,6 +1054,10 @@ function menuAction(key) {
     if (c.midweek || c.event || c.round) return;
     const ch = challengeFor(c);
     return playCareerRound(ch.course, null, null, ch);
+  }
+  if (key === 'work') {
+    if (workShift(app.career)) saveCareer(app.career);
+    return;
   }
   if (key === 'carry-on') { app.career.lastSeason.seen = true; saveCareer(app.career); return goHub(); }
   if (key === 'done') return goHub();
@@ -1101,8 +1131,9 @@ function showTitle() {
 let playing = null;
 
 // Show a course behind the menus (or play it): settings for the course, hole and round.
-function useCourse(course, hole, career, match = null, practice = null, comp = null) {
+function useCourse(course, hole, career, match = null, practice = null, comp = null, pots = null) {
   playing = course;
+  settings.pots = pots;
   form = null;
   settings.match = match;
   settings.comp = comp;
@@ -1134,7 +1165,10 @@ function playCareerRound(course, match = null, comp = null, challenge = null) {
   const c = app.career;
   app.mode = 'play';
   round = null;
-  useCourse(c.round?.course ?? course, c.round?.hole ?? 1, true, c.round ? c.round.match ?? null : match, null, c.round ? c.round.comp ?? null : comp);
+  // An event round has its side pots, on holes of this round.
+  const ev = c.round ? c.round.comp ?? null : comp, at = c.round?.course ?? course;
+  const pots = c.round ? c.round.pots?.map((p) => ({ ...p })) ?? null : ev && sidePots(ev, buildCourse({ ...at }, { layout: false }).holes.slice(0, at.holes ?? 18));
+  useCourse(at, c.round?.hole ?? 1, true, c.round ? c.round.match ?? null : match, null, ev, pots);
   settings.challenge = c.round ? c.round.challenge ?? null : challenge;
   form = c.round?.form ?? newForm();
   if (c.round) round.players.forEach((p, i) => { p.scores = c.round.scores[i].slice(); p.putts = c.round.putts[i].slice(); });
@@ -1157,7 +1191,7 @@ function endCareerRound() {
   }
   // A midweek challenge: did you do it?
   const challenge = saved.challenge && { text: saved.challenge.text, where: saved.challenge.where, prize: saved.challenge.prize, met: challengeMet(saved.challenge, saved.scores[0], pars) };
-  finishRound(c, { course: course.name, holes, score: total(saved.scores[0]), par: total(pars), vs: (saved.vs ?? clubOpponent().name).toUpperCase(), vsScore: total(saved.scores[1]), match, comp, eventRound, challenge });
+  finishRound(c, { course: course.name, holes, score: total(saved.scores[0]), par: total(pars), vs: (saved.vs ?? clubOpponent().name).toUpperCase(), vsScore: total(saved.scores[1]), match, comp, eventRound, challenge, pots: (saved.pots ?? []).map((p) => ({ ...p, won: !!p.you })) });
   // The weekend event's done: points on the order of merit, and on to next week.
   if (comp) eventOver(c, saved.comp, comp, rows);
   saveCareer(c);

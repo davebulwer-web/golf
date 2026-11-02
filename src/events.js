@@ -14,11 +14,13 @@ import { COURSE_LIST } from './course-list.js';
 // or skip; the last week has the tier's big one, which counts double on the
 // order of merit and can win you promotion on its own.
 export const EVENTS = {
-  rollup: { kind: 'rollup', name: 'SATURDAY ROLL-UP', holes: 9, fee: 2, prizes: [12, 6, 3] },
-  medal: { kind: 'medal', name: 'MONTHLY MEDAL', holes: 9, fee: 5, prizes: [40, 20, 10] },
-  championship: { kind: 'championship', name: 'CLUB CHAMPIONSHIP', holes: 18, fee: 10, prizes: [100, 50, 25], title: 'CLUB CHAMPION', big: true },
-  open: { kind: 'open', name: 'OPEN', holes: 18, fee: 20, prizes: [150, 80, 40] },
-  county: { kind: 'county', name: 'COUNTY CHAMPIONSHIP', holes: 18, fee: 30, prizes: [400, 200, 100], title: 'COUNTY CHAMPION', big: true },
+  // The club and county pay the top half of the field, so a steady finish
+  // earns a little and a win still stands out.
+  rollup: { kind: 'rollup', name: 'SATURDAY ROLL-UP', holes: 9, fee: 2, prizes: [12, 8, 6, 4, 3, 2] },
+  medal: { kind: 'medal', name: 'MONTHLY MEDAL', holes: 9, fee: 5, prizes: [40, 25, 18, 12, 8, 5] },
+  championship: { kind: 'championship', name: 'CLUB CHAMPIONSHIP', holes: 18, fee: 10, prizes: [100, 60, 40, 25, 15, 10], title: 'CLUB CHAMPION', big: true },
+  open: { kind: 'open', name: 'OPEN', holes: 18, fee: 20, prizes: [150, 90, 60, 45, 35, 28, 22, 16] },
+  county: { kind: 'county', name: 'COUNTY CHAMPIONSHIP', holes: 18, fee: 30, prizes: [400, 220, 140, 100, 80, 60, 45, 30], title: 'COUNTY CHAMPION', big: true },
   challenge: { kind: 'challenge', name: 'CHALLENGE', holes: 18, rounds: 3, cut: 12, fee: 50,
     prizes: [1000, 600, 400, 300, 250, 200, 160, 130, 110, 100] },
   final: { kind: 'final', name: 'CHALLENGE TOUR FINAL', holes: 18, rounds: 4, cut: 12, fee: 80, title: 'CHALLENGE TOUR CHAMPION', big: true,
@@ -374,6 +376,45 @@ export function recordEvent(c, ev, comp) {
   add('prizeMoney', comp.prize);
   if (comp.pos === 1 && ev.major) add('majors');
 }
+
+// ---------- Side pots ----------
+
+// Two side pots in every event round you play: nearest the pin on a par 3, and
+// longest drive (it has to finish on the fairway) on the longest par 5, or
+// the longest par 4 if there's no par 5. The rest of the field has already
+// set a mark to beat; your playing partner can raise it too.
+const POT_PRIZE = { club: 5, county: 15, challenge: 50, tour: 200, majors: 500 };
+const POT_TIERS = ['club', 'county', 'challenge', 'tour', 'majors'];
+export const POT_NAMES = { pin: 'NEAREST THE PIN', drive: 'LONGEST DRIVE' };
+// `holes`: the round's holes, { number, par, length }.
+export function sidePots(ev, holes) {
+  const tier = eventTier(ev), t = Math.max(0, POT_TIERS.indexOf(tier));
+  const r = makeRng(ev.seed + 4111 * (ev.round + 1)), prize = POT_PRIZE[tier] ?? 5, pots = [];
+  const threes = holes.filter((h) => h.par === 3);
+  if (threes.length) {
+    // The field's closest: 8 to 30 feet at the club, closer the higher you go.
+    const k = 0.85 ** t;
+    pots.push({ kind: 'pin', hole: threes[r.int(0, threes.length - 1)].number, prize, mark: Math.round((8 + r.next() * 22) * k), holder: 'THE FIELD' });
+  }
+  const longs = holes.filter((h) => h.par >= 4).sort((a, b) => b.par - a.par || b.length - a.length);
+  if (longs.length) {
+    // The field's longest, from how far the tier hits it (see fullCarry in shots.js).
+    const power = 48 + 8 * t;
+    pots.push({ kind: 'drive', hole: longs[0].number, prize, mark: Math.round(195 + 0.9 * power + r.next() * 40), holder: 'THE FIELD' });
+  }
+  return pots;
+}
+
+// A tee shot on a pot's hole: does it set a new mark? `feet` is how far from
+// the pin a ball on the green finished, `yards` how far a drive went on the
+// fairway (null when it doesn't count). Returns true on a new mark.
+export function potShot(pot, name, { feet = null, yards = null }) {
+  const v = pot.kind === 'pin' ? feet : yards;
+  if (v == null || (pot.kind === 'pin' ? v >= pot.mark : v <= pot.mark)) return false;
+  Object.assign(pot, { mark: v, holder: name });
+  return true;
+}
+export const potMark = (pot) => (pot.kind === 'pin' ? `${pot.mark} FT` : `${pot.mark} YDS`);
 
 // ---------- Midweek challenges ----------
 
