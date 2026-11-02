@@ -36,6 +36,8 @@ export function hit(state, rng, aim, typeKey, weather, wind, outOfBounds) {
     shot.note = 'HOLED IT!';
   } else if (shot.surface === 'green') {
     shot.note = 'ON THE GREEN';
+  } else if (shot.tree) {
+    shot.note = 'HIT A TREE!';
   } else if (shot.mishit) {
     shot.note = 'MISHIT!';
   }
