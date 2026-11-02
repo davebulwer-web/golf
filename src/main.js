@@ -604,7 +604,10 @@ function aimPutt(p) {
 function puttBall(now) {
   const pt = ui.putt, path = pt.roll.path;
   const k = Math.max(0, Math.floor((now - pt.rollAt) * 60 / 1000));
-  return { at: path[Math.min(path.length - 1, k)], done: k >= path.length - 1 };
+  // A ball that jumps out of the hole hops for a moment.
+  const since = path.lipAt != null ? k - path.lipAt : -1;
+  const hop = since >= 0 && since < 14 ? Math.sin((since / 14) * Math.PI) * 4 : 0;
+  return { at: path[Math.min(path.length - 1, k)], done: k >= path.length - 1, hop };
 }
 
 function updatePutting(now) {
