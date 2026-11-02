@@ -7,10 +7,10 @@ import { drawText, textWidth } from './art.js';
 import { panel, GOLD } from './hud.js';
 import { drawDinky, golferFrame } from './dinky.js';
 import { STYLES } from './course-generator.js';
-import { LOOKS, ownShirt, SHIRT_COLOURS, SKILL_NAMES, WEEKS, MEMBERS, STAKES, startingSkills, courseStars, memberGolfer, record, canPractise } from './career.js';
+import { LOOKS, ownShirt, SHIRT_COLOURS, SKILL_NAMES, WEEKS, MEMBERS, STAKES, startingSkills, courseStars, memberGolfer, record, canPractise, shiftFor, canWork } from './career.js';
 import { SLOTS, TIER_NAMES, kitItem, kitBoost, shopItem, nextItem, boostWords } from './shop.js';
 import { DRILLS, BALLS } from './practice.js';
-import { eventFor, meritTable, PROMOTED, challengeFor, RIVALS } from './events.js';
+import { eventFor, meritTable, PROMOTED, challengeFor, RIVALS, POT_NAMES } from './events.js';
 
 const DIM = '#c8c0e8', QUIET = '#8a80b0';
 const mid = (W, w) => Math.round((W - w) / 2);
@@ -160,6 +160,8 @@ export function hubLayout(W, H, career) {
     match: { key: 'match', label: 'MONEY MATCH', x: px + pw - 250, y: py + ph - 30, w: 108, h: 18 },
     practice: { key: 'practice', label: 'PRACTICE', x: px + pw - 340, y: py + ph - 30, w: 84, h: 18 },
     shop: { key: 'shop', label: 'PRO SHOP', x: px + pw - 430, y: py + ph - 30, w: 84, h: 18 },
+    // A paid shift, under your money: another way to spend midweek.
+    work: { key: 'work', label: 'WORK A SHIFT', x: px + 16, y: py + 196, w: 84, h: 14 },
     // The week, in a card on the right: the midweek slot, the weekend event
     // (enter or skip it) and where you stand on the order of merit.
     card: { x: px + pw - 172, y: py + 40, w: 156, h: 124 },
@@ -190,6 +192,12 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
   drawText(ctx, c.name, p.x + 16, p.y + 120, '#ffffff', 1, null);
   drawText(ctx, `£${c.money}`, p.x + 16, p.y + 130, GOLD, 2);
   (c.titles ?? []).slice(-3).forEach((t, i) => drawText(ctx, `${t.title} S${t.season}`, p.x + 16, p.y + 148 + i * 9, '#7ee07e', 1, null));
+  const shift = shiftFor(c);
+  if (shift && !c.round && !c.event && (!c.midweek || c.midweek === 'work')) {
+    drawText(ctx, shift.job, p.x + 16, L.work.y - 18, DIM, 1, null);
+    drawText(ctx, `£${shift.pay}, USES MIDWEEK`, p.x + 16, L.work.y - 9, QUIET, 1, null);
+    menuButton(ctx, L.work, hover === 'work', canWork(c));
+  }
   const sx = p.x + 112, sy = p.y + 48, boost = kitBoost(c.kit);
   drawText(ctx, 'SKILLS', sx, sy - 6, DIM, 1, null);
   if (Object.keys(c.kit ?? {}).length) drawText(ctx, 'BLUE: YOUR KIT', sx + 46, sy - 6, KIT_BLUE, 1, null);
@@ -217,6 +225,14 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
     }
     if (r.skipped) {
       drawText(ctx, `WK ${r.week}  SKIPPED ${r.skipped.name}. ${r.skipped.winner.toUpperCase()} WON`, sx, ry + 11 + i * 9, QUIET, 1, null);
+      return;
+    }
+    if (r.work) {
+      drawText(ctx, `WK ${r.week}  WORKED: ${r.work.job}  +£${r.work.pay}`, sx, ry + 11 + i * 9, GOLD, 1, null);
+      return;
+    }
+    if (r.pot) {
+      drawText(ctx, `WK ${r.week}  ${POT_NAMES[r.pot.kind]}, HOLE ${r.pot.hole}: ${r.pot.mark} ${r.pot.kind === 'pin' ? 'FT' : 'YDS'}  +£${r.pot.prize}`, sx, ry + 11 + i * 9, GOLD, 1, null);
       return;
     }
     if (r.bought) {
@@ -266,7 +282,7 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
   if (!c.round && !c.event) {
     ctx.fillStyle = '#2c2050';
     ctx.fillRect(cd.x, cd.y, cd.w, cd.h);
-    const done = { practice: 'PRACTISED', match: 'PLAYED A MONEY MATCH', round: 'PLAYED A PRACTICE ROUND', challenge: 'TOOK THE CHALLENGE' }[c.midweek];
+    const done = { practice: 'PRACTISED', match: 'PLAYED A MONEY MATCH', round: 'PLAYED A PRACTICE ROUND', challenge: 'TOOK THE CHALLENGE', work: 'WORKED A SHIFT' }[c.midweek];
     drawText(ctx, done ? `MIDWEEK: ${done}` : 'MIDWEEK: PICK ONE BELOW', cd.x + 8, cd.y + 6, done ? QUIET : '#7ee07e', 1, null);
     if (!done) {
       const ch = challengeFor(c);
@@ -281,7 +297,7 @@ export function drawHub(ctx, W, H, L, { career: c, hover, now }) {
     const where = ev.venue.id === c.home.id ? 'AT HOME' : `AT ${ev.venue.name.replace(/ GOLF.*$/, '')}`;
     const rounds = ev.rounds > 1 ? `${ev.rounds} ROUNDS` : `${ev.holes} HOLES`;
     drawText(ctx, `${rounds} ${where}`, cd.x + 8, wy + 39, '#ffffff', 1, null);
-    drawText(ctx, `PRIZES ${ev.prizes.slice(0, 3).map((v) => `£${v}`).join(' / ')}`, cd.x + 8, wy + 48, QUIET, 1, null);
+    drawText(ctx, `1ST £${ev.prizes[0]}, TOP ${ev.prizes.length} PAID`, cd.x + 8, wy + 48, QUIET, 1, null);
     menuButton(ctx, L.event, hover === 'event', c.money >= ev.fee);
     menuButton(ctx, L.skip, hover === 'skip');
     const me = meritTable(c).find((r) => r.you);
@@ -497,6 +513,16 @@ export function drawLeaderboard(ctx, x, y, w, rows, { title, max = rows.length, 
     drawText(ctx, tp, x + w - 6 - textWidth(tp), ty, r.toPar < 0 ? '#f08a8a' : colour, 1, null);
   });
   return h;
+}
+
+// A side pot on the hole you're on: what it is, what it pays, and the mark to beat.
+export function drawPot(ctx, x, y, w, pot) {
+  panel(ctx, x, y, w, 34);
+  drawText(ctx, POT_NAMES[pot.kind], x + 6, y + 5, GOLD, 1, null);
+  const pay = `£${pot.prize}`;
+  drawText(ctx, pay, x + w - 6 - textWidth(pay), y + 5, GOLD, 1, null);
+  drawText(ctx, `MARK: ${pot.mark} ${pot.kind === 'pin' ? 'FT' : 'YDS'}`, x + 6, y + 15, '#ffffff', 1, null);
+  drawText(ctx, pot.you ? 'THAT\'S YOU!' : pot.holder, x + 6, y + 24, pot.you ? '#7ee07e' : QUIET, 1, null);
 }
 
 // The final leaderboard after an event, with what you won.

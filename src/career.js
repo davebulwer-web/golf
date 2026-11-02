@@ -129,6 +129,12 @@ export function finishRound(c, result) {
     if (result.comp.title) c.titles = [...(c.titles ?? []), { season: c.season, title: result.comp.title }];
   }
   c.history.unshift({ season: c.season, week: c.week, ...result });
+  // Side pots won in an event round (see sidePots in events.js).
+  for (const pot of result.pots ?? []) {
+    if (!pot.won) continue;
+    c.money += pot.prize;
+    c.history.unshift({ season: c.season, week: c.week, pot });
+  }
   c.history = c.history.slice(0, 40);
   c.round = null;
   // Every round wears your kit; what's worn out leaves the bag.
@@ -158,6 +164,24 @@ export function recordPractice(c, { name, skill, hits, balls, gain }) {
   c.midweek = 'practice';
   c.history.unshift({ season: c.season, week: c.week, practice: { name, skill, hits, balls, gain } });
   c.history = c.history.slice(0, 40);
+}
+
+// ---------- Work ----------
+// A paid shift at the club is another way to use the week's midweek slot: a
+// sure wage, but no practice, match or challenge that week. There's work
+// for amateurs only; the pros have prize money.
+export const SHIFTS = { club: { job: 'PRO SHOP SHIFT', pay: 15 }, county: { job: 'JUNIOR COACHING', pay: 30 } };
+export const shiftFor = (c) => SHIFTS[c.tier] ?? null;
+export const canWork = (c) => !!shiftFor(c) && !c.midweek && !c.event && !c.round;
+
+export function workShift(c) {
+  if (!canWork(c)) return false;
+  const { job, pay } = shiftFor(c);
+  c.money += pay;
+  c.midweek = 'work';
+  c.history.unshift({ season: c.season, week: c.week, work: { job, pay } });
+  c.history = c.history.slice(0, 40);
+  return true;
 }
 
 // ---------- The pro shop ----------
