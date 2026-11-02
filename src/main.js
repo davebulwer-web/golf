@@ -595,7 +595,9 @@ const greenFor = (at) => makeGreenView(game.hole, at, { x: 0, y: 50, w: display.
 
 function newPutt(me, until) {
   const pt = { view: greenFor(me.at), stage: 'wait', until, aim: null, range: 0, power: null, meterAt: 0, roll: null, rollAt: 0, plan: null };
-  setPuttAim(pt, me.at, { ...game.hole.pin });
+  // Aimed a foot past the hole to start with, so the pace on the bar gets it there.
+  const pin = game.hole.pin, d = Math.max(0.01, dist(me.at, pin)), past = 1 / 3;
+  setPuttAim(pt, me.at, { x: pin.x + (pin.x - me.at.x) / d * past, y: pin.y + (pin.y - me.at.y) / d * past });
   return pt;
 }
 
