@@ -15,6 +15,7 @@ const GRAVITY = 7.6;                           // a rolling ball's pull down a s
 export const CUP = 0.1;                       // the hole's radius, generous so a putt on line drops
 const DROP_SPEED = 1.4;                        // fastest a ball can be going and still drop, straight in
 const PUTT_STEP = 1 / 60;
+const LIP = 0.035;                             // a ball stopping this close past the cup's edge falls in
 
 const friction = (surface) => FRICTION[surface] ?? ROUGH_FRICTION;
 
@@ -35,7 +36,11 @@ export function rollPutt(hole, from, angle, speed) {
     const f = friction(surface);
     const v = Math.hypot(vx, vy);
     // Stopped, and the slope isn't steep enough to start it again.
-    if (v < 0.03 && GRAVITY * Math.hypot(g.x, g.y) < f) break;
+    if (v < 0.03 && GRAVITY * Math.hypot(g.x, g.y) < f) {
+      // One that dies hanging on the lip topples in.
+      if (Math.hypot(pin.x - x, pin.y - y) < CUP + LIP) { path.push({ x: pin.x, y: pin.y }); holed = true; entry = CUP; x = pin.x; y = pin.y; }
+      break;
+    }
     const ax = -GRAVITY * g.x - (v > 0 ? f * vx / v : 0);
     const ay = -GRAVITY * g.y - (v > 0 ? f * vy / v : 0);
     let nx = vx + ax * PUTT_STEP, ny = vy + ay * PUTT_STEP;
@@ -51,7 +56,7 @@ export function rollPutt(hole, from, angle, speed) {
     else if (!over) {
       const fast = Math.hypot(nx, ny);
       // Straight in it can be going quite quickly; over the edge it must be dying.
-      if (fast < DROP_SPEED * (0.55 + 0.45 * Math.sqrt(1 - (miss / CUP) ** 2))) {
+      if (fast < DROP_SPEED * (0.75 + 0.25 * Math.sqrt(1 - (miss / CUP) ** 2))) {
         path.push({ x: pin.x, y: pin.y });
         holed = true;
         entry = miss;
@@ -79,8 +84,10 @@ export function rollPutt(hole, from, angle, speed) {
 }
 
 // The power bar's range in feet: the next step up that comfortably covers the putt.
-const RANGES = [8, 15, 25, 40, 60, 90, 120];
-export const puttRange = (yards) => RANGES.find((r) => r >= Math.max(yards * 3 * 1.3, yards * 3 + 4)) ?? RANGES[RANGES.length - 1];
+// Short putts get a short bar, so a click a moment late is only an inch or two
+// too firm, not a foot.
+const RANGES = [4, 6, 8, 12, 15, 25, 40, 60, 90, 120];
+export const puttRange = (yards) => RANGES.find((r) => r >= Math.max(yards * 3 * 1.4, yards * 3 + 2)) ?? RANGES[RANGES.length - 1];
 
 // The bar's range for a putt from `from` aimed at `aim`: it covers both the
 // hole and the aim, so aiming long gives a longer bar.
