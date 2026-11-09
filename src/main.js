@@ -20,7 +20,7 @@ import { drawDinky, dinkySize, golferFrame, ballFrame, flagFrame, GOLFER_LOOKS, 
 import { LOOKS, SHIRT_COLOURS, SKILL_NAMES, newCareer, clubCourses, careerGolfer, clubOpponent, memberGolfer, MEMBERS, STAKES, finishRound, canPractise, recordPractice, canWork, workShift, buyKit, saveCareer, loadCareer } from './career.js';
 import { BALLS, DRILLS, drill, drillHole, drillSpot, drillResult, drillGain } from './practice.js';
 import { newForm, judgeShot, judgePutt, tally, applyForm } from './form.js';
-import { titleLayout, drawTitle, newCareerLayout, drawNewCareer, hubLayout, drawHub, coursesLayout, drawCourses, membersLayout, drawMembers, drillsLayout, drawDrills, shopLayout, drawShop, drawLeaderboard, drawPot, resultsLayout, drawResults, resultsShown, drawMenuNote, recordLayout, drawRecord, meritLayout, drawMerit, drawSeason, ordinal } from './menus.js';
+import { titleLayout, drawTitleArt, drawTitle, newCareerLayout, drawNewCareer, hubLayout, drawHub, coursesLayout, drawCourses, membersLayout, drawMembers, drillsLayout, drawDrills, shopLayout, drawShop, drawLeaderboard, drawPot, resultsLayout, drawResults, resultsShown, drawMenuNote, recordLayout, drawRecord, meritLayout, drawMerit, drawSeason, ordinal } from './menus.js';
 import { eventFor, newEvent, skippedEvent, leaderboard, prizeFor, fieldGolfer, addMerit, meritTable, endWeek, simRound, finishEventRound, finalBoard, DRESSING, eventTier, eventStory, recordEvent, challengeFor, challengeMet, sidePots, potShot, potMark, POT_NAMES } from './events.js';
 import { SLOTS, shopItem } from './shop.js';
 
@@ -996,8 +996,10 @@ function renderMenu(now) {
   drawPlay(now);
   const { W, H } = display;
   hud.clearRect(0, 0, W, H);
-  hud.fillStyle = 'rgba(12, 8, 24, 0.6)';
-  hud.fillRect(0, 0, W, H);
+  if (app.mode !== 'title' || !drawTitleArt(hud, W, H)) {
+    hud.fillStyle = 'rgba(12, 8, 24, 0.6)';
+    hud.fillRect(0, 0, W, H);
+  }
   const hover = app.hover;
   if (app.mode === 'title') drawTitle(hud, W, H, { buttons: titleLayout(W, H, !!app.career), hover, save: app.career, full: !!document.fullscreenElement });
   if (app.note && now < app.note.until) drawMenuNote(hud, W, H, app.note.text);
