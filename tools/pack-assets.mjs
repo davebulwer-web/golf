@@ -1,5 +1,6 @@
-// Packs the sprite images in assets/dinky, assets/golfers and assets/popups into
-// src/dinky-assets.js, src/golfer-assets.js and src/popup-assets.js as data URLs,
+// Packs the sprite images in assets/dinky, assets/golfers, assets/popups and
+// assets/title into src/dinky-assets.js, src/golfer-assets.js,
+// src/popup-assets.js and src/title-assets.js as data URLs,
 // and the trees, props and ground textures in assets/trees, assets/props and
 // assets/ground into src/tree-assets.js, src/prop-assets.js and
 // src/ground-assets.js as raw pixels (they're drawn into
@@ -29,6 +30,7 @@ ${lines.join('\n')}
 packUrls('assets/dinky', 'dinky-assets.js', 'DINKY_PNGS', '// Art from Dinky Tiny Golf by Mike Moore, www.pixelbitsnbytes.com (see assets/dinky/license.txt).\n');
 packUrls('assets/golfers', 'golfer-assets.js', 'GOLFER_PNGS', '// The golfers, cut from Dave\'s sheets by tools/cut-golfer.py.\n');
 packUrls('assets/popups', 'popup-assets.js', 'POPUP_PNGS', '// The pop-up pictures, cut from Dave\'s sheet by tools/cut-popups.py.\n');
+packUrls('assets/title', 'title-assets.js', 'TITLE_PNGS', '// The title screen picture, made with PixelLab (pixellab.ai).\n');
 
 // Decode an 8-bit RGBA (or RGB) PNG without interlacing: { w, h, rgba }.
 function readPng(file) {

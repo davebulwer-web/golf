@@ -10,6 +10,7 @@ import { STYLES } from './course-generator.js';
 import { LOOKS, ownShirt, SHIRT_COLOURS, SKILL_NAMES, WEEKS, MEMBERS, STAKES, startingSkills, courseStars, memberGolfer, record, canPractise, shiftFor, canWork } from './career.js';
 import { SLOTS, TIER_NAMES, kitItem, kitBoost, shopItem, nextItem, boostWords } from './shop.js';
 import { DRILLS, BALLS } from './practice.js';
+import { TITLE_PNGS } from './title-assets.js';
 import { eventFor, meritTable, PROMOTED, challengeFor, RIVALS, POT_NAMES } from './events.js';
 
 const DIM = '#c8c0e8', QUIET = '#8a80b0';
@@ -53,6 +54,24 @@ function golferAt(ctx, look, shirt, x, y, now) {
 
 // ---------- Title ----------
 
+// The title picture (made with PixelLab), drawn to fill the screen, cropped
+// to fit, behind the logo and buttons. Until it has loaded the dimmed course
+// shows instead.
+const titleArt = new Image();
+titleArt.src = TITLE_PNGS.morning;
+
+export function drawTitleArt(ctx, W, H) {
+  const img = titleArt;
+  if (!img.complete || !img.naturalWidth) return false;
+  const k = Math.max(W / img.naturalWidth, H / img.naturalHeight);
+  const w = Math.round(img.naturalWidth * k), h = Math.round(img.naturalHeight * k);
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(img, mid(W, w), 0, w, h); // keep the sky at the top
+  ctx.restore();
+  return true;
+}
+
 export function titleLayout(W, H, hasSave) {
   const w = 150, h = 18, x = mid(W, w);
   let y = Math.round(H * 0.5);
@@ -77,16 +96,31 @@ export function drawTitle(ctx, W, H, { buttons, hover, save, full }) {
   const fs = buttons.find((b) => b.key === 'fullscreen');
   if (fs) fs.label = full ? 'LEAVE FULL SCREEN' : 'FULL SCREEN';
   const logo = 'FAIRWAY PIXELS';
-  drawText(ctx, logo, mid(W, textWidth(logo, 6)), Math.round(H * 0.2), GOLD, 6);
+  outlined(ctx, logo, mid(W, textWidth(logo, 6)), Math.round(H * 0.2), GOLD, 6, 2);
   const tag = 'A RETRO GOLF CAREER';
-  drawText(ctx, tag, mid(W, textWidth(tag, 2)), Math.round(H * 0.2) + 42, '#ffffff', 2);
+  outlined(ctx, tag, mid(W, textWidth(tag, 2)), Math.round(H * 0.2) + 42, '#ffffff', 2, 1);
   buttons.forEach((b) => menuButton(ctx, b, hover === b.key));
   if (save) {
     const line = `${save.name}, SEASON ${save.season} WEEK ${save.week}, £${save.money}`;
-    drawText(ctx, line, mid(W, textWidth(line)), buttons[0].y + buttons[0].h + 3, QUIET, 1, null);
+    strip(ctx, line, mid(W, textWidth(line)), buttons[0].y + buttons[0].h + 3, DIM);
   }
   const help = 'CLICK A BUTTON, OR UP/DOWN AND ENTER.  F FOR FULL SCREEN ANY TIME';
-  drawText(ctx, help, mid(W, textWidth(help)), H - 16, QUIET, 1, null);
+  strip(ctx, help, mid(W, textWidth(help)), H - 16, DIM);
+}
+
+// Text with a dark ring `r` pixels thick round it, so it reads over the picture.
+function outlined(ctx, text, x, y, color, scale, r) {
+  for (let dy = -r; dy <= r; dy++) {
+    for (let dx = -r; dx <= r; dx++) if (dx || dy) drawText(ctx, text, x + dx, y + dy, '#1a1030', scale, null);
+  }
+  drawText(ctx, text, x, y, color, scale);
+}
+
+// Small text on a dark strip.
+function strip(ctx, text, x, y, color) {
+  ctx.fillStyle = 'rgba(26, 16, 48, 0.75)';
+  ctx.fillRect(x - 4, y - 2, textWidth(text) + 8, 9);
+  drawText(ctx, text, x, y, color, 1, null);
 }
 
 // ---------- New career ----------
